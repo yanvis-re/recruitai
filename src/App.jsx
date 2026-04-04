@@ -1044,6 +1044,230 @@ function LoginScreen({ onLogin, loading }) {
 }
 
 // ─────────────────────────────────────────────
+// SCREEN: PROCESS DETAIL (Candidate Pipeline)
+// ─────────────────────────────────────────────
+const ESTADO_OPTIONS = ["Pendiente", "Primera entrevista", "Segunda entrevista", "En cartera", "Descartado", "Contratado"];
+const PROGRESO_OPTIONS = ["Ingreso", "Prueba técnica", "Entrevista", "Onboarding", "Descalificado", "En cartera", "Desiste", "Validación prueba técnica", "Entrevista RRHH"];
+
+const ESTADO_COLORS = {
+  "Pendiente": "bg-gray-100 text-gray-700",
+  "Primera entrevista": "bg-blue-100 text-blue-700",
+  "Segunda entrevista": "bg-indigo-100 text-indigo-700",
+  "En cartera": "bg-yellow-100 text-yellow-700",
+  "Descartado": "bg-red-100 text-red-700",
+  "Contratado": "bg-green-100 text-green-700",
+};
+
+const PROGRESO_COLORS = {
+  "Ingreso": "bg-purple-100 text-purple-700",
+  "Prueba técnica": "bg-blue-100 text-blue-700",
+  "Entrevista": "bg-indigo-100 text-indigo-700",
+  "Onboarding": "bg-teal-100 text-teal-700",
+  "Descalificado": "bg-red-100 text-red-700",
+  "En cartera": "bg-yellow-100 text-yellow-700",
+  "Desiste": "bg-orange-100 text-orange-700",
+  "Validación prueba técnica": "bg-cyan-100 text-cyan-700",
+  "Entrevista RRHH": "bg-violet-100 text-violet-700",
+};
+
+function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo }) {
+  const [candidates, setCandidates] = useState(
+    (process.candidates || []).map(c => ({
+      estado: "Pendiente",
+      progreso: "Ingreso",
+      entrevistador: "",
+      notas: "",
+      ...c,
+    }))
+  );
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+
+  const updateCandidate = (id, field, value) => {
+    const updated = candidates.map(c => c.id === id ? { ...c, [field]: value } : c);
+    setCandidates(updated);
+    onUpdate(process.id, updated);
+  };
+
+  const addCandidate = () => {
+    if (!newName.trim()) return;
+    const newCand = {
+      id: `c_${Date.now()}`,
+      name: newName.trim(),
+      email: newEmail.trim(),
+      phase: "applied",
+      estado: "Pendiente",
+      progreso: "Ingreso",
+      entrevistador: user?.displayName || "",
+      notas: "",
+    };
+    const updated = [...candidates, newCand];
+    setCandidates(updated);
+    onUpdate(process.id, updated);
+    setNewName("");
+    setNewEmail("");
+    setShowAddForm(false);
+  };
+
+  const removeCandidate = (id) => {
+    if (!window.confirm("¿Eliminar este candidato del proceso?")) return;
+    const updated = candidates.filter(c => c.id !== id);
+    setCandidates(updated);
+    onUpdate(process.id, updated);
+  };
+
+  const statsByEstado = ESTADO_OPTIONS.map(e => ({
+    label: e,
+    count: candidates.filter(c => (c.estado || "Pendiente") === e).length,
+  }));
+
+  const statColors = ["bg-gray-50 text-gray-700", "bg-blue-50 text-blue-700", "bg-indigo-50 text-indigo-700", "bg-yellow-50 text-yellow-700", "bg-red-50 text-red-600", "bg-green-50 text-green-700"];
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      {/* Header */}
+      <div className="bg-white border-b border-gray-100 sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center gap-3">
+          <button onClick={onBack} className="text-gray-400 hover:text-gray-700 text-sm flex items-center gap-1 shrink-0">← Panel</button>
+          <div className="w-px h-4 bg-gray-200 shrink-0" />
+          <span className="text-xl font-black text-blue-600 shrink-0">RecruitAI</span>
+          <div className="w-px h-4 bg-gray-200 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <span className="font-bold text-gray-900 text-sm truncate block">{getPositionTitle(process.position)}</span>
+            <span className="text-xs text-gray-400">{process.company?.name}</span>
+          </div>
+          <button onClick={onStartDemo} className="shrink-0 px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg text-xs font-medium hover:bg-gray-50 transition-colors">Ver oferta →</button>
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto p-6">
+        {/* Process info bar */}
+        <div className="flex flex-wrap items-center gap-2 mb-5">
+          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${process.status === "active" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
+            {process.status === "active" ? "● Activo" : "● Pausado"}
+          </span>
+          {process.position?.contract && <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{process.position.contract}</span>}
+          {process.position?.hoursPerWeek && <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{process.position.hoursPerWeek}h/sem</span>}
+          {process.company?.salaryMin && <span className="text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full">{Number(process.company.salaryMin).toLocaleString()}–{Number(process.company.salaryMax).toLocaleString()} {process.company.currency}</span>}
+          {process.company?.location && <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">📍 {process.company.location}</span>}
+        </div>
+
+        {/* Stats by Estado */}
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-5">
+          {statsByEstado.map(({ label, count }, i) => (
+            <div key={label} className={`rounded-xl border border-gray-100 p-3 text-center shadow-sm ${statColors[i]}`}>
+              <p className="text-2xl font-black leading-none">{count}</p>
+              <p className="text-xs leading-tight mt-1 opacity-80">{label}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Candidate Table */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+            <h2 className="font-bold text-gray-800">Candidatos <span className="text-gray-400 font-normal text-sm">({candidates.length})</span></h2>
+            <button onClick={() => setShowAddForm(v => !v)} className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors">+ Añadir candidato</button>
+          </div>
+
+          {/* Add candidate form */}
+          {showAddForm && (
+            <div className="px-5 py-4 bg-blue-50 border-b border-blue-100 flex flex-wrap items-end gap-3">
+              <div>
+                <label className={lbl}>Nombre *</label>
+                <input className={inp} style={{width: "180px"}} value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nombre del candidato" onKeyDown={e => e.key === "Enter" && addCandidate()} autoFocus />
+              </div>
+              <div>
+                <label className={lbl}>Email</label>
+                <input className={inp} style={{width: "220px"}} value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="email@ejemplo.com" type="email" />
+              </div>
+              <div className="flex gap-2">
+                <button onClick={addCandidate} className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors">Añadir</button>
+                <button onClick={() => { setShowAddForm(false); setNewName(""); setNewEmail(""); }} className="px-4 py-2.5 border border-gray-200 bg-white text-gray-500 rounded-lg text-sm hover:bg-gray-50 transition-colors">Cancelar</button>
+              </div>
+            </div>
+          )}
+
+          {candidates.length === 0 ? (
+            <div className="text-center py-14">
+              <p className="text-4xl mb-3">👥</p>
+              <p className="text-gray-400 text-sm font-medium">No hay candidatos en este proceso todavía.</p>
+              <button onClick={() => setShowAddForm(true)} className="mt-3 text-blue-500 text-sm hover:underline font-medium">+ Añadir el primer candidato</button>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-gray-50 border-b border-gray-100">
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{minWidth:"160px"}}>Candidato</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{minWidth:"170px"}}>Estado de la Solicitud</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{minWidth:"190px"}}>Progreso</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{minWidth:"150px"}}>Entrevistador</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{minWidth:"200px"}}>Notas</th>
+                    <th className="px-4 py-3 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {candidates.map((c, i) => (
+                    <tr key={c.id} className={`border-b border-gray-50 hover:bg-blue-50/30 transition-colors ${i % 2 === 1 ? "bg-gray-50/40" : ""}`}>
+                      <td className="px-4 py-3">
+                        <p className="font-semibold text-gray-800 leading-tight">{c.name}</p>
+                        {c.email && <p className="text-xs text-gray-400 mt-0.5">{c.email}</p>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <select
+                          value={c.estado || "Pendiente"}
+                          onChange={e => updateCandidate(c.id, "estado", e.target.value)}
+                          className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-300 appearance-none ${ESTADO_COLORS[c.estado || "Pendiente"] || "bg-gray-100 text-gray-700"}`}
+                          style={{maxWidth:"160px"}}
+                        >
+                          {ESTADO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-4 py-3">
+                        <select
+                          value={c.progreso || "Ingreso"}
+                          onChange={e => updateCandidate(c.id, "progreso", e.target.value)}
+                          className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-300 appearance-none ${PROGRESO_COLORS[c.progreso || "Ingreso"] || "bg-gray-100 text-gray-700"}`}
+                          style={{maxWidth:"185px"}}
+                        >
+                          {PROGRESO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="text"
+                          value={c.entrevistador || ""}
+                          onChange={e => updateCandidate(c.id, "entrevistador", e.target.value)}
+                          placeholder="Asignar..."
+                          className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 bg-transparent"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="text"
+                          value={c.notas || ""}
+                          onChange={e => updateCandidate(c.id, "notas", e.target.value)}
+                          placeholder="Añadir nota..."
+                          className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 bg-transparent"
+                        />
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <button onClick={() => removeCandidate(c.id)} className="text-gray-300 hover:text-red-400 transition-colors text-xl leading-none" title="Eliminar candidato">×</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
 // DASHBOARD
 // ─────────────────────────────────────────────
 function getPipelineStats(process) {
@@ -1051,7 +1275,7 @@ function getPipelineStats(process) {
   return { applied: c.filter(x => x.phase === "applied").length, review: c.filter(x => x.phase === "review").length, interview: c.filter(x => x.phase === "interview").length, hired: c.filter(x => x.phase === "hired").length, rejected: c.filter(x => x.phase === "rejected").length, total: c.length };
 }
 
-function ProcessCard({ process, onStart, onToggle }) {
+function ProcessCard({ process, onView, onToggle }) {
   const stats = getPipelineStats(process);
   const isActive = process.status === "active";
   return (
@@ -1075,13 +1299,13 @@ function ProcessCard({ process, onStart, onToggle }) {
           <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{process.position?.hoursPerWeek}h/sem</span>
           {process.company?.salaryMin && <span className="text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full">{Number(process.company.salaryMin).toLocaleString()}–{Number(process.company.salaryMax).toLocaleString()} {process.company.currency}</span>}
         </div>
-        <button onClick={() => onStart(process)} className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors">Demo →</button>
+        <button onClick={() => onView(process)} className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors">Ver proceso →</button>
       </div>
     </div>
   );
 }
 
-function RecruiterDashboard({ processes, onNew, onStart, onToggle, user, onLogout }) {
+function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout }) {
   const active = processes.filter(p => p.status === "active").length;
   const totalCandidates = processes.reduce((s, p) => s + (p.candidates?.length || 0), 0);
   const hired = processes.reduce((s, p) => s + (p.candidates?.filter(c => c.phase === "hired").length || 0), 0);
@@ -1123,7 +1347,7 @@ function RecruiterDashboard({ processes, onNew, onStart, onToggle, user, onLogou
             <button onClick={onNew} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">+ Crear proceso</button>
           </div>
         ) : (
-          <div className="space-y-4">{processes.map(p => <ProcessCard key={p.id} process={p} onStart={onStart} onToggle={onToggle} />)}</div>
+          <div className="space-y-4">{processes.map(p => <ProcessCard key={p.id} process={p} onView={onView} onToggle={onToggle} />)}</div>
         )}
       </div>
     </div>
@@ -1191,7 +1415,12 @@ export default function App() {
   };
 
   const handleToggle = (id) => setProcesses(ps => ps.map(p => p.id === id ? { ...p, status: p.status === "active" ? "paused" : "active" } : p));
+  const handleViewProcess = (process) => { setActiveJob(process); setPhase("process_detail"); };
   const handleStartDemo = (process) => { setActiveJob(process); setPhase("preview"); };
+  const handleUpdateCandidates = (processId, updatedCandidates) => {
+    setProcesses(ps => ps.map(p => p.id === processId ? { ...p, candidates: updatedCandidates } : p));
+    setActiveJob(aj => aj && aj.id === processId ? { ...aj, candidates: updatedCandidates } : aj);
+  };
   const handleApply = (form) => { setCandidate(form); setPhase("exercises"); };
   const handleSubmit = (resps) => { setEvaluation(generateAIEvaluation(resps, activeJob)); setPhase("confirmation"); };
   const handleApprove = () => setPhase("scheduling");
@@ -1201,7 +1430,8 @@ export default function App() {
 
   if (authLoading) return <LoadingScreen />;
   if (!user) return <LoginScreen onLogin={handleLogin} loading={loginLoading} />;
-  if (phase === "dashboard") return <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onStart={handleStartDemo} onToggle={handleToggle} user={user} onLogout={handleLogout} />;
+  if (phase === "dashboard") return <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} />;
+  if (phase === "process_detail") { const liveProcess = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={liveProcess} onBack={goToDashboard} onUpdate={handleUpdateCandidates} user={user} onStartDemo={() => handleStartDemo(liveProcess)} />; }
   if (phase === "setup") return <RecruiterSetupScreen onPublish={handlePublish} onBack={goToDashboard} />;
   if (phase === "preview") return <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />;
   if (phase === "apply") return <CandidateApplyScreen job={activeJob} onNext={handleApply} />;
