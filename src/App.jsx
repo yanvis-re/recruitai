@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { auth, db, googleProvider, doc, getDoc, setDoc, signInWithPopup, signOut, onAuthStateChanged } from "./firebase.js";
+import { auth, db, googleProvider, doc, getDoc, setDoc, collection, addDoc, getDocs, signInWithPopup, signOut, onAuthStateChanged } from "./firebase.js";
 
 // ─────────────────────────────────────────────
 // UTILITY: AI evaluation engine (simulated)
@@ -341,7 +341,7 @@ function JobPreviewScreen({ job, onApply, onBack }) {
             <div className="flex items-start gap-4">
               <div className="w-16 h-16 bg-blue-600 rounded-xl flex items-center justify-center text-white text-2xl font-black flex-shrink-0">{job.company.name[0]}</div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900">{job.position.title}</h1>
+                <h1 className="text-xl font-bold text-gray-900">{job.position.title || getPositionTitle(job.position)}</h1>
                 <p className="text-blue-600 font-semibold">{job.company.name}</p>
                 <p className="text-gray-500 text-sm">{job.company.location} · {job.company.modality} · {job.position.contract}</p>
                 <div className="flex flex-wrap gap-2 mt-2">
@@ -390,7 +390,7 @@ function CandidateApplyScreen({ job, onNext }) {
       <div className="max-w-2xl mx-auto">
         <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-t-2xl p-6">
           <p className="text-purple-200 text-sm mb-1">Vista candidato</p>
-          <h1 className="text-xl font-bold">Aplicar a: {job.position.title}</h1>
+          <h1 className="text-xl font-bold">Aplicar a: {job.position.title || getPositionTitle(job.position)}</h1>
           <p className="text-purple-200 text-sm">{job.company.name} · {job.company.location}</p>
         </div>
 
@@ -1044,6 +1044,94 @@ function LoginScreen({ onLogin, loading }) {
 }
 
 // ─────────────────────────────────────────────
+// SCREEN: PUBLIC CANDIDATE APPLICATION
+// (accesible sin login, via link único)
+// ─────────────────────────────────────────────
+function CandidatePublicScreen({ processId }) {
+  const [processData, setProcessData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [phase, setPhase] = useState("preview");
+  const [candidate, setCandidate] = useState(null);
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const snap = await getDoc(doc(db, "publicProcesses", processId));
+        if (snap.exists()) {
+          setProcessData(snap.data());
+        } else {
+          setError("Este proceso no está disponible o el link ha expirado.");
+        }
+      } catch (e) {
+        setError("No se pudo cargar el proceso. Comprueba tu conexión e inténtalo de nuevo.");
+      }
+      setLoading(false);
+    };
+    load();
+  }, [processId]);
+
+  const handleSubmit = async (responses) => {
+    setSubmitting(true);
+    try {
+      await addDoc(collection(db, "publicProcesses", processId, "applications"), {
+        name: candidate?.name || "",
+        email: candidate?.email || "",
+        phone: candidate?.phone || "",
+        linkedin: candidate?.linkedin || "",
+        presentation: candidate?.presentation || "",
+        responses,
+        submittedAt: new Date().toISOString(),
+        estado: "Pendiente",
+        progreso: "Ingreso",
+        entrevistador: "",
+        notas: "",
+        phase: "applied",
+      });
+      setSubmitted(true);
+    } catch (e) {
+      console.error("Error guardando aplicación:", e);
+      alert("Hubo un error al enviar tu solicitud. Por favor, inténtalo de nuevo.");
+    }
+    setSubmitting(false);
+  };
+
+  if (loading) return <LoadingScreen />;
+
+  if (error) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-10 max-w-md w-full text-center">
+        <p className="text-4xl mb-4">⚠️</p>
+        <h2 className="font-bold text-gray-800 mb-2">Proceso no disponible</h2>
+        <p className="text-gray-500 text-sm">{error}</p>
+      </div>
+    </div>
+  );
+
+  if (submitted) return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-10 max-w-md w-full text-center">
+        <div className="text-5xl mb-4">🎉</div>
+        <h2 className="text-2xl font-black text-gray-900 mb-2">¡Solicitud enviada!</h2>
+        <p className="text-gray-500 mb-4">Hemos recibido tu candidatura para <strong>{processData?.company?.name}</strong>. El equipo revisará tu perfil y te contactará en breve.</p>
+        <div className="bg-blue-50 rounded-xl p-4 text-left text-sm text-blue-700 space-y-1">
+          <p>✅ Datos personales recibidos</p>
+          <p>✅ Ejercicios prácticos enviados</p>
+          <p>📧 Recibirás confirmación en {candidate?.email}</p>
+        </div>
+      </div>
+    </div>
+  );
+
+  if (phase === "preview") return <JobPreviewScreen job={processData} onApply={() => setPhase("apply")} onBack={null} isPublic />;
+  if (phase === "apply") return <CandidateApplyScreen job={processData} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />;
+  if (phase === "exercises") return <ExercisesScreen job={processData} candidate={candidate} onSubmit={handleSubmit} submitting={submitting} />;
+  return null;
+}
+
+// ─────────────────────────────────────────────
 // SCREEN: PROCESS DETAIL (Candidate Pipeline)
 // ─────────────────────────────────────────────
 const ESTADO_OPTIONS = ["Pendiente", "Primera entrevista", "Segunda entrevista", "En cartera", "Descartado", "Contratado"];
@@ -1083,6 +1171,11 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
+  const [publicLink, setPublicLink] = useState(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importCount, setImportCount] = useState(0);
 
   const updateCandidate = (id, field, value) => {
     const updated = candidates.map(c => c.id === id ? { ...c, [field]: value } : c);
@@ -1115,6 +1208,55 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo }) {
     const updated = candidates.filter(c => c.id !== id);
     setCandidates(updated);
     onUpdate(process.id, updated);
+  };
+
+  const generatePublicLink = async () => {
+    setPublishing(true);
+    try {
+      await setDoc(doc(db, "publicProcesses", process.id), {
+        ...process,
+        publishedAt: new Date().toISOString(),
+      });
+      const url = `${window.location.origin}/#apply/${process.id}`;
+      setPublicLink(url);
+      await navigator.clipboard.writeText(url);
+      setLinkCopied(true);
+      setTimeout(() => setLinkCopied(false), 3000);
+    } catch (e) {
+      console.error("Error publicando:", e);
+      alert("Error al generar el link. Inténtalo de nuevo.");
+    }
+    setPublishing(false);
+  };
+
+  const copyLink = async () => {
+    if (!publicLink) return;
+    await navigator.clipboard.writeText(publicLink);
+    setLinkCopied(true);
+    setTimeout(() => setLinkCopied(false), 2000);
+  };
+
+  const importApplications = async () => {
+    setImporting(true);
+    try {
+      const snap = await getDocs(collection(db, "publicProcesses", process.id, "applications"));
+      const apps = snap.docs.map(d => ({ id: `app_${d.id}`, ...d.data() }));
+      const existingIds = new Set(candidates.map(c => c.id));
+      const newApps = apps.filter(a => !existingIds.has(a.id));
+      if (newApps.length > 0) {
+        const updated = [...candidates, ...newApps];
+        setCandidates(updated);
+        onUpdate(process.id, updated);
+        setImportCount(newApps.length);
+        setTimeout(() => setImportCount(0), 4000);
+      } else {
+        setImportCount(-1);
+        setTimeout(() => setImportCount(0), 3000);
+      }
+    } catch (e) {
+      console.error("Error importando:", e);
+    }
+    setImporting(false);
   };
 
   const statsByEstado = ESTADO_OPTIONS.map(e => ({
@@ -1161,6 +1303,36 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo }) {
               <p className="text-xs leading-tight mt-1 opacity-80">{label}</p>
             </div>
           ))}
+        </div>
+
+        {/* Link público */}
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="font-bold text-gray-800 text-sm">🔗 Link público para candidatos</p>
+              <p className="text-xs text-gray-400 mt-0.5">Genera un link único que los candidatos pueden abrir desde cualquier dispositivo para aplicar.</p>
+            </div>
+            <div className="flex gap-2 flex-wrap">
+              {publicLink && (
+                <button onClick={importApplications} disabled={importing} className="px-3 py-2 border border-blue-200 text-blue-600 rounded-lg text-xs font-semibold hover:bg-blue-50 transition-colors disabled:opacity-50">
+                  {importing ? "Importando..." : "⬇ Importar candidatos"}
+                </button>
+              )}
+              <button onClick={generatePublicLink} disabled={publishing} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50">
+                {publishing ? "Publicando..." : publicLink ? "🔄 Regenerar link" : "🚀 Generar link público"}
+              </button>
+            </div>
+          </div>
+          {publicLink && (
+            <div className="mt-3 flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
+              <span className="text-xs text-gray-500 font-mono flex-1 truncate">{publicLink}</span>
+              <button onClick={copyLink} className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors shrink-0 ${linkCopied ? "bg-green-100 text-green-700" : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-100"}`}>
+                {linkCopied ? "✓ Copiado" : "Copiar"}
+              </button>
+            </div>
+          )}
+          {importCount > 0 && <p className="text-xs text-green-600 font-semibold mt-2">✅ {importCount} nueva{importCount > 1 ? "s" : ""} candidatura{importCount > 1 ? "s" : ""} importada{importCount > 1 ? "s" : ""}</p>}
+          {importCount === -1 && <p className="text-xs text-gray-400 mt-2">No hay candidaturas nuevas por importar.</p>}
         </div>
 
         {/* Candidate Table */}
@@ -1358,6 +1530,15 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
 // APP — Firebase auth + Firestore
 // ─────────────────────────────────────────────
 export default function App() {
+  // Detectar si la URL es un link de candidato (#apply/processId)
+  const [publicProcessId] = useState(() => {
+    const m = window.location.hash.match(/^#apply\/(.+)$/);
+    return m ? m[1] : null;
+  });
+
+  // Si es un link público, mostrar la pantalla de candidato directamente (sin auth)
+  if (publicProcessId) return <CandidatePublicScreen processId={publicProcessId} />;
+
   const [phase, setPhase] = useState("dashboard");
   const [processes, setProcesses] = useState(MOCK_PROCESSES);
   const [activeJob, setActiveJob] = useState(null);
