@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { auth, db, googleProvider, doc, getDoc, setDoc, collection, addDoc, getDocs, signInWithPopup, signOut, onAuthStateChanged } from "./firebase.js";
 
 // ─── AI evaluation (simulated fallback) ───────────────────────────────────────
@@ -563,6 +563,53 @@ function CandidatePublicScreen({ processId }) {
 // ─── AGENCY SETTINGS MODAL ───────────────────────────────────────────────────
 function AgencySettingsModal({ settings, onSave, onClose }) {
   const [brandManual, setBrandManual] = useState(settings?.brandManual || "");
+  const [tab, setTab] = useState("text"); // "text" | "upload"
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [fileName, setFileName] = useState("");
+  const fileRef = useRef(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploadError("");
+    setUploading(true);
+    setFileName(file.name);
+    try {
+      const ext = file.name.split(".").pop().toLowerCase();
+      if (ext === "txt") {
+        const text = await file.text();
+        setBrandManual(text);
+        setTab("text");
+      } else if (ext === "docx") {
+        const mammoth = await import("mammoth");
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        setBrandManual(result.value);
+        setTab("text");
+      } else if (ext === "pdf") {
+        // Basic PDF text extraction via PDF.js from CDN
+        const pdfjsLib = await import("https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = "";
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          fullText += content.items.map(item => item.str).join(" ") + "\n";
+        }
+        setBrandManual(fullText.trim());
+        setTab("text");
+      } else {
+        setUploadError("Formato no soportado. Usa .txt, .docx o .pdf");
+      }
+    } catch (err) {
+      setUploadError("Error al leer el archivo. Prueba con .txt o copia el texto manualmente.");
+    }
+    setUploading(false);
+  };
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
@@ -571,12 +618,48 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
         </div>
         <div className="p-6 space-y-4">
-          <div>
-            <label className={lbl}>Manual de marca / Valores de la agencia</label>
-            <textarea className={inp} rows={10} value={brandManual} onChange={e => setBrandManual(e.target.value)}
-              placeholder={"Pega aquí tu manual de marca o los valores clave de tu agencia.\n\nEjemplo:\n- Somos una agencia orientada a resultados medibles...\n- Buscamos perfiles que se alineen con nuestros valores de...\n- Tono: cercano, profesional, directo..."} />
-            <p className="text-xs text-gray-400 mt-1">La IA usará este texto para evaluar la alineación cultural de cada candidato con tu agencia.</p>
+          {/* Tab toggle */}
+          <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+            <button onClick={() => setTab("text")} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${tab === "text" ? "bg-white shadow text-gray-800" : "text-gray-500 hover:text-gray-700"}`}>
+              ✏️ Escribir / Pegar texto
+            </button>
+            <button onClick={() => setTab("upload")} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${tab === "upload" ? "bg-white shadow text-gray-800" : "text-gray-500 hover:text-gray-700"}`}>
+              📄 Subir documento
+            </button>
           </div>
+
+          {tab === "text" && (
+            <div>
+              <label className={lbl}>Manual de marca / Valores de la agencia</label>
+              <textarea className={inp} rows={10} value={brandManual} onChange={e => setBrandManual(e.target.value)}
+                placeholder={"Pega aquí tu manual de marca o los valores clave de tu agencia.\n\nEjemplo:\n- Somos una agencia orientada a resultados medibles...\n- Buscamos perfiles que se alineen con nuestros valores de...\n- Tono: cercano, profesional, directo..."} />
+              {fileName && <p className="text-xs text-green-600 mt-1">✓ Extraído de: {fileName}</p>}
+              <p className="text-xs text-gray-400 mt-1">La IA usará este texto para evaluar la alineación cultural de cada candidato.</p>
+            </div>
+          )}
+
+          {tab === "upload" && (
+            <div>
+              <label className={lbl}>Sube tu documento de marca</label>
+              <div
+                onClick={() => fileRef.current?.click()}
+                className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all"
+              >
+                {uploading ? (
+                  <p className="text-sm text-blue-600 font-medium">Extrayendo texto...</p>
+                ) : (
+                  <>
+                    <p className="text-3xl mb-2">📁</p>
+                    <p className="text-sm font-medium text-gray-700">Haz clic para seleccionar archivo</p>
+                    <p className="text-xs text-gray-400 mt-1">Formatos: .txt, .docx, .pdf</p>
+                  </>
+                )}
+              </div>
+              <input ref={fileRef} type="file" accept=".txt,.docx,.pdf" onChange={handleFile} className="hidden" />
+              {uploadError && <p className="text-xs text-red-500 mt-2">{uploadError}</p>}
+              <p className="text-xs text-gray-400 mt-2">El texto del documento se cargará automáticamente y podrás editarlo antes de guardar.</p>
+            </div>
+          )}
         </div>
         <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
           <button onClick={onClose} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">Cancelar</button>
