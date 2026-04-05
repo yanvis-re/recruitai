@@ -12,6 +12,7 @@
     "@anthropic-ai/sdk": "^0.24.0",
     "firebase": "^10.8.0",
     "mammoth": "^1.6.0",
+    "pdfjs-dist": "^3.11.174",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
