@@ -1,9 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { auth, db, googleProvider, doc, getDoc, setDoc, collection, addDoc, getDocs, signInWithPopup, signOut, onAuthStateChanged } from "./firebase.js";
 
-// ─────────────────────────────────────────────
-// UTILITY: AI evaluation engine (simulated)
-// ─────────────────────────────────────────────
+// ─── AI evaluation (simulated fallback) ───────────────────────────────────────
 function generateAIEvaluation(responses, jobData) {
   const evaluations = jobData.exercises.map((exercise) => {
     const resp = responses.find((r) => r.exerciseId === exercise.id);
@@ -26,37 +24,20 @@ function generateAIEvaluation(responses, jobData) {
   });
   const overall = Math.round(evaluations.reduce((s, e) => s + e.pct, 0) / evaluations.length);
   let rec, summary;
-  if (overall >= 78) { rec = "AVANZAR"; summary = "El candidato muestra un perfil técnico sólido y bien argumentado. La IA recomienda avanzar a la fase de entrevista."; }
-  else if (overall >= 55) { rec = "REVISAR"; summary = "El candidato presenta aspectos positivos pero también áreas de mejora. Se recomienda revisar en detalle antes de decidir."; }
-  else { rec = "DESCARTAR"; summary = "El candidato no alcanza el nivel mínimo requerido. La IA no recomienda avanzar en el proceso."; }
+  if (overall >= 78) { rec = "AVANZAR"; summary = "El candidato muestra un perfil técnico sólido y bien argumentado."; }
+  else if (overall >= 55) { rec = "REVISAR"; summary = "El candidato presenta aspectos positivos pero también áreas de mejora."; }
+  else { rec = "DESCARTAR"; summary = "El candidato no alcanza el nivel mínimo requerido."; }
   return { evaluations, overall, rec, summary };
 }
 
 function generateInterviewAnalysis(name) {
   return {
     transcript: [
-      { who: "Reclutador", text: `Buenos días, ${name.split(" ")[0]}. ¿Puedes presentarte brevemente y contarme tu experiencia más relevante para esta posición?` },
-      { who: name, text: "Buenos días. Llevo 6 años en marketing digital, con los últimos 3 especializados en Paid Media. He gestionado presupuestos de hasta 500k€ anuales y lideré un equipo de 4 media buyers. Me apasiona combinar el dato con la estrategia creativa." },
-      { who: "Reclutador", text: "¿Cuál ha sido tu mayor reto profesional y cómo lo resolviste?" },
-      { who: name, text: "Sin duda, la migración post-iOS 14. Rediseñamos el modelo de atribución, implementamos server-side tracking y creamos dashboards propios. En un trimestre recuperamos el ROAS objetivo y el cliente amplió presupuesto." },
-      { who: "Reclutador", text: "¿Cómo gestionas la presión con múltiples clientes simultáneos?" },
-      { who: name, text: "Trabajo con sprints semanales, priorización por impacto-urgencia y alertas tempranas. Me anticipo a los problemas antes de que escalen al cliente." },
-      { who: "Reclutador", text: "¿Cómo entiendes el encaje con la cultura de trabajo de esta agencia?" },
-      { who: name, text: "Valoro la autonomía, la orientación a resultados y la confianza mutua. Me considero alguien que propone, no solo ejecuta." },
+      { who: "Reclutador", text: `Buenos días, ${name.split(" ")[0]}. ¿Puedes presentarte brevemente?` },
+      { who: name, text: "Buenos días. Llevo 6 años en marketing digital, con los últimos 3 especializados en Paid Media." },
     ],
-    candidate: {
-      score: 84,
-      strengths: ["Experiencia técnica multiplataforma sólida", "Capacidad de liderazgo con casos concretos", "Pensamiento estratégico y orientación a datos", "Comunicación clara y segura"],
-      gaps: ["Podría profundizar más en gestión de equipos 100% remotos", "Faltó mencionar experiencia con infoproductos"],
-      rec: "CONTRATAR",
-      summary: `${name} demuestra un perfil técnico y estratégico muy sólido. Se recomienda avanzar a oferta.`,
-    },
-    recruiter: {
-      score: 72,
-      did_well: ["Preguntas bien estructuradas y progresivas", "Tono profesional y cercano durante toda la entrevista"],
-      improve: ["Faltó explorar motivaciones intrínsecas y proyección de carrera", "No se utilizaron preguntas STAR de forma sistemática"],
-      tips: ["Incluir 2-3 preguntas STAR (Situación, Tarea, Acción, Resultado)", "Reservar los últimos 5 min para que el candidato pregunte", "Tomar notas estructuradas durante la entrevista"],
-    },
+    candidate: { score: 84, strengths: ["Experiencia técnica sólida", "Pensamiento estratégico"], gaps: ["Podría profundizar más en gestión remota"], rec: "CONTRATAR", summary: `${name} demuestra un perfil técnico y estratégico muy sólido.` },
+    recruiter: { score: 72, did_well: ["Preguntas bien estructuradas"], improve: ["Faltó explorar motivaciones intrínsecas"], tips: ["Incluir preguntas STAR", "Reservar 5 min para preguntas del candidato"] },
   };
 }
 
@@ -89,19 +70,12 @@ function ProgressStepper({ current }) {
   );
 }
 
-function PhaseBadge({ phase }) {
-  const map = { applied: { cls: "bg-blue-100 text-blue-700", label: "Aplicó" }, review: { cls: "bg-yellow-100 text-yellow-700", label: "En revisión" }, interview: { cls: "bg-purple-100 text-purple-700", label: "Entrevista" }, hired: { cls: "bg-green-100 text-green-700", label: "Contratado" }, rejected: { cls: "bg-red-100 text-red-700", label: "Descartado" } };
-  const c = map[phase] || { cls: "bg-gray-100 text-gray-600", label: phase };
-  return <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${c.cls}`}>{c.label}</span>;
-}
-
 const inp = "w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white";
 const lbl = "block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1";
 
 const MOCK_PROCESSES = [
-  { id: "p1", status: "active", createdAt: "2026-03-10", company: { name: "Proelia Digital", sector: "Marketing Digital", location: "Madrid / Remoto", modality: "Remoto", salaryMin: "40000", salaryMax: "55000", currency: "EUR", description: "Agencia especializada en infoproductos." }, position: { positionType: "media_buyer", specialty: "", customTitle: "", responsibilities: "Liderar la estrategia de paid media.", skills: "Meta Ads, Google Ads, TikTok Ads, liderazgo", experience: "5", contract: "Freelance", hoursPerWeek: "20", schedule: "Flexible", benefits: "" }, exercises: [{ id: 1, title: "Ejercicio Estratégico", description: "Diseña una estrategia de paid media para un lanzamiento de curso online.", criteria: [{ area: "Diagnóstico estratégico", indicators: "Análisis coherente con la situación del cliente", maxScore: 5 }, { area: "Funnel y táctica", indicators: "Claridad en campañas y fases", maxScore: 5 }] }], candidates: [{ id: "c1", name: "Laura Martínez", email: "laura@example.com", phase: "review" }, { id: "c2", name: "Carlos Ruiz", email: "carlos@example.com", phase: "applied" }, { id: "c3", name: "Ana Gómez", email: "ana@example.com", phase: "interview" }, { id: "c4", name: "Pedro Sanz", email: "pedro@example.com", phase: "hired" }] },
-  { id: "p2", status: "active", createdAt: "2026-02-20", company: { name: "Proelia Digital", sector: "Marketing Digital", location: "Remoto", modality: "Remoto", salaryMin: "28000", salaryMax: "38000", currency: "EUR", description: "" }, position: { positionType: "media_buyer", specialty: "", customTitle: "", responsibilities: "Gestión de campañas de paid media.", skills: "Meta Ads, Google Ads, análisis de datos", experience: "3", contract: "Contrato directo", hoursPerWeek: "40", schedule: "Mañanas", benefits: "Formación continua" }, exercises: [{ id: 1, title: "Caso Práctico", description: "Analiza las métricas de una cuenta y propón mejoras.", criteria: [{ area: "Análisis de datos", indicators: "Lectura correcta de métricas", maxScore: 5 }] }], candidates: [{ id: "c5", name: "Marta López", email: "marta@example.com", phase: "applied" }, { id: "c6", name: "Javier Torres", email: "javier@example.com", phase: "rejected" }] },
-  { id: "p3", status: "paused", createdAt: "2026-01-15", company: { name: "Proelia Digital", sector: "Marketing Digital", location: "Remoto", modality: "Remoto", salaryMin: "24000", salaryMax: "32000", currency: "EUR", description: "" }, position: { positionType: "copywriter", specialty: "Email Marketing", customTitle: "", responsibilities: "Crear y gestionar contenido estratégico.", skills: "Copywriting, SEO, email marketing", experience: "2", contract: "Freelance", hoursPerWeek: "15", schedule: "Flexible", benefits: "" }, exercises: [{ id: 1, title: "Ejercicio de Copy", description: "Escribe una secuencia de 3 emails de venta para un infoproducto.", criteria: [{ area: "Persuasión y estructura", indicators: "Claridad del mensaje y llamada a la acción", maxScore: 5 }] }], candidates: [{ id: "c7", name: "Sofía Blanco", email: "sofia@example.com", phase: "hired" }] },
+  { id: "p1", status: "active", createdAt: "2026-03-10", company: { name: "Proelia Digital", sector: "Marketing Digital", location: "Madrid / Remoto", modality: "Remoto", salaryMin: "40000", salaryMax: "55000", currency: "EUR", description: "Agencia especializada en infoproductos." }, position: { positionType: "media_buyer", specialty: "", customTitle: "", responsibilities: "Liderar la estrategia de paid media.", skills: "Meta Ads, Google Ads, TikTok Ads", experience: "5", contract: "Freelance", hoursPerWeek: "20", schedule: "Flexible", benefits: "" }, exercises: [{ id: 1, title: "Ejercicio Estratégico", description: "Diseña una estrategia de paid media para un lanzamiento de curso online.", criteria: [{ area: "Diagnóstico estratégico", indicators: "Análisis coherente", maxScore: 5 }, { area: "Funnel y táctica", indicators: "Claridad en campañas", maxScore: 5 }] }], candidates: [{ id: "c1", name: "Laura Martínez", email: "laura@example.com", phase: "review", estado: "Primera entrevista", progreso: "Entrevista", entrevistador: "", notas: "" }, { id: "c2", name: "Carlos Ruiz", email: "carlos@example.com", phase: "applied", estado: "Pendiente", progreso: "Ingreso", entrevistador: "", notas: "" }] },
+  { id: "p2", status: "active", createdAt: "2026-02-20", company: { name: "Proelia Digital", sector: "Marketing Digital", location: "Remoto", modality: "Remoto", salaryMin: "28000", salaryMax: "38000", currency: "EUR", description: "" }, position: { positionType: "media_buyer", specialty: "", customTitle: "", responsibilities: "Gestión de campañas.", skills: "Meta Ads, Google Ads", experience: "3", contract: "Contrato directo", hoursPerWeek: "40", schedule: "Mañanas", benefits: "Formación continua" }, exercises: [{ id: 1, title: "Caso Práctico", description: "Analiza las métricas de una cuenta y propón mejoras.", criteria: [{ area: "Análisis de datos", indicators: "Lectura correcta de métricas", maxScore: 5 }] }], candidates: [{ id: "c5", name: "Marta López", email: "marta@example.com", phase: "applied", estado: "Pendiente", progreso: "Prueba técnica", entrevistador: "", notas: "" }] },
 ];
 
 const POSITIONS = [
@@ -170,10 +144,11 @@ function getPositionTitle(position) {
 }
 
 const defaultJob = {
-  company: { name: "Proelia Digital", description: "Agencia de marketing digital especializada en infoproductos y lanzamientos online.", sector: "Marketing Digital", location: "Madrid / Remoto", modality: "Remoto", salaryMin: "", salaryMax: "", currency: "EUR" },
+  company: { name: "Proelia Digital", description: "Agencia de marketing digital especializada en infoproductos.", sector: "Marketing Digital", location: "Madrid / Remoto", modality: "Remoto", salaryMin: "", salaryMax: "", currency: "EUR" },
   position: { positionType: "media_buyer", specialty: "", customTitle: "", responsibilities: "", skills: "", experience: "3", contract: "Freelance", hoursPerWeek: "20", schedule: "Flexible", benefits: "" },
-  exercises: [{ id: 1, title: "Ejercicio Práctico", description: "", criteria: [{ area: "Análisis y diagnóstico", indicators: "Capacidad de identificar el problema y proponer soluciones", maxScore: 5 }, { area: "Propuesta estratégica", indicators: "Coherencia y calidad de la propuesta presentada", maxScore: 5 }] }],
+  exercises: [{ id: 1, title: "Ejercicio Práctico", description: "", criteria: [{ area: "Análisis y diagnóstico", indicators: "Capacidad de identificar el problema y proponer soluciones", maxScore: 5 }, { area: "Propuesta estratégica", indicators: "Coherencia y calidad de la propuesta", maxScore: 5 }] }],
 };
+
 function RecruiterSetupScreen({ onPublish, onBack }) {
   const [step, setStep] = useState(0);
   const [data, setData] = useState(defaultJob);
@@ -195,14 +170,9 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
           <button onClick={onBack} className="text-gray-400 hover:text-gray-600 text-sm">← Volver al panel</button>
           <div className="w-px h-4 bg-gray-200" />
           <span className="text-2xl font-black text-blue-600">RecruitAI</span>
-          <span className="text-xs text-gray-400">/ Nuevo proceso</span>
         </div>
       </div>
       <div className="max-w-3xl mx-auto p-6">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white">⚙️</div>
-          <div><h1 className="text-xl font-bold text-gray-900">Configurar proceso de selección</h1><p className="text-gray-400 text-sm">Paso {step + 1} de 3 — {tabs[step]}</p></div>
-        </div>
         <div className="flex gap-2 mb-6">
           {tabs.map((t, i) => <button key={t} onClick={() => i < step && setStep(i)} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${i === step ? "bg-blue-600 text-white shadow" : i < step ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}`}>{i < step ? "✓ " : ""}{t}</button>)}
         </div>
@@ -212,7 +182,7 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
               <h2 className="font-bold text-gray-800 mb-4">Información de la empresa contratadora</h2>
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2"><label className={lbl}>Nombre de la empresa *</label><input className={inp} value={data.company.name} onChange={e => upC("name", e.target.value)} /></div>
-                <div className="col-span-2"><label className={lbl}>Descripción de la empresa</label><textarea className={inp} rows={3} value={data.company.description} onChange={e => upC("description", e.target.value)} /></div>
+                <div className="col-span-2"><label className={lbl}>Descripción</label><textarea className={inp} rows={3} value={data.company.description} onChange={e => upC("description", e.target.value)} /></div>
                 <div><label className={lbl}>Sector</label><input className={inp} value={data.company.sector} onChange={e => upC("sector", e.target.value)} /></div>
                 <div><label className={lbl}>Ubicación</label><input className={inp} value={data.company.location} onChange={e => upC("location", e.target.value)} /></div>
                 <div><label className={lbl}>Modalidad</label><select className={inp} value={data.company.modality} onChange={e => upC("modality", e.target.value)}>{["Remoto", "Presencial", "Híbrido"].map(m => <option key={m}>{m}</option>)}</select></div>
@@ -227,7 +197,7 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                 <div className="grid grid-cols-3 gap-2 mt-1">
                   {POSITIONS.map(pos => (
                     <button key={pos.id} type="button" onClick={() => { upP("positionType", pos.id); upP("specialty", ""); }}
-                      className={`p-3 rounded-xl border-2 text-left transition-all ${data.position.positionType === pos.id ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-blue-300 hover:bg-gray-50"}`}>
+                      className={`p-3 rounded-xl border-2 text-left transition-all ${data.position.positionType === pos.id ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-blue-300"}`}>
                       <div className="text-xl mb-1">{pos.icon}</div>
                       <p className={`text-xs font-semibold leading-tight ${data.position.positionType === pos.id ? "text-blue-700" : "text-gray-700"}`}>{pos.label}</p>
                     </button>
@@ -235,9 +205,9 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                 </div>
               </div>
               {(() => { const pos = POSITIONS.find(p => p.id === data.position.positionType); return pos && pos.specialties.length > 0 ? (<div><label className={lbl}>Especialidad</label><div className="flex flex-wrap gap-2 mt-1">{pos.specialties.map(sp => (<button key={sp} type="button" onClick={() => upP("specialty", data.position.specialty === sp ? "" : sp)} className={`px-3 py-1.5 rounded-lg text-sm font-medium border-2 transition-all ${data.position.specialty === sp ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-200 text-gray-600 hover:border-blue-300"}`}>{sp}</button>))}</div></div>) : null; })()}
-              {data.position.positionType === "otro" && (<div><label className={lbl}>Nombre del puesto personalizado *</label><input className={inp} value={data.position.customTitle || ""} onChange={e => upP("customTitle", e.target.value)} placeholder="ej. Growth Hacker, SEO Specialist..." /></div>)}
-              <div><label className={lbl}>Responsabilidades principales</label><textarea className={inp} rows={3} value={data.position.responsibilities} onChange={e => upP("responsibilities", e.target.value)} /></div>
-              <div><label className={lbl}>Habilidades requeridas (separadas por comas)</label><textarea className={inp} rows={2} value={data.position.skills} onChange={e => upP("skills", e.target.value)} /></div>
+              {data.position.positionType === "otro" && (<div><label className={lbl}>Nombre personalizado *</label><input className={inp} value={data.position.customTitle || ""} onChange={e => upP("customTitle", e.target.value)} placeholder="ej. Growth Hacker..." /></div>)}
+              <div><label className={lbl}>Responsabilidades</label><textarea className={inp} rows={3} value={data.position.responsibilities} onChange={e => upP("responsibilities", e.target.value)} /></div>
+              <div><label className={lbl}>Habilidades requeridas</label><textarea className={inp} rows={2} value={data.position.skills} onChange={e => upP("skills", e.target.value)} /></div>
               <div className="border border-gray-200 rounded-xl p-4 space-y-4 bg-gray-50">
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Condiciones del contrato</p>
                 <div>
@@ -249,47 +219,38 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                   </div>
                 </div>
                 <SalaryWidget positionType={data.position.positionType} contract={data.position.contract} onApplyRanges={applySalary} />
-                {salaryApplied && (<div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700 font-medium"><span>✅</span> Rango aplicado — puedes ajustarlo a continuación</div>)}
+                {salaryApplied && (<div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700 font-medium"><span>✅</span> Rango aplicado</div>)}
                 <div className="grid grid-cols-3 gap-3">
                   <div><label className={lbl}>Moneda</label><select className={inp} value={data.company.currency} onChange={e => upC("currency", e.target.value)}>{["EUR", "USD", "GBP", "MXN"].map(m => <option key={m}>{m}</option>)}</select></div>
-                  <div><label className={lbl}>Salario mín./año</label><input className={inp} type="number" placeholder="ej. 28000" value={data.company.salaryMin} onChange={e => upC("salaryMin", e.target.value)} /></div>
-                  <div><label className={lbl}>Salario máx./año</label><input className={inp} type="number" placeholder="ej. 40000" value={data.company.salaryMax} onChange={e => upC("salaryMax", e.target.value)} /></div>
+                  <div><label className={lbl}>Salario mín./año</label><input className={inp} type="number" value={data.company.salaryMin} onChange={e => upC("salaryMin", e.target.value)} /></div>
+                  <div><label className={lbl}>Salario máx./año</label><input className={inp} type="number" value={data.company.salaryMax} onChange={e => upC("salaryMax", e.target.value)} /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className={lbl}>Horas semanales * <span className="text-gray-400 normal-case font-normal">(máx. 40h)</span></label>
-                    <input className={inp + (parseInt(data.position.hoursPerWeek) > 40 ? " border-red-400" : "")} type="number" min={1} max={40} value={data.position.hoursPerWeek} onChange={e => upP("hoursPerWeek", Math.min(40, parseInt(e.target.value) || 0).toString())} placeholder="ej. 20" />
-                    {parseInt(data.position.hoursPerWeek) >= 40 && <p className="text-xs text-orange-500 mt-1">⚠️ Límite máximo: 40h semanales</p>}
-                  </div>
-                  <div>
-                    <label className={lbl}>Horario *</label>
-                    <div className="flex flex-col gap-1.5 mt-1">
-                      {[["Mañanas", "🌅"], ["Tardes", "🌆"], ["Flexible", "🕐"]].map(([h, icon]) => (<button key={h} type="button" onClick={() => upP("schedule", h)} className={`py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${data.position.schedule === h ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-200 text-gray-500 hover:border-blue-200"}`}>{icon} {h}</button>))}
-                    </div>
-                  </div>
+                  <div><label className={lbl}>Horas semanales (máx. 40h)</label><input className={inp} type="number" min={1} max={40} value={data.position.hoursPerWeek} onChange={e => upP("hoursPerWeek", Math.min(40, parseInt(e.target.value) || 0).toString())} /></div>
+                  <div><label className={lbl}>Horario</label><div className="flex flex-col gap-1.5 mt-1">{[["Mañanas", "🌅"], ["Tardes", "🌆"], ["Flexible", "🕐"]].map(([h, icon]) => (<button key={h} type="button" onClick={() => upP("schedule", h)} className={`py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${data.position.schedule === h ? "border-blue-500 bg-blue-50 text-blue-700" : "border-gray-200 text-gray-500"}`}>{icon} {h}</button>))}</div></div>
                 </div>
-                <div><label className={lbl}>Años de experiencia mínimos</label><input className={inp} type="number" min={0} max={20} value={data.position.experience} onChange={e => upP("experience", e.target.value)} /></div>
-                <div><label className={lbl}>Otros beneficios</label><textarea className={inp} rows={2} value={data.position.benefits} onChange={e => upP("benefits", e.target.value)} placeholder="ej. Formación continua, herramientas incluidas..." /></div>
+                <div><label className={lbl}>Años de experiencia</label><input className={inp} type="number" min={0} max={20} value={data.position.experience} onChange={e => upP("experience", e.target.value)} /></div>
+                <div><label className={lbl}>Otros beneficios</label><textarea className={inp} rows={2} value={data.position.benefits} onChange={e => upP("benefits", e.target.value)} /></div>
               </div>
             </div>
           )}
           {step === 2 && (
             <div>
               <div className="flex justify-between items-center mb-2">
-                <h2 className="font-bold text-gray-800">Ejercicios prácticos y criterios</h2>
+                <h2 className="font-bold text-gray-800">Ejercicios prácticos</h2>
                 <button onClick={addEx} className="text-sm bg-blue-50 text-blue-600 px-4 py-1.5 rounded-lg font-medium hover:bg-blue-100">+ Añadir ejercicio</button>
               </div>
-              <p className="text-xs text-gray-400 mb-4">Cada ejercicio requiere respuesta escrita + vídeo de defensa del candidato.</p>
+              <p className="text-xs text-gray-400 mb-4">Cada ejercicio requiere respuesta escrita + vídeo de defensa en Loom.</p>
               {data.exercises.map(ex => (
                 <div key={ex.id} className="border border-gray-200 rounded-xl p-4 mb-4 bg-gray-50">
                   <div className="flex items-center gap-2 mb-3">
-                    <input className="flex-1 bg-transparent border-b border-dashed border-gray-300 text-sm font-bold text-gray-800 focus:outline-none focus:border-blue-400 pb-1" value={ex.title} onChange={e => upEx(ex.id, "title", e.target.value)} />
+                    <input className="flex-1 bg-transparent border-b border-dashed border-gray-300 text-sm font-bold text-gray-800 focus:outline-none pb-1" value={ex.title} onChange={e => upEx(ex.id, "title", e.target.value)} />
                     {data.exercises.length > 1 && <button onClick={() => delEx(ex.id)} className="text-red-300 hover:text-red-500 text-xl">×</button>}
                   </div>
                   <div className="mb-4">
                     <label className={lbl}>Enunciado del ejercicio</label>
-                    <textarea className={inp + " bg-white"} rows={4} value={ex.description} onChange={e => upEx(ex.id, "description", e.target.value)} placeholder="Describe el reto o caso que el candidato deberá resolver..." />
-                    <p className="text-xs text-blue-500 mt-1.5 flex items-center gap-1.5"><span>💡</span><span>Cuanto más detallado sea el enunciado, mejores respuestas recibirás del candidato.</span></p>
+                    <textarea className={inp + " bg-white"} rows={4} value={ex.description} onChange={e => upEx(ex.id, "description", e.target.value)} placeholder="Describe el reto que el candidato deberá resolver..." />
+                    <p className="text-xs text-blue-500 mt-1.5 flex items-center gap-1.5"><span>💡</span>Cuanto más detallado sea el enunciado, mejores respuestas recibirás.</p>
                   </div>
                   <div>
                     <div className="flex justify-between items-center mb-2"><label className={lbl}>Criterios de evaluación</label><button onClick={() => addCr(ex.id)} className="text-xs text-blue-500 hover:underline">+ Criterio</button></div>
@@ -297,11 +258,11 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                       <div key={ci} className="flex gap-2 items-start bg-white rounded-lg p-3 mb-2 border border-gray-100">
                         <div className="flex-1 space-y-2">
                           <input className={inp} value={cr.area} onChange={e => upCr(ex.id, ci, "area", e.target.value)} placeholder="Área evaluada" />
-                          <input className={inp} value={cr.indicators} onChange={e => upCr(ex.id, ci, "indicators", e.target.value)} placeholder="Indicadores clave de evaluación..." />
+                          <input className={inp} value={cr.indicators} onChange={e => upCr(ex.id, ci, "indicators", e.target.value)} placeholder="Indicadores clave..." />
                         </div>
                         <div className="flex flex-col items-center gap-1 flex-shrink-0">
                           <span className="text-xs text-gray-400">Pts</span>
-                          <input className="w-14 border border-gray-200 rounded-lg px-2 py-2 text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-400" type="number" min={1} max={10} value={cr.maxScore} onChange={e => upCr(ex.id, ci, "maxScore", parseInt(e.target.value) || 5)} />
+                          <input className="w-14 border border-gray-200 rounded-lg px-2 py-2 text-sm text-center focus:outline-none" type="number" min={1} max={10} value={cr.maxScore} onChange={e => upCr(ex.id, ci, "maxScore", parseInt(e.target.value) || 5)} />
                         </div>
                         {ex.criteria.length > 1 && <button onClick={() => delCr(ex.id, ci)} className="text-red-300 hover:text-red-500 text-xl mt-1">×</button>}
                       </div>
@@ -321,55 +282,39 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
   );
 }
 
-
 function JobPreviewScreen({ job, onApply, onBack }) {
   return (
     <div className="min-h-screen bg-gray-200 p-4">
       <div className="max-w-2xl mx-auto">
-        <div className="bg-gray-700 text-white rounded-t-xl px-4 py-2.5 flex items-center gap-3">
-          <div className="flex gap-1.5"><div className="w-3 h-3 rounded-full bg-red-400" /><div className="w-3 h-3 rounded-full bg-yellow-400" /><div className="w-3 h-3 rounded-full bg-green-400" /></div>
-          <div className="flex-1 bg-gray-600 rounded px-3 py-1 text-xs text-gray-300">linkedin.com/jobs/view/head-of-paid-media-{job.company.name.toLowerCase().replace(/\s/g, "-")}</div>
-        </div>
-
-        <div className="bg-white px-6 pt-4 pb-2 border-b border-gray-200 flex items-center gap-4">
-          <div className="text-2xl font-bold text-blue-700">in</div>
-          <div className="flex-1 bg-gray-100 rounded-full px-4 py-2 text-sm text-gray-400">Buscar empleos</div>
-        </div>
-
-        <div className="bg-white shadow-xl">
+        <div className="bg-white shadow-xl rounded-b-2xl">
           <div className="p-6 border-b border-gray-100">
             <div className="flex items-start gap-4">
-              <div className="w-16 h-16 bg-blue-600 rounded-xl flex items-center justify-center text-white text-2xl font-black flex-shrink-0">{job.company.name[0]}</div>
+              <div className="w-16 h-16 bg-blue-600 rounded-xl flex items-center justify-center text-white text-2xl font-black flex-shrink-0">{job.company?.name?.[0] || "R"}</div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900">{job.position.title || getPositionTitle(job.position)}</h1>
-                <p className="text-blue-600 font-semibold">{job.company.name}</p>
-                <p className="text-gray-500 text-sm">{job.company.location} · {job.company.modality} · {job.position.contract}</p>
+                <h1 className="text-xl font-bold text-gray-900">{job.position?.title || getPositionTitle(job.position)}</h1>
+                <p className="text-blue-600 font-semibold">{job.company?.name}</p>
+                <p className="text-gray-500 text-sm">{job.company?.location} · {job.company?.modality} · {job.position?.contract}</p>
                 <div className="flex flex-wrap gap-2 mt-2">
-                  <span className="text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full font-medium">{job.company.sector}</span>
-                  {job.company.salaryMin && <span className="text-xs bg-green-50 text-green-700 px-2.5 py-1 rounded-full font-medium">{Number(job.company.salaryMin).toLocaleString()} – {Number(job.company.salaryMax).toLocaleString()} {job.company.currency}/año</span>}
-                  <span className="text-xs bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full">+{job.position.experience} años exp.</span>
+                  <span className="text-xs bg-blue-50 text-blue-700 px-2.5 py-1 rounded-full font-medium">{job.company?.sector}</span>
+                  {job.company?.salaryMin && <span className="text-xs bg-green-50 text-green-700 px-2.5 py-1 rounded-full font-medium">{Number(job.company.salaryMin).toLocaleString()} – {Number(job.company.salaryMax).toLocaleString()} {job.company.currency}/año</span>}
+                  <span className="text-xs bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full">+{job.position?.experience} años exp.</span>
                 </div>
               </div>
             </div>
             <button onClick={onApply} className="mt-4 w-full bg-blue-600 text-white py-2.5 rounded-full font-bold hover:bg-blue-700 text-sm">Solicitar empleo</button>
           </div>
-
           <div className="p-6 space-y-5 text-sm text-gray-700">
-            <section><h3 className="font-bold text-gray-900 mb-2">Sobre {job.company.name}</h3><p>{job.company.description}</p></section>
-            <section><h3 className="font-bold text-gray-900 mb-2">Responsabilidades</h3><p className="whitespace-pre-wrap">{job.position.responsibilities}</p></section>
-            <section>
-              <h3 className="font-bold text-gray-900 mb-2">Habilidades</h3>
-              <div className="flex flex-wrap gap-2">{job.position.skills.split(",").map((s) => <span key={s} className="bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-xs">{s.trim()}</span>)}</div>
-            </section>
+            {job.company?.description && <section><h3 className="font-bold text-gray-900 mb-2">Sobre {job.company.name}</h3><p>{job.company.description}</p></section>}
+            {job.position?.responsibilities && <section><h3 className="font-bold text-gray-900 mb-2">Responsabilidades</h3><p className="whitespace-pre-wrap">{job.position.responsibilities}</p></section>}
+            {job.position?.skills && <section><h3 className="font-bold text-gray-900 mb-2">Habilidades</h3><div className="flex flex-wrap gap-2">{job.position.skills.split(",").map((s) => <span key={s} className="bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-xs">{s.trim()}</span>)}</div></section>}
             <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
-              <p className="font-semibold text-blue-800 mb-1">📋 Proceso 100% digital con evaluación IA</p>
-              <p className="text-xs text-blue-600">Este proceso incluye {job.exercises.length} ejercicio(s) práctico(s). Cada uno requiere una respuesta escrita y un vídeo de defensa. Recibirás feedback en menos de 48h.</p>
+              <p className="font-semibold text-blue-800 mb-1">📋 Proceso 100% digital</p>
+              <p className="text-xs text-blue-600">Este proceso incluye {job.exercises?.length || 1} ejercicio(s) práctico(s). Cada uno requiere una respuesta escrita y un vídeo de defensa en Loom.</p>
             </div>
           </div>
-
           <div className="p-6 pt-0">
             <button onClick={onApply} className="w-full bg-blue-600 text-white py-3 rounded-full font-bold hover:bg-blue-700">Solicitar empleo</button>
-            <button onClick={onBack} className="w-full mt-2 text-sm text-gray-400 hover:text-gray-600 py-2">← Editar oferta</button>
+            {onBack && <button onClick={onBack} className="w-full mt-2 text-sm text-gray-400 hover:text-gray-600 py-2">← Volver</button>}
           </div>
         </div>
       </div>
@@ -377,56 +322,29 @@ function JobPreviewScreen({ job, onApply, onBack }) {
   );
 }
 
-// ─────────────────────────────────────────────
-// SCREEN 4: CANDIDATE APPLICATION
-// ─────────────────────────────────────────────
 function CandidateApplyScreen({ job, onNext }) {
-  const [form, setForm] = useState({ name: "Ana García López", email: "ana.garcia@email.com", phone: "+34 612 345 678", linkedin: "linkedin.com/in/anagarcia", presentation: "", video: false });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", presentation: "" });
   const up = (f, v) => setForm((d) => ({ ...d, [f]: v }));
   const valid = form.name && form.email && form.presentation.trim().length > 20;
-
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-2xl mx-auto">
         <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-t-2xl p-6">
-          <p className="text-purple-200 text-sm mb-1">Vista candidato</p>
-          <h1 className="text-xl font-bold">Aplicar a: {job.position.title || getPositionTitle(job.position)}</h1>
-          <p className="text-purple-200 text-sm">{job.company.name} · {job.company.location}</p>
+          <h1 className="text-xl font-bold">Aplicar a: {job.position?.title || getPositionTitle(job.position)}</h1>
+          <p className="text-purple-200 text-sm">{job.company?.name} · {job.company?.location}</p>
         </div>
-
         <div className="bg-white rounded-b-2xl shadow-lg p-6 space-y-5">
-          <h2 className="font-bold text-gray-800">Tus datos</h2>
-
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2 sm:col-span-1"><label className={lbl}>Nombre completo *</label><input className={inp} value={form.name} onChange={(e) => up("name", e.target.value)} /></div>
             <div className="col-span-2 sm:col-span-1"><label className={lbl}>Teléfono</label><input className={inp} value={form.phone} onChange={(e) => up("phone", e.target.value)} /></div>
             <div><label className={lbl}>Email *</label><input className={inp} value={form.email} onChange={(e) => up("email", e.target.value)} /></div>
             <div><label className={lbl}>LinkedIn</label><input className={inp} value={form.linkedin} onChange={(e) => up("linkedin", e.target.value)} /></div>
           </div>
-
           <div>
             <label className={lbl}>Presentación personal *</label>
-            <textarea className={inp} rows={5} value={form.presentation} onChange={(e) => up("presentation", e.target.value)} placeholder="Cuéntanos sobre ti, tu trayectoria y por qué eres el perfil ideal para esta posición..." />
-            <p className="text-xs text-gray-400 mt-1">{form.presentation.split(/\s+/).filter(Boolean).length} palabras</p>
+            <textarea className={inp} rows={5} value={form.presentation} onChange={(e) => up("presentation", e.target.value)} placeholder="Cuéntanos sobre ti, tu trayectoria y por qué eres el perfil ideal..." />
           </div>
-
-          <div className="border-2 border-dashed border-gray-200 rounded-xl p-5 text-center">
-            <div className="text-3xl mb-2">🎥</div>
-            <p className="font-semibold text-gray-700 text-sm mb-1">Vídeo de presentación personal (máx. 3 min)</p>
-            <p className="text-xs text-gray-400 mb-3">Graba o sube un vídeo breve presentándote</p>
-            {form.video ? (
-              <div className="bg-green-50 text-green-700 text-sm rounded-lg p-3 flex items-center justify-center gap-2">
-                <span>✅</span><span>presentacion_ana_garcia.mp4 — 2:47</span>
-                <button onClick={() => up("video", false)} className="text-green-400 hover:text-green-600 ml-1">×</button>
-              </div>
-            ) : (
-              <button onClick={() => up("video", true)} className="bg-purple-50 text-purple-600 px-5 py-2 rounded-lg text-sm font-medium hover:bg-purple-100">
-                📁 Simular subida de vídeo
-              </button>
-            )}
-          </div>
-
-          <button onClick={() => onNext(form)} disabled={!valid} className="w-full bg-purple-600 text-white py-3 rounded-xl font-bold hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+          <button onClick={() => onNext(form)} disabled={!valid} className="w-full bg-purple-600 text-white py-3 rounded-xl font-bold hover:bg-purple-700 disabled:opacity-40 transition-colors">
             Continuar con los ejercicios →
           </button>
         </div>
@@ -435,321 +353,78 @@ function CandidateApplyScreen({ job, onNext }) {
   );
 }
 
-// ─────────────────────────────────────────────
-// SCREEN 5: EXERCISES (text + mandatory defence video per exercise)
-// ─────────────────────────────────────────────
-function ExercisesScreen({ job, candidate, onSubmit }) {
+function ExercisesScreen({ job, candidate, onSubmit, submitting }) {
   const [idx, setIdx] = useState(0);
-  // Each response tracks: written answer + mandatory defence video
-  const [resps, setResps] = useState(
-    job.exercises.map((e) => ({ exerciseId: e.id, response: "", defenceVideo: false, file: false }))
-  );
-
+  const [resps, setResps] = useState(job.exercises.map((e) => ({ exerciseId: e.id, response: "", loomUrl: "" })));
   const ex = job.exercises[idx];
   const resp = resps.find((r) => r.exerciseId === ex.id);
-  const wc = resp?.response.split(/\s+/).filter(Boolean).length || 0;
-
-  const upResp = (id, field, val) =>
-    setResps((rs) => rs.map((r) => r.exerciseId === id ? { ...r, [field]: val } : r));
-
-  // Both written answer AND defence video are required for each exercise
-  const currentComplete = resp?.response.trim().length > 10 && resp?.defenceVideo;
-  const allComplete = resps.every((r) => r.response.trim().length > 10 && r.defenceVideo);
-
-  const completedCount = resps.filter((r) => r.response.trim().length > 10 && r.defenceVideo).length;
-
+  const upR = (f, v) => setResps(rs => rs.map(r => r.exerciseId === ex.id ? { ...r, [f]: v } : r));
+  const canNext = resp?.response?.trim().length > 30 && resp?.loomUrl?.trim().length > 5;
+  const isLast = idx === job.exercises.length - 1;
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-2xl mx-auto">
-        {/* Header */}
-        <div className="bg-gradient-to-r from-indigo-600 to-blue-600 text-white rounded-t-2xl p-6">
-          <div className="flex justify-between items-start">
-            <div>
-              <p className="text-indigo-200 text-sm">Hola, {candidate.name.split(" ")[0]} 👋</p>
-              <h1 className="text-xl font-bold mt-0.5">Ejercicios Prácticos</h1>
-              <p className="text-indigo-200 text-xs mt-1">Cada ejercicio requiere respuesta escrita + vídeo de defensa</p>
-            </div>
-            <div className="text-right bg-white/10 rounded-xl px-4 py-2">
-              <p className="text-indigo-200 text-xs">Ejercicio</p>
-              <p className="text-2xl font-black">{idx + 1}<span className="text-indigo-300 text-base font-normal">/{job.exercises.length}</span></p>
-            </div>
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-white border-b border-gray-100 px-4 py-3 flex items-center gap-3">
+        <span className="text-xl font-black text-blue-600">RecruitAI</span>
+        <span className="text-xs text-gray-400">· Ejercicio {idx + 1} de {job.exercises.length}</span>
+      </div>
+      <div className="max-w-2xl mx-auto p-4">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-4">
+          <h2 className="font-bold text-gray-900 mb-1">{ex.title}</h2>
+          <p className="text-gray-600 text-sm mb-4 whitespace-pre-wrap">{ex.description}</p>
+          <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 mb-4">
+            <p className="text-xs text-blue-700 font-semibold">📋 Criterios de evaluación</p>
+            {ex.criteria.map((c, i) => <p key={i} className="text-xs text-blue-600 mt-1">· {c.area}: {c.indicators}</p>)}
           </div>
-          {/* Progress dots */}
-          <div className="flex gap-1.5 mt-4">
-            {job.exercises.map((e, i) => {
-              const r = resps.find((r) => r.exerciseId === e.id);
-              const done = r?.response.trim().length > 10 && r?.defenceVideo;
-              return (
-                <div key={i} className={`h-1.5 flex-1 rounded-full transition-all ${done ? "bg-green-400" : i === idx ? "bg-white" : "bg-indigo-400"}`} />
-              );
-            })}
+          <div className="space-y-4">
+            <div>
+              <label className={lbl}>Tu respuesta escrita *</label>
+              <textarea className={inp} rows={8} value={resp?.response || ""} onChange={e => upR("response", e.target.value)} placeholder="Desarrolla tu propuesta aquí..." />
+              <p className="text-xs text-gray-400 mt-1">{(resp?.response || "").split(/\s+/).filter(Boolean).length} palabras</p>
+            </div>
+            <div>
+              <label className={lbl}>Enlace de Loom — Vídeo de defensa *</label>
+              <input className={inp} value={resp?.loomUrl || ""} onChange={e => upR("loomUrl", e.target.value)} placeholder="https://www.loom.com/share/..." />
+              <p className="text-xs text-blue-500 mt-1.5 flex items-center gap-1">🎥 Graba un vídeo en Loom defendiendo tu propuesta (máx. 5 min) y pega el enlace aquí.</p>
+            </div>
           </div>
         </div>
-
-        <div className="bg-white rounded-b-2xl shadow-lg p-6">
-          {/* Exercise title + description */}
-          <span className="text-xs font-bold text-indigo-500 uppercase tracking-widest">{ex.title}</span>
-          <p className="text-gray-800 text-sm mt-2 mb-4 leading-relaxed">{ex.description}</p>
-
-          {/* Criteria */}
-          <div className="bg-indigo-50 rounded-xl p-4 mb-5 border border-indigo-100">
-            <p className="text-xs font-bold text-indigo-600 uppercase tracking-wide mb-2">Criterios de evaluación</p>
-            {ex.criteria.map((c, i) => (
-              <div key={i} className="flex gap-2 mb-1.5 items-start">
-                <span className="text-indigo-400 text-xs mt-0.5">▸</span>
-                <p className="text-xs text-indigo-800"><span className="font-semibold">{c.area}:</span> {c.indicators} <span className="text-indigo-400">({c.maxScore} pts)</span></p>
-              </div>
-            ))}
-          </div>
-
-          {/* Written answer */}
-          <div className="mb-5">
-            <div className="flex justify-between mb-1">
-              <label className={lbl}>
-                Respuesta escrita <span className="text-red-500">*</span>
-              </label>
-              <span className={`text-xs font-medium ${wc > 150 ? "text-green-600" : wc > 60 ? "text-yellow-600" : "text-gray-400"}`}>{wc} palabras</span>
-            </div>
-            <textarea
-              className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 resize-none"
-              rows={9}
-              value={resp?.response || ""}
-              onChange={(e) => upResp(ex.id, "response", e.target.value)}
-              placeholder="Escribe tu respuesta aquí de forma detallada y estructurada..."
-            />
-          </div>
-
-          {/* Defence video — MANDATORY */}
-          <div className={`rounded-xl p-5 border-2 transition-all mb-4 ${resp?.defenceVideo ? "border-green-300 bg-green-50" : "border-dashed border-red-200 bg-red-50"}`}>
-            <div className="flex items-start gap-3">
-              <div className="text-2xl flex-shrink-0">{resp?.defenceVideo ? "✅" : "🎥"}</div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <p className={`font-semibold text-sm ${resp?.defenceVideo ? "text-green-800" : "text-red-700"}`}>
-                    Vídeo de defensa del ejercicio
-                  </p>
-                  <span className="text-xs font-bold bg-red-100 text-red-600 px-2 py-0.5 rounded-full">OBLIGATORIO</span>
-                </div>
-                <p className={`text-xs mb-3 ${resp?.defenceVideo ? "text-green-700" : "text-red-600"}`}>
-                  Graba un vídeo (máx. 5 min) explicando y defendiendo tu propuesta. El equipo evaluará tanto la respuesta escrita como tu presentación oral.
-                </p>
-                {resp?.defenceVideo ? (
-                  <div className="flex items-center justify-between bg-white rounded-lg px-4 py-2.5 border border-green-200">
-                    <div className="flex items-center gap-2 text-sm text-green-700">
-                      <span>🎬</span>
-                      <span className="font-medium">defensa_{ex.title.toLowerCase().replace(/\s/g, "_")}.mp4</span>
-                      <span className="text-green-500">— 4:12 min</span>
-                    </div>
-                    <button
-                      onClick={() => upResp(ex.id, "defenceVideo", false)}
-                      className="text-red-400 hover:text-red-600 text-sm"
-                    >
-                      × Quitar
-                    </button>
-                  </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => upResp(ex.id, "defenceVideo", true)}
-                      className="flex-1 bg-red-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold hover:bg-red-700 transition-colors"
-                    >
-                      🎬 Subir vídeo de defensa
-                    </button>
-                    <button
-                      onClick={() => upResp(ex.id, "defenceVideo", true)}
-                      className="bg-white border border-red-200 text-red-600 px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors"
-                    >
-                      🔴 Grabar ahora
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Optional file attachment */}
-          <div className="border border-dashed border-gray-200 rounded-xl p-3 text-center mb-5">
-            {resp?.file ? (
-              <div className="flex items-center justify-center gap-2 text-sm text-green-600">
-                <span>📎</span><span>ejercicio_adjunto.pdf</span>
-                <button onClick={() => upResp(ex.id, "file", false)} className="text-gray-400 hover:text-gray-600 ml-1">×</button>
-              </div>
-            ) : (
-              <button onClick={() => upResp(ex.id, "file", true)} className="text-gray-400 text-xs hover:text-gray-600">
-                📎 Adjuntar archivo de soporte adicional (opcional)
-              </button>
-            )}
-          </div>
-
-          {/* Completion status for this exercise */}
-          {!currentComplete && (
-            <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4 text-xs text-amber-700">
-              <span className="font-semibold">Para continuar necesitas:</span>
-              {!resp?.response && <span className="ml-2">✏️ Respuesta escrita</span>}
-              {!resp?.defenceVideo && <span className="ml-2">🎥 Vídeo de defensa</span>}
-            </div>
-          )}
-
-          {/* Navigation */}
-          <div className="flex gap-3">
-            {idx > 0 && (
-              <button onClick={() => setIdx((i) => i - 1)} className="flex-1 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50">← Anterior</button>
-            )}
-            {idx < job.exercises.length - 1 ? (
-              <button
-                onClick={() => setIdx((i) => i + 1)}
-                disabled={!currentComplete}
-                className="flex-1 py-3 bg-indigo-600 text-white rounded-xl text-sm font-bold hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                Siguiente ejercicio →
-              </button>
-            ) : (
-              <button
-                onClick={() => onSubmit(resps)}
-                disabled={!allComplete}
-                className="flex-1 py-3 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {allComplete ? "Enviar candidatura 🚀" : `Faltan ${job.exercises.length - completedCount} ejercicio(s) por completar`}
-              </button>
-            )}
-          </div>
+        <div className="flex gap-3">
+          {idx > 0 && <button onClick={() => setIdx(i => i - 1)} className="px-5 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-600">← Anterior</button>}
+          {!isLast
+            ? <button onClick={() => setIdx(i => i + 1)} disabled={!canNext} className="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 disabled:opacity-40">Siguiente ejercicio →</button>
+            : <button onClick={() => onSubmit(resps)} disabled={!canNext || submitting} className="flex-1 bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 disabled:opacity-40">{submitting ? "Enviando..." : "✅ Enviar solicitud"}</button>
+          }
         </div>
       </div>
     </div>
   );
 }
 
-// ─────────────────────────────────────────────
-// SCREEN 6: SUBMITTED CONFIRMATION
-// ─────────────────────────────────────────────
 function ConfirmationScreen({ candidate, onNext }) {
-  const [done, setDone] = useState(false);
-  useEffect(() => { const t = setTimeout(() => setDone(true), 2800); return () => clearTimeout(t); }, []);
-
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-      <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 text-center">
-        {!done ? (
-          <>
-            <div className="text-6xl mb-5" style={{ animation: "spin 1.5s linear infinite", display: "inline-block" }}>🤖</div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">Evaluando tu candidatura...</h2>
-            <p className="text-gray-500 text-sm mb-6">La IA está analizando tus respuestas escritas y transcribiendo los vídeos de defensa</p>
-            <div className="space-y-2 text-left">
-              {["Procesando respuestas escritas...", "Transcribiendo vídeos de defensa...", "Aplicando criterios de evaluación...", "Generando informe preliminar..."].map((step, i) => (
-                <div key={i} className="flex items-center gap-3 text-sm text-gray-500">
-                  <div className="w-4 h-4 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-                    <div className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
-                  </div>
-                  {step}
-                </div>
-              ))}
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="text-6xl mb-4">✅</div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">¡Candidatura recibida!</h2>
-            <p className="text-gray-600 text-sm mb-5">Hola <strong>{candidate.name.split(" ")[0]}</strong>, hemos recibido tus ejercicios y vídeos de defensa correctamente.</p>
-            <div className="bg-gray-50 rounded-xl p-4 text-left text-sm text-gray-600 mb-6 space-y-2 border border-gray-100">
-              <p className="font-semibold text-gray-800 mb-2">¿Qué pasa ahora?</p>
-              <div className="flex gap-2"><span>🔍</span><span>La IA ha evaluado tus respuestas escritas y transcrito los vídeos de defensa</span></div>
-              <div className="flex gap-2"><span>👤</span><span>El reclutador revisará la evaluación preliminar en un máximo de 48h</span></div>
-              <div className="flex gap-2"><span>📧</span><span>Recibirás un email en <strong>{candidate.email}</strong> con la respuesta</span></div>
-              <div className="flex gap-2"><span>📅</span><span>Si avanzas, tendrás acceso directo al calendario para agendar la entrevista</span></div>
-            </div>
-            <button onClick={onNext} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700">
-              Ver panel del reclutador →
-            </button>
-          </>
-        )}
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="bg-white rounded-2xl shadow-xl p-10 max-w-md w-full text-center">
+        <div className="text-5xl mb-4">🎉</div>
+        <h2 className="text-2xl font-black text-gray-900 mb-2">¡Solicitud enviada!</h2>
+        <p className="text-gray-500 mb-6">Hemos recibido tu candidatura. El equipo revisará tu perfil y recibirás respuesta en 48h.</p>
+        {onNext && <button onClick={onNext} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700">Ver evaluación →</button>}
       </div>
     </div>
   );
 }
 
-// ─────────────────────────────────────────────
-// SCREEN 7: RECRUITER REVIEW (AI evaluation)
-// ─────────────────────────────────────────────
 function RecruiterReviewScreen({ job, candidate, evaluation, onApprove, onReject }) {
-  const { evaluations, overall, rec, summary } = evaluation;
-
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-2xl">🤖</div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Evaluación IA — Candidatura recibida</h1>
-            <p className="text-gray-400 text-sm">Análisis automático de respuestas escritas + vídeos de defensa · Acción requerida</p>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-4">
+          <div className="flex items-center justify-between mb-4">
+            <div><h2 className="font-bold text-gray-800">Revisión: {candidate?.name}</h2><p className="text-xs text-gray-400">{job?.company?.name}</p></div>
+            <div className="text-right"><ScoreDial score={evaluation?.overall || 0} /><p className="text-xs text-gray-400 mt-1">Puntuación IA</p></div>
           </div>
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-5">
-          <div className="flex items-center justify-between flex-wrap gap-4">
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 bg-purple-100 rounded-full flex items-center justify-center text-2xl font-bold text-purple-600">{candidate.name[0]}</div>
-              <div>
-                <h2 className="text-lg font-bold text-gray-900">{candidate.name}</h2>
-                <p className="text-gray-500 text-sm">{candidate.email} · {candidate.linkedin}</p>
-                <p className="text-xs text-gray-400">{job.position.title}</p>
-              </div>
-            </div>
-            <div className="text-right">
-              <ScoreDial score={overall} />
-              <p className="text-xs text-gray-400 mt-1">Puntuación global</p>
-              <div className="mt-2"><Badge type={rec} /></div>
-            </div>
-          </div>
-          <div className="mt-4 pt-4 border-t border-gray-100">
-            <p className="text-sm text-gray-600 italic bg-gray-50 rounded-lg px-4 py-3">{summary}</p>
-          </div>
-        </div>
-
-        {evaluations.map((ev, i) => (
-          <div key={i} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-4">
-            <div className="flex justify-between items-start mb-2">
-              <h3 className="font-bold text-gray-800">{ev.exerciseTitle}</h3>
-              <div className="text-right">
-                <span className="text-3xl font-black text-blue-600">{ev.total}</span>
-                <span className="text-gray-400 text-sm font-normal">/{ev.maxTotal}</span>
-                <p className="text-xs text-gray-400">{ev.pct}%</p>
-              </div>
-            </div>
-
-            {/* Video analysis note */}
-            <div className="flex items-center gap-2 bg-violet-50 rounded-lg px-3 py-2 mb-4 text-xs text-violet-700 border border-violet-100">
-              <span>🎬</span>
-              <span><strong>Vídeo de defensa analizado:</strong> Transcripción procesada. Comunicación oral: clara y estructurada. Seguridad en la exposición: alta.</span>
-            </div>
-
-            <div className="space-y-4">
-              {ev.criteriaScores.map((cs, j) => (
-                <div key={j}>
-                  <div className="flex justify-between items-center mb-1">
-                    <p className="text-sm font-semibold text-gray-700">{cs.area}</p>
-                    <div className="flex items-center gap-1">
-                      {Array.from({ length: 5 }).map((_, k) => (
-                        <div key={k} className={`w-2.5 h-2.5 rounded-full ${k < cs.score ? (cs.score >= 4 ? "bg-green-400" : cs.score >= 3 ? "bg-yellow-400" : "bg-red-400") : "bg-gray-200"}`} />
-                      ))}
-                      <span className="text-xs text-gray-500 ml-1">{cs.score}/{cs.maxScore}</span>
-                    </div>
-                  </div>
-                  <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden mb-1">
-                    <div className={`h-full rounded-full transition-all ${cs.score >= 4 ? "bg-green-400" : cs.score >= 3 ? "bg-yellow-400" : "bg-red-400"}`} style={{ width: `${(cs.score / cs.maxScore) * 100}%` }} />
-                  </div>
-                  <p className="text-xs text-gray-500">{cs.comment}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-          <h3 className="font-bold text-gray-800 mb-1">Tu decisión final</h3>
-          <p className="text-sm text-gray-500 mb-4">La IA recomienda <Badge type={rec} />. La decisión final es tuya.</p>
-          <div className="grid grid-cols-2 gap-4">
-            <button onClick={onReject} className="py-3.5 border-2 border-red-200 text-red-600 rounded-xl font-bold hover:bg-red-50 transition-colors">❌ No avanzar</button>
-            <button onClick={onApprove} className="py-3.5 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition-colors">✅ Avanzar a entrevista</button>
+          <div className="flex gap-3">
+            <button onClick={onApprove} className="flex-1 py-3 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700">✅ Avanzar a entrevista</button>
+            <button onClick={onReject} className="flex-1 py-3 border-2 border-red-200 text-red-600 rounded-xl font-bold hover:bg-red-50">❌ Descartar</button>
           </div>
         </div>
       </div>
@@ -757,251 +432,47 @@ function RecruiterReviewScreen({ job, candidate, evaluation, onApprove, onReject
   );
 }
 
-// ─────────────────────────────────────────────
-// SCREEN 8: INTERVIEW INVITE + SCHEDULING
-// ─────────────────────────────────────────────
 function InterviewInviteScreen({ job, candidate, onSchedule }) {
-  const [selected, setSelected] = useState(null);
-  const slots = [
-    { date: "Mar 28 Mar", time: "10:00h", ok: true },
-    { date: "Mar 28 Mar", time: "11:30h", ok: true },
-    { date: "Mié 29 Mar", time: "09:00h", ok: false },
-    { date: "Mié 29 Mar", time: "16:00h", ok: true },
-    { date: "Jue 30 Mar", time: "10:00h", ok: true },
-    { date: "Vie 31 Mar", time: "12:00h", ok: true },
-  ];
-
+  const slots = ["Lunes 14 Abr, 10:00", "Martes 15 Abr, 16:00", "Miércoles 16 Abr, 11:00"];
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-2xl mx-auto space-y-4">
-        <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
-          <div className="bg-slate-800 text-white px-5 py-3 flex items-center gap-3">
-            <span className="text-xl">📧</span>
-            <div>
-              <p className="text-xs text-gray-400">Simulación — Email recibido por el candidato</p>
-              <p className="text-sm font-medium">Para: {candidate.email}</p>
-            </div>
-          </div>
-          <div className="p-6">
-            <p className="text-xs text-gray-400 mb-3">De: rrhh@{job.company.name.toLowerCase().replace(/\s/g, "")}.com · Hace 2 minutos</p>
-            <h3 className="text-lg font-bold text-gray-900 mb-3">🎉 ¡Enhorabuena, {candidate.name.split(" ")[0]}! Has avanzado al siguiente paso</h3>
-            <p className="text-gray-600 text-sm mb-3">Tras revisar tu candidatura para <strong>{job.position.title}</strong> en <strong>{job.company.name}</strong>, hemos tomado la decisión de avanzar contigo en el proceso.</p>
-            <p className="text-gray-600 text-sm mb-3">El siguiente paso es una <strong>entrevista online de ~45 minutos</strong>. Por favor, selecciona el horario que mejor te encaje en el calendario de abajo.</p>
-            <p className="text-gray-600 text-sm">La entrevista se grabará y transcribirá para garantizar un proceso justo y objetivo. ¡Mucho ánimo!</p>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-lg p-6">
-          <h3 className="font-bold text-gray-800 mb-4">📅 Selecciona tu horario</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
-            {slots.map((s, i) => (
-              <button key={i} disabled={!s.ok} onClick={() => setSelected(i)}
-                className={`p-4 rounded-xl border-2 text-left transition-all ${!s.ok ? "border-gray-100 bg-gray-50 opacity-40 cursor-not-allowed" : selected === i ? "border-green-400 bg-green-50 shadow-sm" : "border-gray-200 hover:border-blue-300 hover:bg-blue-50"}`}>
-                <p className="font-semibold text-gray-800 text-sm">{s.date}</p>
-                <p className="text-gray-500 text-sm">{s.time}</p>
-                {!s.ok && <p className="text-xs text-red-400 mt-1">No disponible</p>}
-                {selected === i && <p className="text-xs text-green-600 mt-1 font-semibold">✓ Seleccionado</p>}
-              </button>
-            ))}
-          </div>
-          <button disabled={selected === null} onClick={() => onSchedule(slots[selected])} className="w-full py-3 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-            Confirmar entrevista →
-          </button>
-        </div>
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
+      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
+        <h2 className="font-black text-xl text-gray-900 mb-4">🗓 Agendar entrevista</h2>
+        {slots.map(s => <button key={s} onClick={() => onSchedule(s)} className="w-full mb-2 py-3 border-2 border-gray-200 rounded-xl text-sm font-semibold text-gray-700 hover:border-blue-400 hover:bg-blue-50">{s}</button>)}
       </div>
     </div>
   );
 }
 
-// ─────────────────────────────────────────────
-// SCREEN 9: INTERVIEW TRANSCRIPT + ANALYSIS
-// ─────────────────────────────────────────────
 function InterviewAnalysisScreen({ analysis, candidate, job, onFinish }) {
-  const [tab, setTab] = useState("transcript");
-
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-3xl mx-auto">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-2xl">🎤</div>
-          <div>
-            <h1 className="text-xl font-bold text-gray-900">Análisis de entrevista</h1>
-            <p className="text-gray-400 text-sm">{candidate.name} · {job.position.title}</p>
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-4">
+          <h2 className="font-bold text-gray-800 mb-4">Análisis de entrevista: {candidate?.name}</h2>
+          <div className="flex items-center justify-between">
+            <div><p className="text-sm text-gray-500">Candidato</p><Badge type={analysis?.candidate?.rec} /></div>
+            <ScoreDial score={analysis?.candidate?.score || 0} />
           </div>
         </div>
-
-        <div className="flex gap-1 bg-gray-100 rounded-xl p-1 mb-5">
-          {[["transcript", "📝 Transcripción"], ["candidate", "🙋 Candidato"], ["recruiter", "👔 Reclutador"]].map(([id, label]) => (
-            <button key={id} onClick={() => setTab(id)}
-              className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${tab === id ? "bg-white shadow text-gray-900" : "text-gray-500 hover:text-gray-700"}`}>
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {tab === "transcript" && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-            <div className="flex items-center gap-2 mb-5">
-              <div className="w-2.5 h-2.5 rounded-full bg-red-400 animate-pulse" />
-              <span className="text-xs font-medium text-gray-500">Transcripción generada por IA · Grabación procesada</span>
-            </div>
-            <div className="space-y-5">
-              {analysis.transcript.map((line, i) => {
-                const isRecruiter = line.who === "Reclutador";
-                return (
-                  <div key={i} className={`flex gap-3 ${!isRecruiter ? "flex-row-reverse" : ""}`}>
-                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 ${isRecruiter ? "bg-blue-100 text-blue-600" : "bg-purple-100 text-purple-600"}`}>
-                      {isRecruiter ? "R" : line.who[0]}
-                    </div>
-                    <div className={`max-w-md ${!isRecruiter ? "items-end" : ""}`}>
-                      <p className={`text-xs text-gray-400 mb-1 ${!isRecruiter ? "text-right" : ""}`}>{line.who}</p>
-                      <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${isRecruiter ? "bg-gray-100 text-gray-800 rounded-tl-sm" : "bg-purple-100 text-purple-900 rounded-tr-sm"}`}>
-                        {line.text}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {tab === "candidate" && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-            <div className="flex items-center justify-between mb-5">
-              <h3 className="font-bold text-gray-800">Evaluación del candidato</h3>
-              <div className="text-right">
-                <ScoreDial score={analysis.candidate.score} />
-                <div className="mt-1"><Badge type={analysis.candidate.rec} /></div>
-              </div>
-            </div>
-            <p className="text-sm text-gray-600 italic bg-gray-50 rounded-xl px-4 py-3 mb-5">{analysis.candidate.summary}</p>
-            <div className="grid sm:grid-cols-2 gap-5">
-              <div>
-                <p className="text-xs font-bold text-green-600 uppercase tracking-wide mb-3">Puntos fuertes</p>
-                {analysis.candidate.strengths.map((s, i) => (
-                  <div key={i} className="flex items-start gap-2 mb-2"><span className="text-green-400 mt-0.5">✓</span><span className="text-sm text-gray-700">{s}</span></div>
-                ))}
-              </div>
-              <div>
-                <p className="text-xs font-bold text-orange-500 uppercase tracking-wide mb-3">Áreas de mejora</p>
-                {analysis.candidate.gaps.map((s, i) => (
-                  <div key={i} className="flex items-start gap-2 mb-2"><span className="text-orange-400 mt-0.5">→</span><span className="text-sm text-gray-700">{s}</span></div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {tab === "recruiter" && (
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h3 className="font-bold text-gray-800">Evaluación del reclutador</h3>
-                <p className="text-xs text-gray-400">Análisis confidencial para mejora interna del proceso</p>
-              </div>
-              <div className="text-right">
-                <ScoreDial score={analysis.recruiter.score} />
-                <p className="text-xs text-gray-400 mt-1">Desempeño</p>
-              </div>
-            </div>
-            <div className="grid sm:grid-cols-2 gap-5 mb-5">
-              <div>
-                <p className="text-xs font-bold text-green-600 uppercase tracking-wide mb-3">Hizo bien</p>
-                {analysis.recruiter.did_well.map((s, i) => (
-                  <div key={i} className="flex items-start gap-2 mb-2"><span className="text-green-400 mt-0.5">✓</span><span className="text-sm text-gray-700">{s}</span></div>
-                ))}
-              </div>
-              <div>
-                <p className="text-xs font-bold text-orange-500 uppercase tracking-wide mb-3">Puede mejorar</p>
-                {analysis.recruiter.improve.map((s, i) => (
-                  <div key={i} className="flex items-start gap-2 mb-2"><span className="text-orange-400 mt-0.5">→</span><span className="text-sm text-gray-700">{s}</span></div>
-                ))}
-              </div>
-            </div>
-            <div className="bg-blue-50 rounded-xl p-4 border border-blue-100">
-              <p className="text-xs font-bold text-blue-700 uppercase tracking-wide mb-2">💡 Recomendaciones para próximas entrevistas</p>
-              {analysis.recruiter.tips.map((tip, i) => (
-                <div key={i} className="flex items-start gap-2 mb-1.5"><span className="text-blue-400">→</span><span className="text-sm text-blue-800">{tip}</span></div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <button onClick={onFinish} className="mt-5 w-full py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-900 transition-colors">
-          Ver resumen final del proceso →
-        </button>
+        <button onClick={onFinish} className="w-full py-3 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-900">Ver resumen final →</button>
       </div>
     </div>
   );
 }
 
-// ─────────────────────────────────────────────
-// SCREEN 10: FINAL SUMMARY
-// ─────────────────────────────────────────────
 function FinalSummaryScreen({ job, candidate, evaluation, interview, onRestart }) {
   return (
     <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-3xl mx-auto">
-        <div className="text-center mb-8">
-          <div className="text-5xl mb-3">🏁</div>
-          <h1 className="text-2xl font-black text-gray-900">Proceso completado</h1>
-          <p className="text-gray-500 mt-1">{job.position.title} · {job.company.name}</p>
-        </div>
-
-        <div className="grid sm:grid-cols-3 gap-4 mb-5">
-          {[
-            { icon: "📋", label: "Ejercicios", value: `${evaluation.overall}%`, sub: `${evaluation.evaluations.length} evaluados`, color: "text-blue-600" },
-            { icon: "🎤", label: "Entrevista", value: `${interview.candidate.score}%`, sub: <Badge type={interview.candidate.rec} />, color: "text-purple-600" },
-            { icon: "👔", label: "Reclutador", value: `${interview.recruiter.score}%`, sub: "Feedback generado", color: "text-indigo-600" },
-          ].map((card) => (
-            <div key={card.label} className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 text-center">
-              <div className="text-3xl mb-2">{card.icon}</div>
-              <p className="text-xs text-gray-400 mb-1">{card.label}</p>
-              <p className={`text-3xl font-black ${card.color}`}>{card.value}</p>
-              <div className="mt-1 text-xs text-gray-500">{card.sub}</div>
-            </div>
-          ))}
-        </div>
-
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-5">
-          <h3 className="font-bold text-gray-800 mb-3">📧 Notificación automática enviada al reclutador</h3>
-          <div className="bg-gray-50 rounded-xl p-4 text-sm text-gray-600 border border-gray-200 space-y-1">
-            <p className="font-semibold text-gray-900 mb-2">Resumen de candidatura — {candidate.name}</p>
-            <p>• Puntuación ejercicios (escrito + vídeo): <strong>{evaluation.overall}%</strong> <Badge type={evaluation.rec} /></p>
-            <p>• Puntuación entrevista: <strong>{interview.candidate.score}%</strong> <Badge type={interview.candidate.rec} /></p>
-            <p>• Puntuación reclutador: <strong>{interview.recruiter.score}%</strong> (feedback disponible)</p>
-            <p className="text-gray-400 text-xs mt-2">Acción requerida: Confirmar oferta final al candidato →</p>
-          </div>
-        </div>
-
-        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-2xl p-6 text-white mb-5">
-          <h3 className="font-bold text-lg mb-3">✨ ¿Qué automatizó RecruitAI en este proceso?</h3>
-          <div className="grid sm:grid-cols-2 gap-2">
-            {["Publicación de oferta en LinkedIn", "Formulario de aplicación personalizado", "Evaluación escrita + transcripción de vídeos", "Confirmación y gestión de candidatos", "Agendado de entrevista vía calendario", "Transcripción y análisis de entrevista", "Evaluación de candidato post-entrevista", "Feedback al reclutador para mejora"].map((item) => (
-              <div key={item} className="flex items-center gap-2 text-sm">
-                <span className="text-green-300 flex-shrink-0">✓</span>
-                <span className="text-blue-100">{item}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <button onClick={onRestart} className="w-full py-3 border-2 border-gray-200 text-gray-600 rounded-xl font-bold hover:bg-gray-50 transition-colors">
-          🔄 Crear nuevo proceso de selección
-        </button>
+      <div className="max-w-3xl mx-auto text-center">
+        <div className="text-5xl mb-3">🏁</div>
+        <h1 className="text-2xl font-black text-gray-900 mb-6">Proceso completado</h1>
+        <button onClick={onRestart} className="w-full py-3 border-2 border-gray-200 text-gray-600 rounded-xl font-bold hover:bg-gray-50">🔄 Crear nuevo proceso</button>
       </div>
     </div>
   );
 }
 
-// ─────────────────────────────────────────────
-// MAIN APP — STATE MACHINE
-// ─────────────────────────────────────────────
-
-// ─────────────────────────────────────────────
-// SCREEN: LOADING
-// ─────────────────────────────────────────────
 function LoadingScreen() {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -1013,28 +484,17 @@ function LoadingScreen() {
   );
 }
 
-// ─────────────────────────────────────────────
-// SCREEN: LOGIN
-// ─────────────────────────────────────────────
 function LoginScreen({ onLogin, loading }) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-6">
       <div className="bg-white rounded-3xl shadow-xl border border-gray-100 p-10 max-w-md w-full text-center">
         <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-6">🤖</div>
         <h1 className="text-3xl font-black text-gray-900 mb-2">RecruitAI</h1>
-        <p className="text-gray-500 mb-2">Automatización de selección de personal para agencias digitales</p>
-        <div className="flex flex-col gap-2 text-xs text-gray-400 mb-8">
-          <span>✅ Procesos de selección con IA</span>
-          <span>✅ Evaluación automática de candidatos</span>
-          <span>✅ Datos guardados en la nube</span>
-        </div>
+        <p className="text-gray-500 mb-8">Automatización de selección de personal para agencias digitales</p>
         <button onClick={onLogin} disabled={loading}
-          className="w-full flex items-center justify-center gap-3 py-3.5 px-6 border-2 border-gray-200 rounded-xl font-semibold text-gray-700 hover:border-blue-400 hover:bg-blue-50 transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+          className="w-full flex items-center justify-center gap-3 py-3.5 px-6 border-2 border-gray-200 rounded-xl font-semibold text-gray-700 hover:border-blue-400 hover:bg-blue-50 transition-all disabled:opacity-50">
           {loading ? <span className="text-sm">Iniciando sesión...</span> : (
-            <>
-              <svg className="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
-              <span>Continuar con Google</span>
-            </>
+            <><svg className="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg><span>Continuar con Google</span></>
           )}
         </button>
         <p className="text-xs text-gray-400 mt-4">Tus datos se guardan de forma segura en Firebase</p>
@@ -1043,10 +503,7 @@ function LoginScreen({ onLogin, loading }) {
   );
 }
 
-// ─────────────────────────────────────────────
-// SCREEN: PUBLIC CANDIDATE APPLICATION
-// (accesible sin login, via link único)
-// ─────────────────────────────────────────────
+// ─── PUBLIC CANDIDATE SCREEN ──────────────────────────────────────────────────
 function CandidatePublicScreen({ processId }) {
   const [processData, setProcessData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -1060,14 +517,9 @@ function CandidatePublicScreen({ processId }) {
     const load = async () => {
       try {
         const snap = await getDoc(doc(db, "publicProcesses", processId));
-        if (snap.exists()) {
-          setProcessData(snap.data());
-        } else {
-          setError("Este proceso no está disponible o el link ha expirado.");
-        }
-      } catch (e) {
-        setError("No se pudo cargar el proceso. Comprueba tu conexión e inténtalo de nuevo.");
-      }
+        if (snap.exists()) setProcessData(snap.data());
+        else setError("Este proceso no está disponible o el link ha expirado.");
+      } catch (e) { setError("No se pudo cargar el proceso."); }
       setLoading(false);
     };
     load();
@@ -1077,97 +529,392 @@ function CandidatePublicScreen({ processId }) {
     setSubmitting(true);
     try {
       await addDoc(collection(db, "publicProcesses", processId, "applications"), {
-        name: candidate?.name || "",
-        email: candidate?.email || "",
-        phone: candidate?.phone || "",
-        linkedin: candidate?.linkedin || "",
-        presentation: candidate?.presentation || "",
-        responses,
-        submittedAt: new Date().toISOString(),
-        estado: "Pendiente",
-        progreso: "Ingreso",
-        entrevistador: "",
-        notas: "",
-        phase: "applied",
+        name: candidate?.name || "", email: candidate?.email || "", phone: candidate?.phone || "",
+        linkedin: candidate?.linkedin || "", presentation: candidate?.presentation || "",
+        responses, submittedAt: new Date().toISOString(),
+        estado: "Pendiente", progreso: "Ingreso", entrevistador: "", notas: "", phase: "applied",
       });
       setSubmitted(true);
-    } catch (e) {
-      console.error("Error guardando aplicación:", e);
-      alert("Hubo un error al enviar tu solicitud. Por favor, inténtalo de nuevo.");
-    }
+    } catch (e) { alert("Error al enviar. Inténtalo de nuevo."); }
     setSubmitting(false);
   };
 
   if (loading) return <LoadingScreen />;
-
-  if (error) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-10 max-w-md w-full text-center">
-        <p className="text-4xl mb-4">⚠️</p>
-        <h2 className="font-bold text-gray-800 mb-2">Proceso no disponible</h2>
-        <p className="text-gray-500 text-sm">{error}</p>
-      </div>
-    </div>
-  );
-
+  if (error) return <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6"><div className="bg-white rounded-2xl shadow-sm p-10 max-w-md w-full text-center"><p className="text-4xl mb-4">⚠️</p><h2 className="font-bold text-gray-800 mb-2">Proceso no disponible</h2><p className="text-gray-500 text-sm">{error}</p></div></div>;
   if (submitted) return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-      <div className="bg-white rounded-2xl shadow-xl border border-gray-100 p-10 max-w-md w-full text-center">
+      <div className="bg-white rounded-2xl shadow-xl p-10 max-w-md w-full text-center">
         <div className="text-5xl mb-4">🎉</div>
         <h2 className="text-2xl font-black text-gray-900 mb-2">¡Solicitud enviada!</h2>
-        <p className="text-gray-500 mb-4">Hemos recibido tu candidatura para <strong>{processData?.company?.name}</strong>. El equipo revisará tu perfil y te contactará en breve.</p>
+        <p className="text-gray-500 mb-4">Hemos recibido tu candidatura para <strong>{processData?.company?.name}</strong>.</p>
         <div className="bg-blue-50 rounded-xl p-4 text-left text-sm text-blue-700 space-y-1">
-          <p>✅ Datos personales recibidos</p>
-          <p>✅ Ejercicios prácticos enviados</p>
+          <p>✅ Datos personales recibidos</p><p>✅ Ejercicios y vídeo de defensa enviados</p>
           <p>📧 Recibirás confirmación en {candidate?.email}</p>
         </div>
       </div>
     </div>
   );
-
-  if (phase === "preview") return <JobPreviewScreen job={processData} onApply={() => setPhase("apply")} onBack={null} isPublic />;
+  if (phase === "preview") return <JobPreviewScreen job={processData} onApply={() => setPhase("apply")} onBack={null} />;
   if (phase === "apply") return <CandidateApplyScreen job={processData} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />;
   if (phase === "exercises") return <ExercisesScreen job={processData} candidate={candidate} onSubmit={handleSubmit} submitting={submitting} />;
   return null;
 }
 
-// ─────────────────────────────────────────────
-// SCREEN: PROCESS DETAIL (Candidate Pipeline)
-// ─────────────────────────────────────────────
+// ─── AGENCY SETTINGS MODAL ───────────────────────────────────────────────────
+function AgencySettingsModal({ settings, onSave, onClose }) {
+  const [brandManual, setBrandManual] = useState(settings?.brandManual || "");
+  const [tab, setTab] = useState("text"); // "text" | "upload"
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [fileName, setFileName] = useState("");
+  const fileRef = useRef(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setUploadError("");
+    setUploading(true);
+    setFileName(file.name);
+    try {
+      const ext = file.name.split(".").pop().toLowerCase();
+      if (ext === "txt") {
+        const text = await file.text();
+        setBrandManual(text);
+        setTab("text");
+      } else if (ext === "docx") {
+        const mammoth = await import("mammoth");
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        setBrandManual(result.value);
+        setTab("text");
+      } else if (ext === "pdf") {
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        let fullText = "";
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          fullText += content.items.map(item => item.str).join(" ") + "\n";
+        }
+        setBrandManual(fullText.trim());
+        setTab("text");
+      } else {
+        setUploadError("Formato no soportado. Usa .txt, .docx o .pdf");
+      }
+    } catch (err) {
+      setUploadError("Error al leer el archivo. Prueba con .txt o copia el texto manualmente.");
+    }
+    setUploading(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h2 className="font-bold text-gray-800">⚙️ Configuración de agencia</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+        </div>
+        <div className="p-6 space-y-4">
+          {/* Tab toggle */}
+          <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+            <button onClick={() => setTab("text")} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${tab === "text" ? "bg-white shadow text-gray-800" : "text-gray-500 hover:text-gray-700"}`}>
+              ✏️ Escribir / Pegar texto
+            </button>
+            <button onClick={() => setTab("upload")} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${tab === "upload" ? "bg-white shadow text-gray-800" : "text-gray-500 hover:text-gray-700"}`}>
+              📄 Subir documento
+            </button>
+          </div>
+
+          {tab === "text" && (
+            <div>
+              <label className={lbl}>Manual de marca / Valores de la agencia</label>
+              <textarea className={inp} rows={10} value={brandManual} onChange={e => setBrandManual(e.target.value)}
+                placeholder={"Pega aquí tu manual de marca o los valores clave de tu agencia.\n\nEjemplo:\n- Somos una agencia orientada a resultados medibles...\n- Buscamos perfiles que se alineen con nuestros valores de...\n- Tono: cercano, profesional, directo..."} />
+              {fileName && <p className="text-xs text-green-600 mt-1">✓ Extraído de: {fileName}</p>}
+              <p className="text-xs text-gray-400 mt-1">La IA usará este texto para evaluar la alineación cultural de cada candidato.</p>
+            </div>
+          )}
+
+          {tab === "upload" && (
+            <div>
+              <label className={lbl}>Sube tu documento de marca</label>
+              <div
+                onClick={() => fileRef.current?.click()}
+                className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all"
+              >
+                {uploading ? (
+                  <p className="text-sm text-blue-600 font-medium">Extrayendo texto...</p>
+                ) : (
+                  <>
+                    <p className="text-3xl mb-2">📁</p>
+                    <p className="text-sm font-medium text-gray-700">Haz clic para seleccionar archivo</p>
+                    <p className="text-xs text-gray-400 mt-1">Formatos: .txt, .docx, .pdf</p>
+                  </>
+                )}
+              </div>
+              <input ref={fileRef} type="file" accept=".txt,.docx,.pdf" onChange={handleFile} className="hidden" />
+              {uploadError && <p className="text-xs text-red-500 mt-2">{uploadError}</p>}
+              <p className="text-xs text-gray-400 mt-2">El texto del documento se cargará automáticamente y podrás editarlo antes de guardar.</p>
+            </div>
+          )}
+        </div>
+        <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">Cancelar</button>
+          <button onClick={() => { onSave({ brandManual }); onClose(); }} className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">Guardar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── CANDIDATE EVALUATION PANEL ──────────────────────────────────────────────
+const REC_COLORS = {
+  AVANZAR: "bg-green-100 text-green-800", REVISAR: "bg-yellow-100 text-yellow-800",
+  DESCARTAR: "bg-red-100 text-red-700", CONTRATAR: "bg-emerald-100 text-emerald-800",
+  SEGUNDA_ENTREVISTA: "bg-blue-100 text-blue-800", EN_CARTERA: "bg-yellow-100 text-yellow-800",
+};
+const REC_LABELS = {
+  AVANZAR: "✅ Avanzar", REVISAR: "⚠️ Revisar", DESCARTAR: "❌ Descartar",
+  CONTRATAR: "🎉 Contratar", SEGUNDA_ENTREVISTA: "🔄 Segunda entrevista", EN_CARTERA: "📁 En cartera",
+};
+
+function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdateCandidate, onClose }) {
+  const [tab, setTab] = useState("exercise");
+  const [evaluatingEx, setEvaluatingEx] = useState(false);
+  const [evaluatingInt, setEvaluatingInt] = useState(false);
+  const [interviewTranscript, setInterviewTranscript] = useState(candidate.interviewTranscript || "");
+  const [error, setError] = useState(null);
+
+  const exerciseEval = candidate.exerciseEvaluation;
+  const interviewEval = candidate.interviewEvaluation;
+  const responses = candidate.responses || [];
+  const position = getPositionTitle(process.position);
+
+  const evaluateExercise = async () => {
+    setEvaluatingEx(true); setError(null);
+    try {
+      const firstResponse = responses[0] || {};
+      const exercise = process.exercises?.[0] || {};
+      const res = await fetch("/api/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "exercise",
+          data: {
+            exerciseTitle: exercise.title || "Ejercicio",
+            exerciseDescription: exercise.description || "",
+            writtenResponse: firstResponse.response || "",
+            loomUrl: firstResponse.loomUrl || "",
+            position,
+            brandManual: agencySettings?.brandManual || "",
+            companyName: process.company?.name || "",
+          },
+        }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      onUpdateCandidate({ ...candidate, exerciseEvaluation: json.evaluation });
+    } catch (e) { setError("Error al evaluar: " + e.message); }
+    setEvaluatingEx(false);
+  };
+
+  const evaluateInterview = async () => {
+    if (!interviewTranscript.trim()) return;
+    setEvaluatingInt(true); setError(null);
+    try {
+      const res = await fetch("/api/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "interview",
+          data: { transcript: interviewTranscript, position, brandManual: agencySettings?.brandManual || "", companyName: process.company?.name || "" },
+        }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      onUpdateCandidate({ ...candidate, interviewEvaluation: json.evaluation, interviewTranscript });
+    } catch (e) { setError("Error al evaluar: " + e.message); }
+    setEvaluatingInt(false);
+  };
+
+  const setFinalDecision = (decision) => {
+    onUpdateCandidate({ ...candidate, estado: decision, finalDecision: decision });
+  };
+
+  const weightedScore = interviewEval?.candidate?.weights
+    ? Math.round(interviewEval.candidate.weights.reduce((s, w) => s + (w.score * w.weight / 100), 0))
+    : null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+          <div>
+            <h2 className="font-bold text-gray-900">{candidate.name}</h2>
+            <p className="text-xs text-gray-400">{candidate.email} · {position}</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex border-b border-gray-100 shrink-0">
+          {[["exercise", "🎯 Ejercicio"], ["interview", "🎤 Entrevista"], ["decision", "✅ Decisión"]].map(([id, label]) => (
+            <button key={id} onClick={() => setTab(id)} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${tab === id ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-400 hover:text-gray-600"}`}>{label}</button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5">
+          {error && <div className="mb-4 bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">{error}</div>}
+
+          {/* ── EXERCISE TAB ── */}
+          {tab === "exercise" && (
+            <div className="space-y-4">
+              {responses.length === 0 ? (
+                <div className="text-center py-8 text-gray-400"><p className="text-2xl mb-2">📋</p><p className="text-sm">Este candidato no envió su ejercicio a través del link público.</p></div>
+              ) : (
+                <>
+                  {responses.map((r, i) => {
+                    const ex = process.exercises?.find(e => e.id === r.exerciseId) || process.exercises?.[i] || {};
+                    return (
+                      <div key={i} className="border border-gray-100 rounded-xl p-4 bg-gray-50">
+                        <p className="font-semibold text-gray-800 text-sm mb-2">{ex.title || `Ejercicio ${i + 1}`}</p>
+                        <p className="text-xs text-gray-500 mb-3 whitespace-pre-wrap line-clamp-3">{r.response}</p>
+                        {r.loomUrl && <a href={r.loomUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline flex items-center gap-1">🎥 Ver vídeo de defensa en Loom →</a>}
+                      </div>
+                    );
+                  })}
+                  {!exerciseEval && (
+                    <button onClick={evaluateExercise} disabled={evaluatingEx} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+                      {evaluatingEx ? "🤖 Evaluando con IA..." : "🤖 Evaluar ejercicio con IA"}
+                    </button>
+                  )}
+                </>
+              )}
+
+              {exerciseEval && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between bg-indigo-50 rounded-xl p-4">
+                    <div><p className="font-bold text-indigo-800">Resultado del ejercicio</p><p className="text-xs text-indigo-500 mt-0.5">{exerciseEval.summary}</p></div>
+                    <div className="text-right"><p className="text-3xl font-black text-indigo-700">{exerciseEval.overall}<span className="text-sm font-medium text-indigo-400">/100</span></p><span className={`text-xs font-bold px-2 py-0.5 rounded-full ${REC_COLORS[exerciseEval.recommendation] || "bg-gray-100 text-gray-700"}`}>{REC_LABELS[exerciseEval.recommendation] || exerciseEval.recommendation}</span></div>
+                  </div>
+                  <div className="space-y-2">
+                    {(exerciseEval.criteria || []).map((c, i) => (
+                      <div key={i} className="flex items-start gap-3 bg-white border border-gray-100 rounded-xl p-3">
+                        <div className="shrink-0 w-10 h-10 bg-gray-50 rounded-lg flex items-center justify-center font-black text-gray-700">{c.score}<span className="text-xs text-gray-400">/10</span></div>
+                        <div className="flex-1 min-w-0"><p className="text-xs font-bold text-gray-700">{c.name}</p><p className="text-xs text-gray-500 mt-0.5">{c.feedback}</p></div>
+                      </div>
+                    ))}
+                  </div>
+                  {exerciseEval.strengths?.length > 0 && <div className="bg-green-50 rounded-xl p-3"><p className="text-xs font-bold text-green-700 mb-1">✅ Puntos fuertes</p>{exerciseEval.strengths.map((s, i) => <p key={i} className="text-xs text-green-600">· {s}</p>)}</div>}
+                  {exerciseEval.gaps?.length > 0 && <div className="bg-orange-50 rounded-xl p-3"><p className="text-xs font-bold text-orange-700 mb-1">⚠️ Áreas de mejora</p>{exerciseEval.gaps.map((s, i) => <p key={i} className="text-xs text-orange-600">· {s}</p>)}</div>}
+                  <button onClick={() => onUpdateCandidate({ ...candidate, exerciseEvaluation: null })} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Reevaluar</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── INTERVIEW TAB ── */}
+          {tab === "interview" && (
+            <div className="space-y-4">
+              {!interviewEval ? (
+                <>
+                  <div>
+                    <label className={lbl}>Transcripción de la entrevista</label>
+                    <textarea className={inp} rows={10} value={interviewTranscript} onChange={e => setInterviewTranscript(e.target.value)}
+                      placeholder={"Pega aquí la transcripción completa de la entrevista.\n\nCompatible con:\n· Granola\n· Google Meet (Gemini)\n· Zoom AI\n· Fathom, Otter, etc.\n\nFormato: texto plano, con turnos de palabra si es posible."} />
+                    <p className="text-xs text-gray-400 mt-1">{interviewTranscript.split(/\s+/).filter(Boolean).length} palabras</p>
+                  </div>
+                  <button onClick={evaluateInterview} disabled={evaluatingInt || !interviewTranscript.trim()} className="w-full py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 disabled:opacity-50 transition-colors">
+                    {evaluatingInt ? "🤖 Analizando entrevista..." : "🤖 Analizar entrevista con IA"}
+                  </button>
+                </>
+              ) : (
+                <div className="space-y-4">
+                  {/* Candidate analysis */}
+                  <div className="bg-purple-50 rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="font-bold text-purple-800">Análisis del candidato</p>
+                      <div className="text-right"><p className="text-2xl font-black text-purple-700">{weightedScore ?? interviewEval.candidate?.overall}<span className="text-sm font-medium text-purple-400">%</span></p><span className={`text-xs font-bold px-2 py-0.5 rounded-full ${REC_COLORS[interviewEval.candidate?.recommendation] || "bg-gray-100 text-gray-700"}`}>{REC_LABELS[interviewEval.candidate?.recommendation] || interviewEval.candidate?.recommendation}</span></div>
+                    </div>
+                    <p className="text-xs text-purple-600 mb-3">{interviewEval.candidate?.summary}</p>
+                    <div className="space-y-2">
+                      {(interviewEval.candidate?.weights || []).map((w, i) => (
+                        <div key={i} className="bg-white rounded-lg p-2.5 flex items-start gap-2">
+                          <div className="shrink-0 text-right"><p className="text-sm font-black text-gray-700">{w.score}<span className="text-xs text-gray-400">%</span></p><p className="text-xs text-gray-400">×{w.weight}%</p></div>
+                          <div><p className="text-xs font-bold text-gray-700">{w.name}</p><p className="text-xs text-gray-500">{w.feedback}</p></div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  {/* Sections */}
+                  {(interviewEval.candidate?.sections || []).length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Por secciones</p>
+                      {interviewEval.candidate.sections.map((s, i) => (
+                        <div key={i} className="bg-white border border-gray-100 rounded-xl p-3"><p className="text-xs font-bold text-gray-700 mb-1">{s.name}</p><p className="text-xs text-gray-500">{s.feedback}</p></div>
+                      ))}
+                    </div>
+                  )}
+                  {/* Interviewer analysis */}
+                  {interviewEval.interviewer && (
+                    <div className="bg-slate-50 rounded-xl p-4">
+                      <div className="flex items-center justify-between mb-2"><p className="font-bold text-slate-700 text-sm">Análisis del entrevistador</p><span className="text-lg font-black text-slate-600">{interviewEval.interviewer.overall_score}<span className="text-xs text-slate-400">/100</span></span></div>
+                      <p className="text-xs text-slate-500 mb-2">{interviewEval.interviewer.summary}</p>
+                      {(interviewEval.interviewer.strengths || []).length > 0 && <div className="mb-2">{interviewEval.interviewer.strengths.map((s, i) => <p key={i} className="text-xs text-green-600">✓ {s}</p>)}</div>}
+                      {(interviewEval.interviewer.improvements || []).length > 0 && <div>{interviewEval.interviewer.improvements.map((s, i) => <p key={i} className="text-xs text-orange-600">→ {s}</p>)}</div>}
+                    </div>
+                  )}
+                  <button onClick={() => { onUpdateCandidate({ ...candidate, interviewEvaluation: null, interviewTranscript: "" }); setInterviewTranscript(""); }} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Reevaluar entrevista</button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── DECISION TAB ── */}
+          {tab === "decision" && (
+            <div className="space-y-4">
+              <div className="bg-gray-50 rounded-xl p-4">
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Resumen de evaluaciones</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-white rounded-xl p-3 text-center border border-gray-100">
+                    <p className="text-xs text-gray-400 mb-1">Ejercicio</p>
+                    {exerciseEval ? <><p className="text-2xl font-black text-indigo-700">{exerciseEval.overall}</p><span className={`text-xs px-2 py-0.5 rounded-full ${REC_COLORS[exerciseEval.recommendation] || "bg-gray-100 text-gray-700"}`}>{REC_LABELS[exerciseEval.recommendation] || "—"}</span></> : <p className="text-gray-400 text-sm">Sin evaluar</p>}
+                  </div>
+                  <div className="bg-white rounded-xl p-3 text-center border border-gray-100">
+                    <p className="text-xs text-gray-400 mb-1">Entrevista</p>
+                    {interviewEval ? <><p className="text-2xl font-black text-purple-700">{weightedScore ?? interviewEval.candidate?.overall}</p><span className={`text-xs px-2 py-0.5 rounded-full ${REC_COLORS[interviewEval.candidate?.recommendation] || "bg-gray-100 text-gray-700"}`}>{REC_LABELS[interviewEval.candidate?.recommendation] || "—"}</span></> : <p className="text-gray-400 text-sm">Sin evaluar</p>}
+                  </div>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Tu decisión final</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {[["Contratado", "🎉 Contratar", "bg-green-600 hover:bg-green-700 text-white"], ["Segunda entrevista", "🔄 Segunda entrevista", "bg-blue-600 hover:bg-blue-700 text-white"], ["En cartera", "📁 En cartera", "bg-yellow-500 hover:bg-yellow-600 text-white"], ["Descartado", "❌ Descartar", "bg-red-500 hover:bg-red-600 text-white"]].map(([val, label, cls]) => (
+                    <button key={val} onClick={() => setFinalDecision(val)} className={`py-3 rounded-xl font-bold text-sm transition-colors ${cls} ${candidate.estado === val ? "ring-4 ring-offset-2 ring-gray-300" : ""}`}>{label}</button>
+                  ))}
+                </div>
+                {candidate.finalDecision && <p className="text-xs text-center text-gray-400 mt-3">Decisión registrada: <strong>{candidate.finalDecision}</strong></p>}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── PIPELINE CONSTANTS ───────────────────────────────────────────────────────
 const ESTADO_OPTIONS = ["Pendiente", "Primera entrevista", "Segunda entrevista", "En cartera", "Descartado", "Contratado"];
 const PROGRESO_OPTIONS = ["Ingreso", "Prueba técnica", "Entrevista", "Onboarding", "Descalificado", "En cartera", "Desiste", "Validación prueba técnica", "Entrevista RRHH"];
+const ESTADO_COLORS = { "Pendiente": "bg-gray-100 text-gray-700", "Primera entrevista": "bg-blue-100 text-blue-700", "Segunda entrevista": "bg-indigo-100 text-indigo-700", "En cartera": "bg-yellow-100 text-yellow-700", "Descartado": "bg-red-100 text-red-700", "Contratado": "bg-green-100 text-green-700" };
+const PROGRESO_COLORS = { "Ingreso": "bg-purple-100 text-purple-700", "Prueba técnica": "bg-blue-100 text-blue-700", "Entrevista": "bg-indigo-100 text-indigo-700", "Onboarding": "bg-teal-100 text-teal-700", "Descalificado": "bg-red-100 text-red-700", "En cartera": "bg-yellow-100 text-yellow-700", "Desiste": "bg-orange-100 text-orange-700", "Validación prueba técnica": "bg-cyan-100 text-cyan-700", "Entrevista RRHH": "bg-violet-100 text-violet-700" };
 
-const ESTADO_COLORS = {
-  "Pendiente": "bg-gray-100 text-gray-700",
-  "Primera entrevista": "bg-blue-100 text-blue-700",
-  "Segunda entrevista": "bg-indigo-100 text-indigo-700",
-  "En cartera": "bg-yellow-100 text-yellow-700",
-  "Descartado": "bg-red-100 text-red-700",
-  "Contratado": "bg-green-100 text-green-700",
-};
-
-const PROGRESO_COLORS = {
-  "Ingreso": "bg-purple-100 text-purple-700",
-  "Prueba técnica": "bg-blue-100 text-blue-700",
-  "Entrevista": "bg-indigo-100 text-indigo-700",
-  "Onboarding": "bg-teal-100 text-teal-700",
-  "Descalificado": "bg-red-100 text-red-700",
-  "En cartera": "bg-yellow-100 text-yellow-700",
-  "Desiste": "bg-orange-100 text-orange-700",
-  "Validación prueba técnica": "bg-cyan-100 text-cyan-700",
-  "Entrevista RRHH": "bg-violet-100 text-violet-700",
-};
-
-function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo }) {
-  const [candidates, setCandidates] = useState(
-    (process.candidates || []).map(c => ({
-      estado: "Pendiente",
-      progreso: "Ingreso",
-      entrevistador: "",
-      notas: "",
-      ...c,
-    }))
-  );
+// ─── PROCESS DETAIL SCREEN ───────────────────────────────────────────────────
+function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, agencySettings }) {
+  const [candidates, setCandidates] = useState((process.candidates || []).map(c => ({ estado: "Pendiente", progreso: "Ingreso", entrevistador: "", notas: "", ...c })));
   const [showAddForm, setShowAddForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -1176,65 +923,26 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo }) {
   const [publishing, setPublishing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importCount, setImportCount] = useState(0);
+  const [evalCandidate, setEvalCandidate] = useState(null);
 
-  const updateCandidate = (id, field, value) => {
-    const updated = candidates.map(c => c.id === id ? { ...c, [field]: value } : c);
-    setCandidates(updated);
-    onUpdate(process.id, updated);
-  };
-
-  const addCandidate = () => {
-    if (!newName.trim()) return;
-    const newCand = {
-      id: `c_${Date.now()}`,
-      name: newName.trim(),
-      email: newEmail.trim(),
-      phase: "applied",
-      estado: "Pendiente",
-      progreso: "Ingreso",
-      entrevistador: user?.displayName || "",
-      notas: "",
-    };
-    const updated = [...candidates, newCand];
-    setCandidates(updated);
-    onUpdate(process.id, updated);
-    setNewName("");
-    setNewEmail("");
-    setShowAddForm(false);
-  };
-
-  const removeCandidate = (id) => {
-    if (!window.confirm("¿Eliminar este candidato del proceso?")) return;
-    const updated = candidates.filter(c => c.id !== id);
-    setCandidates(updated);
-    onUpdate(process.id, updated);
-  };
+  const updateCandidate = (id, field, value) => { const u = candidates.map(c => c.id === id ? { ...c, [field]: value } : c); setCandidates(u); onUpdate(process.id, u); };
+  const updateCandidateFull = (updated) => { const u = candidates.map(c => c.id === updated.id ? updated : c); setCandidates(u); onUpdate(process.id, u); if (evalCandidate?.id === updated.id) setEvalCandidate(updated); };
+  const addCandidate = () => { if (!newName.trim()) return; const nc = { id: `c_${Date.now()}`, name: newName.trim(), email: newEmail.trim(), phase: "applied", estado: "Pendiente", progreso: "Ingreso", entrevistador: user?.displayName || "", notas: "" }; const u = [...candidates, nc]; setCandidates(u); onUpdate(process.id, u); setNewName(""); setNewEmail(""); setShowAddForm(false); };
+  const removeCandidate = (id) => { if (!window.confirm("¿Eliminar este candidato?")) return; const u = candidates.filter(c => c.id !== id); setCandidates(u); onUpdate(process.id, u); };
 
   const generatePublicLink = async () => {
     setPublishing(true);
     try {
-      await setDoc(doc(db, "publicProcesses", process.id), {
-        ...process,
-        publishedAt: new Date().toISOString(),
-      });
+      await setDoc(doc(db, "publicProcesses", process.id), { ...process, publishedAt: new Date().toISOString() });
       const url = `${window.location.origin}/#apply/${process.id}`;
       setPublicLink(url);
       await navigator.clipboard.writeText(url);
-      setLinkCopied(true);
-      setTimeout(() => setLinkCopied(false), 3000);
-    } catch (e) {
-      console.error("Error publicando:", e);
-      alert("Error al generar el link. Inténtalo de nuevo.");
-    }
+      setLinkCopied(true); setTimeout(() => setLinkCopied(false), 3000);
+    } catch (e) { alert("Error al generar el link."); }
     setPublishing(false);
   };
 
-  const copyLink = async () => {
-    if (!publicLink) return;
-    await navigator.clipboard.writeText(publicLink);
-    setLinkCopied(true);
-    setTimeout(() => setLinkCopied(false), 2000);
-  };
+  const copyLink = async () => { if (!publicLink) return; await navigator.clipboard.writeText(publicLink); setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); };
 
   const importApplications = async () => {
     setImporting(true);
@@ -1243,190 +951,92 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo }) {
       const apps = snap.docs.map(d => ({ id: `app_${d.id}`, ...d.data() }));
       const existingIds = new Set(candidates.map(c => c.id));
       const newApps = apps.filter(a => !existingIds.has(a.id));
-      if (newApps.length > 0) {
-        const updated = [...candidates, ...newApps];
-        setCandidates(updated);
-        onUpdate(process.id, updated);
-        setImportCount(newApps.length);
-        setTimeout(() => setImportCount(0), 4000);
-      } else {
-        setImportCount(-1);
-        setTimeout(() => setImportCount(0), 3000);
-      }
-    } catch (e) {
-      console.error("Error importando:", e);
-    }
+      if (newApps.length > 0) { const u = [...candidates, ...newApps]; setCandidates(u); onUpdate(process.id, u); setImportCount(newApps.length); setTimeout(() => setImportCount(0), 4000); }
+      else { setImportCount(-1); setTimeout(() => setImportCount(0), 3000); }
+    } catch (e) { console.error(e); }
     setImporting(false);
   };
 
-  const statsByEstado = ESTADO_OPTIONS.map(e => ({
-    label: e,
-    count: candidates.filter(c => (c.estado || "Pendiente") === e).length,
-  }));
-
+  const statsByEstado = ESTADO_OPTIONS.map(e => ({ label: e, count: candidates.filter(c => (c.estado || "Pendiente") === e).length }));
   const statColors = ["bg-gray-50 text-gray-700", "bg-blue-50 text-blue-700", "bg-indigo-50 text-indigo-700", "bg-yellow-50 text-yellow-700", "bg-red-50 text-red-600", "bg-green-50 text-green-700"];
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
+      {evalCandidate && <CandidateEvaluationPanel candidate={evalCandidate} process={process} agencySettings={agencySettings} onUpdateCandidate={updateCandidateFull} onClose={() => setEvalCandidate(null)} />}
       <div className="bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center gap-3">
-          <button onClick={onBack} className="text-gray-400 hover:text-gray-700 text-sm flex items-center gap-1 shrink-0">← Panel</button>
+          <button onClick={onBack} className="text-gray-400 hover:text-gray-700 text-sm shrink-0">← Panel</button>
           <div className="w-px h-4 bg-gray-200 shrink-0" />
           <span className="text-xl font-black text-blue-600 shrink-0">RecruitAI</span>
           <div className="w-px h-4 bg-gray-200 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <span className="font-bold text-gray-900 text-sm truncate block">{getPositionTitle(process.position)}</span>
-            <span className="text-xs text-gray-400">{process.company?.name}</span>
-          </div>
-          <button onClick={onStartDemo} className="shrink-0 px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg text-xs font-medium hover:bg-gray-50 transition-colors">Ver oferta →</button>
+          <div className="flex-1 min-w-0"><span className="font-bold text-gray-900 text-sm truncate block">{getPositionTitle(process.position)}</span><span className="text-xs text-gray-400">{process.company?.name}</span></div>
+          <button onClick={onStartDemo} className="shrink-0 px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg text-xs font-medium hover:bg-gray-50">Ver oferta →</button>
         </div>
       </div>
-
       <div className="max-w-6xl mx-auto p-6">
-        {/* Process info bar */}
         <div className="flex flex-wrap items-center gap-2 mb-5">
-          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${process.status === "active" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>
-            {process.status === "active" ? "● Activo" : "● Pausado"}
-          </span>
+          <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${process.status === "active" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"}`}>{process.status === "active" ? "● Activo" : "● Pausado"}</span>
           {process.position?.contract && <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{process.position.contract}</span>}
           {process.position?.hoursPerWeek && <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{process.position.hoursPerWeek}h/sem</span>}
           {process.company?.salaryMin && <span className="text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full">{Number(process.company.salaryMin).toLocaleString()}–{Number(process.company.salaryMax).toLocaleString()} {process.company.currency}</span>}
-          {process.company?.location && <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">📍 {process.company.location}</span>}
         </div>
-
-        {/* Stats by Estado */}
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-5">
-          {statsByEstado.map(({ label, count }, i) => (
-            <div key={label} className={`rounded-xl border border-gray-100 p-3 text-center shadow-sm ${statColors[i]}`}>
-              <p className="text-2xl font-black leading-none">{count}</p>
-              <p className="text-xs leading-tight mt-1 opacity-80">{label}</p>
-            </div>
-          ))}
+          {statsByEstado.map(({ label, count }, i) => (<div key={label} className={`rounded-xl border border-gray-100 p-3 text-center shadow-sm ${statColors[i]}`}><p className="text-2xl font-black leading-none">{count}</p><p className="text-xs leading-tight mt-1 opacity-80">{label}</p></div>))}
         </div>
-
         {/* Link público */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="font-bold text-gray-800 text-sm">🔗 Link público para candidatos</p>
-              <p className="text-xs text-gray-400 mt-0.5">Genera un link único que los candidatos pueden abrir desde cualquier dispositivo para aplicar.</p>
-            </div>
+            <div><p className="font-bold text-gray-800 text-sm">🔗 Link público para candidatos</p><p className="text-xs text-gray-400 mt-0.5">Genera un link único que los candidatos abren para aplicar.</p></div>
             <div className="flex gap-2 flex-wrap">
-              {publicLink && (
-                <button onClick={importApplications} disabled={importing} className="px-3 py-2 border border-blue-200 text-blue-600 rounded-lg text-xs font-semibold hover:bg-blue-50 transition-colors disabled:opacity-50">
-                  {importing ? "Importando..." : "⬇ Importar candidatos"}
-                </button>
-              )}
-              <button onClick={generatePublicLink} disabled={publishing} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50">
-                {publishing ? "Publicando..." : publicLink ? "🔄 Regenerar link" : "🚀 Generar link público"}
-              </button>
+              {publicLink && <button onClick={importApplications} disabled={importing} className="px-3 py-2 border border-blue-200 text-blue-600 rounded-lg text-xs font-semibold hover:bg-blue-50 disabled:opacity-50">{importing ? "Importando..." : "⬇ Importar candidatos"}</button>}
+              <button onClick={generatePublicLink} disabled={publishing} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 disabled:opacity-50">{publishing ? "Publicando..." : publicLink ? "🔄 Regenerar link" : "🚀 Generar link público"}</button>
             </div>
           </div>
-          {publicLink && (
-            <div className="mt-3 flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2">
-              <span className="text-xs text-gray-500 font-mono flex-1 truncate">{publicLink}</span>
-              <button onClick={copyLink} className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors shrink-0 ${linkCopied ? "bg-green-100 text-green-700" : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-100"}`}>
-                {linkCopied ? "✓ Copiado" : "Copiar"}
-              </button>
-            </div>
-          )}
+          {publicLink && (<div className="mt-3 flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2"><span className="text-xs text-gray-500 font-mono flex-1 truncate">{publicLink}</span><button onClick={copyLink} className={`text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0 transition-colors ${linkCopied ? "bg-green-100 text-green-700" : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-100"}`}>{linkCopied ? "✓ Copiado" : "Copiar"}</button></div>)}
           {importCount > 0 && <p className="text-xs text-green-600 font-semibold mt-2">✅ {importCount} nueva{importCount > 1 ? "s" : ""} candidatura{importCount > 1 ? "s" : ""} importada{importCount > 1 ? "s" : ""}</p>}
-          {importCount === -1 && <p className="text-xs text-gray-400 mt-2">No hay candidaturas nuevas por importar.</p>}
+          {importCount === -1 && <p className="text-xs text-gray-400 mt-2">No hay candidaturas nuevas.</p>}
         </div>
-
         {/* Candidate Table */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
             <h2 className="font-bold text-gray-800">Candidatos <span className="text-gray-400 font-normal text-sm">({candidates.length})</span></h2>
-            <button onClick={() => setShowAddForm(v => !v)} className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors">+ Añadir candidato</button>
+            <button onClick={() => setShowAddForm(v => !v)} className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700">+ Añadir candidato</button>
           </div>
-
-          {/* Add candidate form */}
           {showAddForm && (
             <div className="px-5 py-4 bg-blue-50 border-b border-blue-100 flex flex-wrap items-end gap-3">
-              <div>
-                <label className={lbl}>Nombre *</label>
-                <input className={inp} style={{width: "180px"}} value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nombre del candidato" onKeyDown={e => e.key === "Enter" && addCandidate()} autoFocus />
-              </div>
-              <div>
-                <label className={lbl}>Email</label>
-                <input className={inp} style={{width: "220px"}} value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="email@ejemplo.com" type="email" />
-              </div>
-              <div className="flex gap-2">
-                <button onClick={addCandidate} className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700 transition-colors">Añadir</button>
-                <button onClick={() => { setShowAddForm(false); setNewName(""); setNewEmail(""); }} className="px-4 py-2.5 border border-gray-200 bg-white text-gray-500 rounded-lg text-sm hover:bg-gray-50 transition-colors">Cancelar</button>
-              </div>
+              <div><label className={lbl}>Nombre *</label><input className={inp} style={{ width: "180px" }} value={newName} onChange={e => setNewName(e.target.value)} autoFocus onKeyDown={e => e.key === "Enter" && addCandidate()} /></div>
+              <div><label className={lbl}>Email</label><input className={inp} style={{ width: "220px" }} value={newEmail} onChange={e => setNewEmail(e.target.value)} type="email" /></div>
+              <div className="flex gap-2"><button onClick={addCandidate} className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-semibold hover:bg-blue-700">Añadir</button><button onClick={() => { setShowAddForm(false); setNewName(""); setNewEmail(""); }} className="px-4 py-2.5 border border-gray-200 bg-white text-gray-500 rounded-lg text-sm">Cancelar</button></div>
             </div>
           )}
-
           {candidates.length === 0 ? (
-            <div className="text-center py-14">
-              <p className="text-4xl mb-3">👥</p>
-              <p className="text-gray-400 text-sm font-medium">No hay candidatos en este proceso todavía.</p>
-              <button onClick={() => setShowAddForm(true)} className="mt-3 text-blue-500 text-sm hover:underline font-medium">+ Añadir el primer candidato</button>
-            </div>
+            <div className="text-center py-14"><p className="text-4xl mb-3">👥</p><p className="text-gray-400 text-sm font-medium">No hay candidatos en este proceso.</p><button onClick={() => setShowAddForm(true)} className="mt-3 text-blue-500 text-sm hover:underline">+ Añadir el primero</button></div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse">
-                <thead>
-                  <tr className="bg-gray-50 border-b border-gray-100">
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{minWidth:"160px"}}>Candidato</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{minWidth:"170px"}}>Estado de la Solicitud</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{minWidth:"190px"}}>Progreso</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{minWidth:"150px"}}>Entrevistador</th>
-                    <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{minWidth:"200px"}}>Notas</th>
-                    <th className="px-4 py-3 w-8"></th>
-                  </tr>
-                </thead>
+              <table className="w-full text-sm">
+                <thead><tr className="bg-gray-50 border-b border-gray-100">
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "160px" }}>Candidato</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "170px" }}>Estado</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "190px" }}>Progreso</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "140px" }}>Entrevistador</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "180px" }}>Notas</th>
+                  <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "80px" }}>IA</th>
+                  <th className="px-4 py-3 w-8"></th>
+                </tr></thead>
                 <tbody>
                   {candidates.map((c, i) => (
-                    <tr key={c.id} className={`border-b border-gray-50 hover:bg-blue-50/30 transition-colors ${i % 2 === 1 ? "bg-gray-50/40" : ""}`}>
-                      <td className="px-4 py-3">
-                        <p className="font-semibold text-gray-800 leading-tight">{c.name}</p>
-                        {c.email && <p className="text-xs text-gray-400 mt-0.5">{c.email}</p>}
-                      </td>
-                      <td className="px-4 py-3">
-                        <select
-                          value={c.estado || "Pendiente"}
-                          onChange={e => updateCandidate(c.id, "estado", e.target.value)}
-                          className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-300 appearance-none ${ESTADO_COLORS[c.estado || "Pendiente"] || "bg-gray-100 text-gray-700"}`}
-                          style={{maxWidth:"160px"}}
-                        >
-                          {ESTADO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3">
-                        <select
-                          value={c.progreso || "Ingreso"}
-                          onChange={e => updateCandidate(c.id, "progreso", e.target.value)}
-                          className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-300 appearance-none ${PROGRESO_COLORS[c.progreso || "Ingreso"] || "bg-gray-100 text-gray-700"}`}
-                          style={{maxWidth:"185px"}}
-                        >
-                          {PROGRESO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          value={c.entrevistador || ""}
-                          onChange={e => updateCandidate(c.id, "entrevistador", e.target.value)}
-                          placeholder="Asignar..."
-                          className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 bg-transparent"
-                        />
-                      </td>
-                      <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          value={c.notas || ""}
-                          onChange={e => updateCandidate(c.id, "notas", e.target.value)}
-                          placeholder="Añadir nota..."
-                          className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 bg-transparent"
-                        />
-                      </td>
+                    <tr key={c.id} className={`border-b border-gray-50 hover:bg-blue-50/20 transition-colors ${i % 2 === 1 ? "bg-gray-50/30" : ""}`}>
+                      <td className="px-4 py-3"><p className="font-semibold text-gray-800 leading-tight">{c.name}</p>{c.email && <p className="text-xs text-gray-400 mt-0.5">{c.email}</p>}</td>
+                      <td className="px-4 py-3"><select value={c.estado || "Pendiente"} onChange={e => updateCandidate(c.id, "estado", e.target.value)} className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-300 ${ESTADO_COLORS[c.estado || "Pendiente"] || "bg-gray-100 text-gray-700"}`} style={{ maxWidth: "155px" }}>{ESTADO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
+                      <td className="px-4 py-3"><select value={c.progreso || "Ingreso"} onChange={e => updateCandidate(c.id, "progreso", e.target.value)} className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-300 ${PROGRESO_COLORS[c.progreso || "Ingreso"] || "bg-gray-100 text-gray-700"}`} style={{ maxWidth: "185px" }}>{PROGRESO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
+                      <td className="px-4 py-3"><input type="text" value={c.entrevistador || ""} onChange={e => updateCandidate(c.id, "entrevistador", e.target.value)} placeholder="Asignar..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 bg-transparent" /></td>
+                      <td className="px-4 py-3"><input type="text" value={c.notas || ""} onChange={e => updateCandidate(c.id, "notas", e.target.value)} placeholder="Añadir nota..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-300 bg-transparent" /></td>
                       <td className="px-4 py-3 text-center">
-                        <button onClick={() => removeCandidate(c.id)} className="text-gray-300 hover:text-red-400 transition-colors text-xl leading-none" title="Eliminar candidato">×</button>
+                        <button onClick={() => setEvalCandidate(c)} className={`text-xs font-semibold px-2 py-1 rounded-lg transition-colors ${c.exerciseEvaluation || c.interviewEvaluation ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>
+                          {c.exerciseEvaluation && c.interviewEvaluation ? "✅ Ver" : c.exerciseEvaluation ? "🎤 Entrev." : "🤖 Evaluar"}
+                        </button>
                       </td>
+                      <td className="px-4 py-3 text-center"><button onClick={() => removeCandidate(c.id)} className="text-gray-300 hover:text-red-400 text-xl leading-none">×</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -1439,17 +1049,16 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo }) {
   );
 }
 
-// ─────────────────────────────────────────────
-// DASHBOARD
-// ─────────────────────────────────────────────
+// ─── DASHBOARD ────────────────────────────────────────────────────────────────
 function getPipelineStats(process) {
   const c = process.candidates || [];
-  return { applied: c.filter(x => x.phase === "applied").length, review: c.filter(x => x.phase === "review").length, interview: c.filter(x => x.phase === "interview").length, hired: c.filter(x => x.phase === "hired").length, rejected: c.filter(x => x.phase === "rejected").length, total: c.length };
+  return { total: c.length, hired: c.filter(x => x.estado === "Contratado" || x.phase === "hired").length, interview: c.filter(x => x.estado === "Primera entrevista" || x.estado === "Segunda entrevista").length };
 }
 
 function ProcessCard({ process, onView, onToggle }) {
   const stats = getPipelineStats(process);
   const isActive = process.status === "active";
+  const byEstado = ESTADO_OPTIONS.map(e => ({ label: e, val: (process.candidates || []).filter(c => (c.estado || "Pendiente") === e).length }));
   return (
     <div className={`bg-white rounded-2xl border shadow-sm p-5 transition-all ${isActive ? "border-gray-100" : "border-gray-100 opacity-70"}`}>
       <div className="flex items-start justify-between mb-3">
@@ -1460,10 +1069,8 @@ function ProcessCard({ process, onView, onToggle }) {
         </div>
         <button onClick={() => onToggle(process.id)} className={`ml-3 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${isActive ? "border-orange-200 text-orange-600 hover:bg-orange-50" : "border-green-200 text-green-600 hover:bg-green-50"}`}>{isActive ? "⏸ Pausar" : "▶ Activar"}</button>
       </div>
-      <div className="grid grid-cols-5 gap-1.5 mb-4 text-center">
-        {[{ label: "Aplicaron", val: stats.applied, color: "text-blue-600" }, { label: "Revisión", val: stats.review, color: "text-yellow-600" }, { label: "Entrevista", val: stats.interview, color: "text-purple-600" }, { label: "Contrat.", val: stats.hired, color: "text-green-600" }, { label: "Descart.", val: stats.rejected, color: "text-red-400" }].map(s => (
-          <div key={s.label} className="bg-gray-50 rounded-lg p-2"><p className={`text-lg font-black leading-none ${s.color}`}>{s.val}</p><p className="text-xs text-gray-400 mt-0.5 leading-tight">{s.label}</p></div>
-        ))}
+      <div className="grid grid-cols-6 gap-1 mb-4">
+        {byEstado.map((s, i) => <div key={s.label} className={`rounded-lg p-1.5 text-center ${["bg-gray-50", "bg-blue-50", "bg-indigo-50", "bg-yellow-50", "bg-red-50", "bg-green-50"][i]}`}><p className="text-base font-black leading-none text-gray-800">{s.val}</p><p className="text-xs text-gray-400 mt-0.5 leading-tight hidden sm:block" style={{ fontSize: "9px" }}>{s.label}</p></div>)}
       </div>
       <div className="flex items-center justify-between">
         <div className="flex gap-1.5 flex-wrap">
@@ -1471,16 +1078,16 @@ function ProcessCard({ process, onView, onToggle }) {
           <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{process.position?.hoursPerWeek}h/sem</span>
           {process.company?.salaryMin && <span className="text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full">{Number(process.company.salaryMin).toLocaleString()}–{Number(process.company.salaryMax).toLocaleString()} {process.company.currency}</span>}
         </div>
-        <button onClick={() => onView(process)} className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition-colors">Ver proceso →</button>
+        <button onClick={() => onView(process)} className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-700">Ver proceso →</button>
       </div>
     </div>
   );
 }
 
-function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout }) {
+function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout, onOpenSettings }) {
   const active = processes.filter(p => p.status === "active").length;
   const totalCandidates = processes.reduce((s, p) => s + (p.candidates?.length || 0), 0);
-  const hired = processes.reduce((s, p) => s + (p.candidates?.filter(c => c.phase === "hired").length || 0), 0);
+  const hired = processes.reduce((s, p) => s + (p.candidates?.filter(c => c.estado === "Contratado" || c.phase === "hired").length || 0), 0);
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white border-b border-gray-100 sticky top-0 z-10">
@@ -1489,15 +1096,12 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
             <span className="text-2xl font-black text-blue-600">RecruitAI</span>
             <span className="text-xs bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full font-semibold">Panel de reclutador</span>
           </div>
-          <div className="flex items-center gap-3">
-            {user && (
-              <div className="flex items-center gap-2">
-                {user.photoURL && <img src={user.photoURL} alt={user.displayName} className="w-8 h-8 rounded-full border-2 border-gray-200" />}
-                <span className="text-sm text-gray-600 hidden sm:block">{user.displayName?.split(" ")[0]}</span>
-              </div>
-            )}
-            <button onClick={onNew} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition-colors">+ Nuevo proceso</button>
-            <button onClick={onLogout} className="px-3 py-2.5 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50 transition-colors" title="Cerrar sesión">↩</button>
+          <div className="flex items-center gap-2">
+            {user?.photoURL && <img src={user.photoURL} alt={user.displayName} className="w-8 h-8 rounded-full border-2 border-gray-200" />}
+            <span className="text-sm text-gray-600 hidden sm:block">{user?.displayName?.split(" ")[0]}</span>
+            <button onClick={onOpenSettings} className="px-3 py-2 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Configuración de agencia">⚙️</button>
+            <button onClick={onNew} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">+ Nuevo proceso</button>
+            <button onClick={onLogout} className="px-3 py-2.5 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Cerrar sesión">↩</button>
           </div>
         </div>
       </div>
@@ -1513,8 +1117,7 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
         </div>
         {processes.length === 0 ? (
           <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-12 text-center">
-            <p className="text-4xl mb-3">🚀</p>
-            <h3 className="font-bold text-gray-700 mb-1">Sin procesos activos</h3>
+            <p className="text-4xl mb-3">🚀</p><h3 className="font-bold text-gray-700 mb-1">Sin procesos activos</h3>
             <p className="text-gray-400 text-sm mb-4">Crea tu primer proceso de selección para empezar.</p>
             <button onClick={onNew} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">+ Crear proceso</button>
           </div>
@@ -1526,17 +1129,9 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
   );
 }
 
-// ─────────────────────────────────────────────
-// APP — Firebase auth + Firestore
-// ─────────────────────────────────────────────
+// ─── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  // Detectar si la URL es un link de candidato (#apply/processId)
-  const [publicProcessId] = useState(() => {
-    const m = window.location.hash.match(/^#apply\/(.+)$/);
-    return m ? m[1] : null;
-  });
-
-  // Si es un link público, mostrar la pantalla de candidato directamente (sin auth)
+  const [publicProcessId] = useState(() => { const m = window.location.hash.match(/^#apply\/(.+)$/); return m ? m[1] : null; });
   if (publicProcessId) return <CandidatePublicScreen processId={publicProcessId} />;
 
   const [phase, setPhase] = useState("dashboard");
@@ -1548,8 +1143,9 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
+  const [agencySettings, setAgencySettings] = useState({ brandManual: "" });
+  const [showSettings, setShowSettings] = useState(false);
 
-  // Listen to Firebase auth state & load processes
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
       setUser(u);
@@ -1559,7 +1155,8 @@ export default function App() {
           const snap = await getDoc(ref);
           if (snap.exists()) {
             const data = snap.data();
-            if (data.processes && data.processes.length > 0) setProcesses(data.processes);
+            if (data.processes?.length > 0) setProcesses(data.processes);
+            if (data.settings) setAgencySettings(data.settings);
           }
         } catch (e) { console.error("Error loading:", e); }
       }
@@ -1568,59 +1165,45 @@ export default function App() {
     return unsub;
   }, []);
 
-  // Save processes to Firestore on change (debounced 1s)
   useEffect(() => {
     if (!user) return;
     const t = setTimeout(async () => {
-      try {
-        await setDoc(doc(db, "recruiters", user.uid), { processes, updatedAt: new Date().toISOString() }, { merge: true });
-      } catch (e) { console.error("Error saving:", e); }
+      try { await setDoc(doc(db, "recruiters", user.uid), { processes, settings: agencySettings, updatedAt: new Date().toISOString() }, { merge: true }); }
+      catch (e) { console.error("Error saving:", e); }
     }, 1000);
     return () => clearTimeout(t);
-  }, [processes, user]);
+  }, [processes, agencySettings, user]);
 
-  const handleLogin = async () => {
-    setLoginLoading(true);
-    try { await signInWithPopup(auth, googleProvider); }
-    catch (e) { console.error("Login error:", e); setLoginLoading(false); }
-  };
-
-  const handleLogout = async () => { await signOut(auth); setProcesses(MOCK_PROCESSES); setPhase("dashboard"); };
+  const handleLogin = async () => { setLoginLoading(true); try { await signInWithPopup(auth, googleProvider); } catch (e) { console.error(e); setLoginLoading(false); } };
+  const handleLogout = async () => { await signOut(auth); setProcesses(MOCK_PROCESSES); setAgencySettings({ brandManual: "" }); setPhase("dashboard"); };
   const goToDashboard = () => { setPhase("dashboard"); setActiveJob(null); setCandidate(null); setEvaluation(null); setInterview(null); };
-
-  const handlePublish = (jobData) => {
-    const newProcess = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] };
-    setProcesses(ps => [newProcess, ...ps]);
-    setActiveJob(jobData);
-    setPhase("preview");
-  };
-
+  const handlePublish = (jobData) => { const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] }; setProcesses(ps => [np, ...ps]); setActiveJob(jobData); setPhase("preview"); };
   const handleToggle = (id) => setProcesses(ps => ps.map(p => p.id === id ? { ...p, status: p.status === "active" ? "paused" : "active" } : p));
   const handleViewProcess = (process) => { setActiveJob(process); setPhase("process_detail"); };
   const handleStartDemo = (process) => { setActiveJob(process); setPhase("preview"); };
   const handleUpdateCandidates = (processId, updatedCandidates) => {
     setProcesses(ps => ps.map(p => p.id === processId ? { ...p, candidates: updatedCandidates } : p));
-    setActiveJob(aj => aj && aj.id === processId ? { ...aj, candidates: updatedCandidates } : aj);
+    setActiveJob(aj => aj?.id === processId ? { ...aj, candidates: updatedCandidates } : aj);
   };
-  const handleApply = (form) => { setCandidate(form); setPhase("exercises"); };
-  const handleSubmit = (resps) => { setEvaluation(generateAIEvaluation(resps, activeJob)); setPhase("confirmation"); };
-  const handleApprove = () => setPhase("scheduling");
-  const handleReject = () => goToDashboard();
-  const handleSchedule = (slot) => { setInterview({ ...generateInterviewAnalysis(candidate?.name || "Candidato"), slot }); setPhase("interview"); };
-  const handleFinish = () => setPhase("final");
+  const handleSaveSettings = (newSettings) => { setAgencySettings(s => ({ ...s, ...newSettings })); };
 
   if (authLoading) return <LoadingScreen />;
   if (!user) return <LoginScreen onLogin={handleLogin} loading={loginLoading} />;
-  if (phase === "dashboard") return <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} />;
-  if (phase === "process_detail") { const liveProcess = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={liveProcess} onBack={goToDashboard} onUpdate={handleUpdateCandidates} user={user} onStartDemo={() => handleStartDemo(liveProcess)} />; }
-  if (phase === "setup") return <RecruiterSetupScreen onPublish={handlePublish} onBack={goToDashboard} />;
-  if (phase === "preview") return <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />;
-  if (phase === "apply") return <CandidateApplyScreen job={activeJob} onNext={handleApply} />;
-  if (phase === "exercises") return <ExercisesScreen job={activeJob} candidate={candidate} onSubmit={handleSubmit} />;
-  if (phase === "confirmation") return <ConfirmationScreen candidate={candidate} onNext={() => setPhase("review")} />;
-  if (phase === "review") return <RecruiterReviewScreen job={activeJob} candidate={candidate} evaluation={evaluation} onApprove={handleApprove} onReject={handleReject} />;
-  if (phase === "scheduling") return <InterviewInviteScreen job={activeJob} candidate={candidate} onSchedule={handleSchedule} />;
-  if (phase === "interview") return <InterviewAnalysisScreen analysis={interview} candidate={candidate} job={activeJob} onFinish={handleFinish} />;
-  if (phase === "final") return <FinalSummaryScreen job={activeJob} candidate={candidate} evaluation={evaluation} interview={interview} onRestart={goToDashboard} />;
-  return null;
+
+  return (
+    <>
+      {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />}
+      {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={() => setShowSettings(true)} />}
+      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} />; })()}
+      {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onBack={goToDashboard} />}
+      {phase === "preview" && <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />}
+      {phase === "apply" && <CandidateApplyScreen job={activeJob} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />}
+      {phase === "exercises" && <ExercisesScreen job={activeJob} candidate={candidate} onSubmit={(resps) => { setEvaluation(generateAIEvaluation(resps, activeJob)); setPhase("confirmation"); }} />}
+      {phase === "confirmation" && <ConfirmationScreen candidate={candidate} onNext={() => setPhase("review")} />}
+      {phase === "review" && <RecruiterReviewScreen job={activeJob} candidate={candidate} evaluation={evaluation} onApprove={() => setPhase("scheduling")} onReject={goToDashboard} />}
+      {phase === "scheduling" && <InterviewInviteScreen job={activeJob} candidate={candidate} onSchedule={(slot) => { setInterview({ ...generateInterviewAnalysis(candidate?.name || "Candidato"), slot }); setPhase("interview"); }} />}
+      {phase === "interview" && <InterviewAnalysisScreen analysis={interview} candidate={candidate} job={activeJob} onFinish={() => setPhase("final")} />}
+      {phase === "final" && <FinalSummaryScreen job={activeJob} candidate={candidate} evaluation={evaluation} interview={interview} onRestart={goToDashboard} />}
+    </>
+  );
 }
