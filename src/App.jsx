@@ -856,6 +856,77 @@ function EmailSetupWizard({ emailConfig, onChange }) {
 }
 
 // ─── ONBOARDING SCREEN ────────────────────────────────────────────────────────
+// Skip warnings per step
+const SKIP_WARNINGS = {
+  all: {
+    title: "¿Seguro que quieres omitir la configuración?",
+    impact: [
+      "❌ La IA evaluará candidatos sin contexto de tu agencia",
+      "❌ Los candidatos no recibirán emails de confirmación",
+      "❌ No recibirás alertas de nuevas solicitudes",
+      "❌ Sin resúmenes ni notificaciones en Slack",
+    ],
+    manual: "Tendrás que revisar la app manualmente para ver nuevas solicitudes y gestionar todo el proceso sin automatización.",
+  },
+  brand: {
+    title: "¿Omitir el manual de marca?",
+    impact: [
+      "❌ La IA no conocerá los valores de tu agencia",
+      "❌ La evaluación de compatibilidad cultural será genérica",
+      "❌ Las puntuaciones de actitud y cultura serán menos precisas",
+    ],
+    manual: "Deberás configurarlo después en ⚙️ Configuración → Marca antes de evaluar candidatos con IA.",
+  },
+  email: {
+    title: "¿Omitir la configuración de email?",
+    impact: [
+      "❌ Los candidatos no recibirán confirmación al aplicar",
+      "❌ No recibirás alertas de nuevas solicitudes por email",
+      "❌ Las decisiones finales no se comunicarán automáticamente",
+    ],
+    manual: "Tendrás que comunicarte con los candidatos manualmente en cada etapa del proceso.",
+  },
+  slack: {
+    title: "¿Omitir la conexión con Slack?",
+    impact: [
+      "❌ No recibirás avisos cuando llegue un nuevo candidato",
+      "❌ Sin resumen diario del estado del pipeline",
+      "❌ Las evaluaciones de IA y decisiones no se notificarán al equipo",
+    ],
+    manual: "Tendrás que entrar a la app para ver actualizaciones. Puedes configurarlo después en ⚙️ Configuración → Slack.",
+  },
+};
+
+function SkipWarningModal({ warningKey, onConfirm, onCancel }) {
+  const w = SKIP_WARNINGS[warningKey];
+  if (!w) return null;
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="p-6 space-y-4">
+          <div className="text-3xl text-center">⚠️</div>
+          <h3 className="text-base font-black text-gray-900 text-center">{w.title}</h3>
+          <div className="bg-red-50 rounded-xl p-4 space-y-2">
+            <p className="text-xs font-semibold text-red-700 uppercase tracking-wide">Sin esta configuración:</p>
+            {w.impact.map((item, i) => <p key={i} className="text-xs text-red-700">{item}</p>)}
+          </div>
+          <div className="bg-amber-50 rounded-xl p-3">
+            <p className="text-xs text-amber-800"><strong>Proceso manual:</strong> {w.manual}</p>
+          </div>
+        </div>
+        <div className="px-6 pb-6 flex gap-3">
+          <button onClick={onCancel} className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
+            ← Volver a configurar
+          </button>
+          <button onClick={onConfirm} className="flex-1 py-2.5 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50">
+            Omitir de todas formas
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OnboardingScreen({ user, onComplete }) {
   const [step, setStep] = useState(0); // 0=welcome, 1=brand, 2=email, 3=slack, 4=done
   const [brandManual, setBrandManual] = useState("");
@@ -863,8 +934,12 @@ function OnboardingScreen({ user, onComplete }) {
   const [slackConfig, setSlackConfig] = useState({ webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } });
   const [brandTab, setBrandTab] = useState("text");
   const [uploading, setUploading] = useState(false);
+  const [skipWarning, setSkipWarning] = useState(null); // null | "all" | "brand" | "email" | "slack"
   const fileRef = useRef(null);
   const STEPS = ["Bienvenida", "Tu marca", "Email", "Slack", "¡Listo!"];
+
+  // Map each skippable step to its warning key
+  const STEP_WARNING_KEY = { 1: "brand", 2: "email", 3: "slack" };
 
   const handleFile = async (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -891,6 +966,11 @@ function OnboardingScreen({ user, onComplete }) {
   const next = () => setStep(s => s + 1);
   const back = () => setStep(s => s - 1);
 
+  // Try to skip — show warning if step has important config missing
+  const trySkip = (warningKey) => setSkipWarning(warningKey);
+  const confirmSkip = () => { setSkipWarning(null); if (skipWarning === "all") finish(); else next(); };
+  const cancelSkip = () => setSkipWarning(null);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl">
@@ -898,7 +978,7 @@ function OnboardingScreen({ user, onComplete }) {
         <div className="px-8 pt-8 pb-4">
           <div className="flex justify-between items-center mb-6">
             <div className="text-2xl font-black text-blue-700">RecruitAI</div>
-            <button onClick={finish} className="text-xs text-gray-400 hover:text-gray-600 underline">Omitir configuración →</button>
+            <button onClick={() => trySkip("all")} className="text-xs text-gray-400 hover:text-gray-600 underline">Omitir configuración →</button>
           </div>
           {/* Progress bar */}
           <div className="flex gap-1.5 mb-2">
@@ -1004,26 +1084,53 @@ function OnboardingScreen({ user, onComplete }) {
         </div>
 
         {/* Footer buttons */}
-        <div className="px-8 pb-8 flex gap-3">
-          {step > 0 && step < 4 && (
-            <button onClick={back} className="px-6 py-3 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">← Atrás</button>
+        <div className="px-8 pb-8 space-y-2">
+          <div className="flex gap-3">
+            {step > 0 && step < 4 && (
+              <button onClick={back} className="px-6 py-3 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">← Atrás</button>
+            )}
+            {step === 0 && (
+              <button onClick={next} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">Empezar configuración →</button>
+            )}
+            {step === 1 && (
+              <button onClick={brandManual ? next : () => trySkip("brand")} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
+                {brandManual ? "Continuar →" : "Continuar →"}
+              </button>
+            )}
+            {step === 2 && (
+              <button onClick={emailConfig.provider !== "none" ? next : () => trySkip("email")} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
+                {emailConfig.provider !== "none" ? "Continuar →" : "Continuar →"}
+              </button>
+            )}
+            {step === 3 && (
+              <button onClick={slackConfig.webhookUrl ? next : () => trySkip("slack")} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
+                {slackConfig.webhookUrl ? "Continuar →" : "Continuar →"}
+              </button>
+            )}
+            {step === 4 && (
+              <button onClick={finish} className="flex-1 py-3 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700">🚀 Ir al dashboard</button>
+            )}
+          </div>
+          {/* Per-step skip link (only for configurable steps not yet filled) */}
+          {step === 1 && !brandManual && (
+            <p className="text-center text-xs text-gray-400">
+              <button onClick={() => trySkip("brand")} className="underline hover:text-gray-600">Omitir este paso</button>
+            </p>
           )}
-          {step < 3 && (
-            <button onClick={next} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
-              {step === 0 ? "Empezar configuración →" : "Continuar →"}
-            </button>
+          {step === 2 && emailConfig.provider === "none" && (
+            <p className="text-center text-xs text-gray-400">
+              <button onClick={() => trySkip("email")} className="underline hover:text-gray-600">Omitir este paso</button>
+            </p>
           )}
-          {step === 3 && (
-            <button onClick={next} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
-              {slackConfig.webhookUrl ? "Continuar →" : "Omitir por ahora →"}
-            </button>
-          )}
-          {step === 4 && (
-            <button onClick={finish} className="flex-1 py-3 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700">
-              🚀 Ir al dashboard
-            </button>
+          {step === 3 && !slackConfig.webhookUrl && (
+            <p className="text-center text-xs text-gray-400">
+              <button onClick={() => trySkip("slack")} className="underline hover:text-gray-600">Omitir este paso</button>
+            </p>
           )}
         </div>
+
+        {/* Skip warning modal */}
+        {skipWarning && <SkipWarningModal warningKey={skipWarning} onConfirm={confirmSkip} onCancel={cancelSkip} />}
       </div>
     </div>
   );
