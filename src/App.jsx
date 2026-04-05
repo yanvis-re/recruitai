@@ -561,6 +561,17 @@ function CandidatePublicScreen({ processId }) {
         ]);
       }
 
+      // Slack instant notification (new application)
+      const slackConfig = processData?.slackConfig;
+      if (slackConfig?.webhookUrl) {
+        sendSlackNotification(slackConfig, "new_application", {
+          candidateName: candidate?.name || "Candidato",
+          candidateEmail: candidate?.email || "",
+          positionTitle: processData?.position?.title || processData?.positionType || "la posición",
+          companyName: processData?.company?.name || "La empresa",
+        });
+      }
+
       setSubmitted(true);
     } catch (e) { alert("Error al enviar. Inténtalo de nuevo."); }
     setSubmitting(false);
@@ -1001,6 +1012,159 @@ function OnboardingScreen({ user, onComplete }) {
   );
 }
 
+// ─── SLACK HELPER ─────────────────────────────────────────────────────────────
+async function sendSlackNotification(slackConfig, type, data) {
+  const { webhookUrl, notifications } = slackConfig || {};
+  if (!webhookUrl) return;
+  const notifKey = { new_application: "newApplication", ai_evaluation: "aiEvaluation", final_decision: "finalDecision", daily_digest: "dailyDigest" }[type];
+  const setting = notifications?.[notifKey];
+  const isInstant = type === "daily_digest" ? true : (setting === "instant" || setting === "both");
+  if (!isInstant && type !== "daily_digest") return;
+  try {
+    await fetch("/api/slackNotify", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type, data, webhookUrl }),
+    });
+  } catch (e) { console.error("Slack notify error:", e); }
+}
+
+// ─── SLACK SETUP WIZARD ───────────────────────────────────────────────────────
+function SlackSetupWizard({ slackConfig, onChange }) {
+  const [webhookUrl, setWebhookUrl] = useState(slackConfig?.webhookUrl || "");
+  const [channelName, setChannelName] = useState(slackConfig?.channelName || "");
+  const [notifications, setNotifications] = useState(slackConfig?.notifications || {
+    newApplication: "both", aiEvaluation: "instant", finalDecision: "both",
+    dailyDigest: true,
+  });
+  const [guideStep, setGuideStep] = useState(webhookUrl ? null : 1);
+  const [testStatus, setTestStatus] = useState(null);
+
+  const emit = (updates) => onChange({ webhookUrl, channelName, notifications, ...updates });
+  const setNotif = (key, value) => {
+    const n = { ...notifications, [key]: value };
+    setNotifications(n); emit({ notifications: n });
+  };
+
+  const handleTest = async () => {
+    if (!webhookUrl) return;
+    setTestStatus("sending");
+    try {
+      const res = await fetch("/api/slackNotify", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "new_application", webhookUrl, data: { candidateName: "Test Candidato", candidateEmail: "test@ejemplo.com", positionTitle: "Media Buyer", companyName: "Tu Agencia" } }),
+      });
+      const json = await res.json();
+      setTestStatus(json.success ? "ok" : "error");
+    } catch { setTestStatus("error"); }
+    setTimeout(() => setTestStatus(null), 4000);
+  };
+
+  const NOTIF_OPTIONS = [
+    { key: "newApplication", label: "🔔 Nueva solicitud", desc: "Cuando un candidato aplica a un proceso" },
+    { key: "aiEvaluation", label: "🤖 Evaluación IA completada", desc: "Cuando la IA termina de analizar un ejercicio o entrevista" },
+    { key: "finalDecision", label: "✅ Decisión final tomada", desc: "Cuando el reclutador decide contratar, descartar, etc." },
+  ];
+
+  return (
+    <div className="space-y-5">
+
+      {/* Setup guide */}
+      {!webhookUrl && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-4">
+          <p className="text-sm font-semibold text-amber-800">Conecta tu Slack en 3 pasos:</p>
+          <div className="space-y-3">
+            {[
+              { n: 1, text: "Ve a api.slack.com/apps → Create New App → From scratch", link: "https://api.slack.com/apps", linkLabel: "Abrir Slack API →" },
+              { n: 2, text: "Selecciona tu workspace → en el menú lateral busca \"Incoming Webhooks\" → actívalo → clic en \"Add New Webhook to Workspace\" → elige el canal" },
+              { n: 3, text: "Copia la Webhook URL que aparece (empieza por https://hooks.slack.com/...) y pégala abajo" },
+            ].map(({ n, text, link, linkLabel }) => (
+              <div key={n} className="flex gap-3">
+                <div className="w-6 h-6 rounded-full bg-amber-200 text-amber-800 text-xs font-bold flex items-center justify-center shrink-0">{n}</div>
+                <div>
+                  <p className="text-xs text-amber-900">{text}</p>
+                  {link && <a href={link} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline">{linkLabel}</a>}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Webhook URL */}
+      <div>
+        <label className={lbl}>Webhook URL de Slack</label>
+        <input className={inp} type="url" placeholder="https://hooks.slack.com/services/..." value={webhookUrl}
+          onChange={e => { setWebhookUrl(e.target.value); emit({ webhookUrl: e.target.value }); }} />
+        {webhookUrl && <button onClick={() => setWebhookUrl("") || emit({ webhookUrl: "" })} className="text-xs text-red-500 mt-1 hover:underline">× Desconectar Slack</button>}
+      </div>
+
+      {/* Channel name (optional, just for reference) */}
+      {webhookUrl && (
+        <div>
+          <label className={lbl}>Nombre del canal (referencia)</label>
+          <input className={inp} type="text" placeholder="#reclutamiento" value={channelName}
+            onChange={e => { setChannelName(e.target.value); emit({ channelName: e.target.value }); }} />
+          <p className="text-xs text-gray-400 mt-1">Solo para que recuerdes a qué canal apunta. El canal lo fijaste al crear el webhook en Slack.</p>
+        </div>
+      )}
+
+      {/* Test button */}
+      {webhookUrl && (
+        <div className="flex items-center gap-3">
+          <button onClick={handleTest} disabled={testStatus === "sending"}
+            className="px-4 py-2 bg-gray-800 text-white rounded-xl text-sm font-bold hover:bg-gray-900 disabled:opacity-40">
+            {testStatus === "sending" ? "Enviando..." : "📨 Enviar mensaje de prueba"}
+          </button>
+          {testStatus === "ok" && <p className="text-xs text-green-600 font-medium">✅ ¡Mensaje recibido en Slack!</p>}
+          {testStatus === "error" && <p className="text-xs text-red-500">✗ Error. Revisa la webhook URL.</p>}
+        </div>
+      )}
+
+      {/* Notification preferences */}
+      {webhookUrl && (
+        <div className="space-y-3">
+          <p className="text-sm font-semibold text-gray-700">¿Cuándo quieres recibir notificaciones?</p>
+          {NOTIF_OPTIONS.map(({ key, label, desc }) => (
+            <div key={key} className="bg-gray-50 rounded-xl p-4 space-y-2">
+              <div>
+                <p className="text-sm font-semibold text-gray-800">{label}</p>
+                <p className="text-xs text-gray-500">{desc}</p>
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                {[
+                  { val: "none", icon: "🔕", text: "Ninguna" },
+                  { val: "instant", icon: "⚡", text: "Al momento" },
+                  { val: "daily", icon: "📅", text: "Resumen diario" },
+                  { val: "both", icon: "✨", text: "Ambas" },
+                ].map(({ val, icon, text }) => (
+                  <button key={val} onClick={() => setNotif(key, val)}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${notifications[key] === val ? "bg-blue-600 text-white border-blue-600" : "bg-white text-gray-600 border-gray-200 hover:border-blue-300"}`}>
+                    {icon} {text}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          {/* Daily digest toggle */}
+          <div className="bg-gray-50 rounded-xl p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-gray-800">📊 Resumen diario del pipeline</p>
+                <p className="text-xs text-gray-500">Estado general de todos los procesos activos, enviado al abrir la app cada día</p>
+              </div>
+              <button onClick={() => setNotif("dailyDigest", !notifications.dailyDigest)}
+                className={`w-12 h-6 rounded-full transition-all relative ${notifications.dailyDigest ? "bg-blue-600" : "bg-gray-300"}`}>
+                <div className={`w-5 h-5 bg-white rounded-full shadow absolute top-0.5 transition-all ${notifications.dailyDigest ? "left-6" : "left-0.5"}`} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── AGENCY SETTINGS MODAL ───────────────────────────────────────────────────
 function AgencySettingsModal({ settings, onSave, onClose }) {
   const [section, setSection] = useState("marca");
@@ -1010,6 +1174,7 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
   const [uploadError, setUploadError] = useState("");
   const [fileName, setFileName] = useState("");
   const [emailConfig, setEmailConfig] = useState(settings?.emailConfig || { provider: "none" });
+  const [slackConfig, setSlackConfig] = useState(settings?.slackConfig || { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } });
   const fileRef = useRef(null);
 
   const handleFile = async (e) => {
@@ -1030,7 +1195,7 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
     setUploading(false);
   };
 
-  const handleSave = () => { onSave({ brandManual, emailConfig }); onClose(); };
+  const handleSave = () => { onSave({ brandManual, emailConfig, slackConfig }); onClose(); };
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -1043,7 +1208,7 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
 
         {/* Section tabs */}
         <div className="flex border-b border-gray-100 shrink-0">
-          {[["marca", "🎨 Marca"], ["email", "📧 Email"]].map(([id, label]) => (
+          {[["marca", "🎨 Marca"], ["email", "📧 Email"], ["slack", "🔔 Slack"]].map(([id, label]) => (
             <button key={id} onClick={() => setSection(id)}
               className={`flex-1 py-3 text-sm font-semibold transition-colors ${section === id ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-400 hover:text-gray-600"}`}>
               {label}
@@ -1094,6 +1259,11 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
           {/* ── EMAIL ── */}
           {section === "email" && (
             <EmailSetupWizard emailConfig={emailConfig} onChange={setEmailConfig} />
+          )}
+
+          {/* ── SLACK ── */}
+          {section === "slack" && (
+            <SlackSetupWizard slackConfig={slackConfig} onChange={setSlackConfig} />
           )}
         </div>
 
@@ -1154,6 +1324,11 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       onUpdateCandidate({ ...candidate, exerciseEvaluation: json.evaluation });
+      // Slack notification
+      sendSlackNotification(agencySettings?.slackConfig, "ai_evaluation", {
+        candidateName: candidate.name, positionTitle: position,
+        evaluationType: "exercise", recommendation: json.evaluation?.overall?.recommendation,
+      });
     } catch (e) { setError("Error al evaluar: " + e.message); }
     setEvaluatingEx(false);
   };
@@ -1173,6 +1348,12 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
       const json = await res.json();
       if (json.error) throw new Error(json.error);
       onUpdateCandidate({ ...candidate, interviewEvaluation: json.evaluation, interviewTranscript });
+      // Slack notification
+      sendSlackNotification(agencySettings?.slackConfig, "ai_evaluation", {
+        candidateName: candidate.name, positionTitle: position,
+        evaluationType: "interview", recommendation: json.evaluation?.candidate?.overall?.recommendation,
+        score: json.evaluation?.candidate?.weights ? Math.round(json.evaluation.candidate.weights.reduce((s, w) => s + (w.score * w.weight / 100), 0)) : null,
+      });
     } catch (e) { setError("Error al evaluar: " + e.message); }
     setEvaluatingInt(false);
   };
@@ -1206,6 +1387,13 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
         }),
       });
     } catch (e) { console.error("Email error:", e); }
+
+    // Slack notification
+    sendSlackNotification(agencySettings?.slackConfig, "final_decision", {
+      candidateName: candidate.name || "Candidato",
+      positionTitle: getPositionTitle(process.position) || process.positionType || "la posición",
+      decision,
+    });
   };
 
   const weightedScore = interviewEval?.candidate?.weights
@@ -1404,6 +1592,7 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
         recruiterEmail: user?.email || "",
         recruiterName: user?.displayName || "Equipo de selección",
         emailConfig: agencySettings?.emailConfig || { provider: "none" },
+        slackConfig: agencySettings?.slackConfig || { webhookUrl: "" },
       });
       const url = `${window.location.origin}/#apply/${process.id}`;
       setPublicLink(url);
@@ -1614,7 +1803,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
-  const [agencySettings, setAgencySettings] = useState({ brandManual: "", emailConfig: { provider: "none" }, onboardingCompleted: false });
+  const [agencySettings, setAgencySettings] = useState({ brandManual: "", emailConfig: { provider: "none" }, slackConfig: { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } }, onboardingCompleted: false });
   const [showSettings, setShowSettings] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
@@ -1649,8 +1838,23 @@ export default function App() {
     return () => clearTimeout(t);
   }, [processes, agencySettings, user]);
 
+  // ── Daily Slack digest: fires once per day when user opens the app ──
+  useEffect(() => {
+    if (!user || !settingsLoaded) return;
+    const slack = agencySettings?.slackConfig;
+    if (!slack?.webhookUrl || !slack?.notifications?.dailyDigest) return;
+    const today = new Date().toDateString();
+    const lastDigest = localStorage.getItem(`recruitai_digest_${user.uid}`);
+    if (lastDigest === today) return; // already sent today
+    const activeProcesses = processes.filter(p => p.status === "active");
+    if (activeProcesses.length === 0) return;
+    const date = new Date().toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
+    sendSlackNotification(slack, "daily_digest", { processes: activeProcesses, date });
+    localStorage.setItem(`recruitai_digest_${user.uid}`, today);
+  }, [user, settingsLoaded, agencySettings]);
+
   const handleLogin = async () => { setLoginLoading(true); try { await signInWithPopup(auth, googleProvider); } catch (e) { console.error(e); setLoginLoading(false); } };
-  const handleLogout = async () => { await signOut(auth); setProcesses(MOCK_PROCESSES); setAgencySettings({ brandManual: "", emailConfig: { provider: "none" }, onboardingCompleted: false }); setSettingsLoaded(false); setPhase("dashboard"); };
+  const handleLogout = async () => { await signOut(auth); setProcesses(MOCK_PROCESSES); setAgencySettings({ brandManual: "", emailConfig: { provider: "none" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setPhase("dashboard"); };
   const goToDashboard = () => { setPhase("dashboard"); setActiveJob(null); setCandidate(null); setEvaluation(null); setInterview(null); };
   const handlePublish = (jobData) => { const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] }; setProcesses(ps => [np, ...ps]); setActiveJob(jobData); setPhase("preview"); };
   const handleToggle = (id) => setProcesses(ps => ps.map(p => p.id === id ? { ...p, status: p.status === "active" ? "paused" : "active" } : p));
