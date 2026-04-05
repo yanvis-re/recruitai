@@ -534,6 +534,33 @@ function CandidatePublicScreen({ processId }) {
         responses, submittedAt: new Date().toISOString(),
         estado: "Pendiente", progreso: "Ingreso", entrevistador: "", notas: "", phase: "applied",
       });
+
+      // Send confirmation email to candidate
+      const emailData = {
+        candidateName: candidate?.name || "Candidato",
+        candidateEmail: candidate?.email || "",
+        companyName: processData?.company?.name || "La empresa",
+        positionTitle: processData?.position?.title || processData?.positionType || "la posición",
+        recruiterEmail: processData?.recruiterEmail || "",
+        recruiterName: processData?.recruiterName || "Equipo de selección",
+      };
+
+      const emailConfig = processData?.emailConfig || { provider: "none" };
+      if (emailConfig.provider !== "none") {
+        await Promise.allSettled([
+          candidate?.email && fetch("/api/sendEmail", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: "application_received", data: emailData, emailConfig }),
+          }),
+          processData?.recruiterEmail && fetch("/api/sendEmail", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type: "new_application_alert", data: emailData, emailConfig }),
+          }),
+        ]);
+      }
+
       setSubmitted(true);
     } catch (e) { alert("Error al enviar. Inténtalo de nuevo."); }
     setSubmitting(false);
@@ -560,109 +587,520 @@ function CandidatePublicScreen({ processId }) {
   return null;
 }
 
-// ─── AGENCY SETTINGS MODAL ───────────────────────────────────────────────────
-function AgencySettingsModal({ settings, onSave, onClose }) {
-  const [brandManual, setBrandManual] = useState(settings?.brandManual || "");
-  const [tab, setTab] = useState("text"); // "text" | "upload"
+// ─── EMAIL SETUP WIZARD (shared) ─────────────────────────────────────────────
+function EmailSetupWizard({ emailConfig, onChange }) {
+  const [provider, setProvider] = useState(emailConfig?.provider || "none");
+  const [gmailUser, setGmailUser] = useState(emailConfig?.gmailUser || "");
+  const [gmailAppPassword, setGmailAppPassword] = useState(emailConfig?.gmailAppPassword || "");
+  const [resendApiKey, setResendApiKey] = useState(emailConfig?.resendApiKey || "");
+  const [fromEmail, setFromEmail] = useState(emailConfig?.fromEmail || "");
+  const [fromName, setFromName] = useState(emailConfig?.fromName || "");
+  const [showPass, setShowPass] = useState(false);
+  const [showDns, setShowDns] = useState(false);
+  const [resendStep, setResendStep] = useState(1);
+  const [testEmail, setTestEmail] = useState("");
+  const [testStatus, setTestStatus] = useState(null);
+
+  const emit = (updates) => {
+    const next = { provider, gmailUser, gmailAppPassword, resendApiKey, fromEmail, fromName, ...updates };
+    onChange(next);
+  };
+  const set = (field, value, setter) => { setter(value); emit({ [field]: value }); };
+
+  const handleTestEmail = async () => {
+    if (!testEmail) return;
+    setTestStatus("sending");
+    try {
+      const cfg = { provider, gmailUser, gmailAppPassword, resendApiKey, fromEmail, fromName };
+      const res = await fetch("/api/sendEmail", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "test", data: { candidateEmail: testEmail, candidateName: "Test", companyName: fromName || "Tu agencia", positionTitle: "Email de prueba" }, emailConfig: cfg }),
+      });
+      const json = await res.json();
+      setTestStatus(json.success ? "ok" : "error");
+    } catch { setTestStatus("error"); }
+    setTimeout(() => setTestStatus(null), 4000);
+  };
+
+  const PROVIDERS = [
+    { id: "gmail", icon: "📧", title: "Gmail", sub: "Gratis · Sin cuentas nuevas · Configura en 3 min", badge: "Más fácil" },
+    { id: "resend_shared", icon: "🚀", title: "Resend (dominio compartido)", sub: "Gratis hasta 3.000 emails/mes · Sin configurar DNS", badge: "Recomendado" },
+    { id: "resend_domain", icon: "🏢", title: "Resend + dominio propio", sub: "Emails desde tu dominio corporativo · Máxima marca", badge: "Profesional" },
+  ];
+
+  return (
+    <div className="space-y-4">
+      {/* Provider cards */}
+      <div className="space-y-2">
+        {PROVIDERS.map(({ id, icon, title, sub, badge }) => (
+          <div key={id} onClick={() => { setProvider(id); setResendStep(1); emit({ provider: id }); }}
+            className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${provider === id ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-gray-300 bg-white"}`}>
+            <div className={`w-5 h-5 rounded-full border-2 mt-0.5 flex items-center justify-center shrink-0 ${provider === id ? "border-blue-500 bg-blue-500" : "border-gray-300"}`}>
+              {provider === id && <div className="w-2 h-2 bg-white rounded-full" />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-gray-800">{icon} {title}</span>
+                <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full shrink-0">{badge}</span>
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5">{sub}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Gmail wizard */}
+      {provider === "gmail" && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-4">
+          <p className="text-sm font-semibold text-amber-800">Sigue estos pasos para conectar tu Gmail:</p>
+          <div className="space-y-3">
+            {[
+              { n: 1, text: "Activa la verificación en 2 pasos en tu cuenta de Google", link: "https://myaccount.google.com/security", linkLabel: "Abrir seguridad de Google →" },
+              { n: 2, text: "En esa misma página, busca \"Contraseñas de aplicación\"" },
+              { n: 3, text: "Crea una nueva contraseña → selecciona \"Otra\" → nombre: RecruitAI" },
+              { n: 4, text: "Google te dará 16 caracteres — cópialos y pégalos abajo" },
+            ].map(({ n, text, link, linkLabel }) => (
+              <div key={n} className="flex gap-3">
+                <div className="w-6 h-6 rounded-full bg-amber-200 text-amber-800 text-xs font-bold flex items-center justify-center shrink-0">{n}</div>
+                <div>
+                  <p className="text-xs text-amber-900">{text}</p>
+                  {link && <a href={link} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline">{linkLabel}</a>}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="space-y-3 pt-2 border-t border-amber-200">
+            <div>
+              <label className={lbl}>Tu dirección de Gmail</label>
+              <input className={inp} type="email" placeholder="tuagencia@gmail.com" value={gmailUser} onChange={e => set("gmailUser", e.target.value, setGmailUser)} />
+            </div>
+            <div>
+              <label className={lbl}>Contraseña de aplicación (16 caracteres)</label>
+              <div className="relative">
+                <input className={inp + " pr-10"} type={showPass ? "text" : "password"} placeholder="xxxx xxxx xxxx xxxx" value={gmailAppPassword} onChange={e => set("gmailAppPassword", e.target.value, setGmailAppPassword)} />
+                <button type="button" onClick={() => setShowPass(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs">{showPass ? "Ocultar" : "Ver"}</button>
+              </div>
+            </div>
+            <div>
+              <label className={lbl}>Nombre del remitente</label>
+              <input className={inp} type="text" placeholder="Selección · Tu Agencia" value={fromName} onChange={e => set("fromName", e.target.value, setFromName)} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Resend shared wizard */}
+      {provider === "resend_shared" && (
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-4">
+          {/* Step indicators */}
+          <div className="flex gap-2 items-center">
+            {[1, 2, 3].map(s => (
+              <div key={s} className="flex items-center gap-2">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold cursor-pointer transition-all ${resendStep >= s ? "bg-blue-600 text-white" : "bg-blue-100 text-blue-400"}`}
+                  onClick={() => resendStep > s && setResendStep(s)}>{s}</div>
+                {s < 3 && <div className={`h-0.5 w-8 ${resendStep > s ? "bg-blue-600" : "bg-blue-100"}`} />}
+              </div>
+            ))}
+            <span className="text-xs text-blue-600 font-medium ml-1">
+              {resendStep === 1 && "Crear cuenta"}{resendStep === 2 && "API Key"}{resendStep === 3 && "Personalizar"}
+            </span>
+          </div>
+
+          {resendStep === 1 && (
+            <div className="space-y-3">
+              <p className="text-sm text-blue-800">Crea tu cuenta gratuita en Resend (tarda menos de 1 minuto).</p>
+              <a href="https://resend.com/signup" target="_blank" rel="noreferrer"
+                className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
+                🚀 Crear cuenta en Resend →
+              </a>
+              <button onClick={() => setResendStep(2)} className="w-full py-2.5 border border-blue-300 text-blue-700 rounded-xl text-sm font-medium hover:bg-blue-100">
+                Ya tengo cuenta →
+              </button>
+            </div>
+          )}
+
+          {resendStep === 2 && (
+            <div className="space-y-3">
+              <p className="text-sm text-blue-800">Dentro de Resend ve a <strong>API Keys → Create API Key</strong> y copia la clave que te dan.</p>
+              <div className="bg-white rounded-lg p-3 text-xs text-gray-600 border border-blue-200">
+                📍 Resend.com → menú lateral → <strong>API Keys</strong> → botón <strong>Create API Key</strong> → nombre: "RecruitAI" → <strong>Copy</strong>
+              </div>
+              <div>
+                <label className={lbl}>Pega tu API Key aquí</label>
+                <input className={inp} type="password" placeholder="re_xxxxxxxxxxxxxxxxxxxx" value={resendApiKey} onChange={e => set("resendApiKey", e.target.value, setResendApiKey)} />
+              </div>
+              <button onClick={() => resendApiKey && setResendStep(3)} disabled={!resendApiKey}
+                className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 disabled:opacity-40">
+                Continuar →
+              </button>
+            </div>
+          )}
+
+          {resendStep === 3 && (
+            <div className="space-y-3">
+              <p className="text-sm text-blue-800">¡Casi listo! Elige el nombre con el que aparecerán tus emails.</p>
+              <div>
+                <label className={lbl}>Nombre del remitente</label>
+                <input className={inp} type="text" placeholder="Selección · Tu Agencia" value={fromName} onChange={e => set("fromName", e.target.value, setFromName)} />
+                <p className="text-xs text-gray-400 mt-1">Los candidatos verán: "{fromName || "Tu Agencia"} via resend.dev"</p>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Resend domain wizard */}
+      {provider === "resend_domain" && (
+        <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-4">
+          <div className="flex gap-2 items-center">
+            {[1, 2, 3, 4].map(s => (
+              <div key={s} className="flex items-center gap-2">
+                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold cursor-pointer ${resendStep >= s ? "bg-purple-600 text-white" : "bg-purple-100 text-purple-400"}`}
+                  onClick={() => resendStep > s && setResendStep(s)}>{s}</div>
+                {s < 4 && <div className={`h-0.5 w-6 ${resendStep > s ? "bg-purple-600" : "bg-purple-100"}`} />}
+              </div>
+            ))}
+            <span className="text-xs text-purple-600 font-medium ml-1">
+              {resendStep === 1 && "Cuenta"}{resendStep === 2 && "API Key"}{resendStep === 3 && "Dominio"}{resendStep === 4 && "Email"}
+            </span>
+          </div>
+
+          {resendStep === 1 && (
+            <div className="space-y-3">
+              <p className="text-sm text-purple-800">Crea tu cuenta gratuita en Resend.</p>
+              <a href="https://resend.com/signup" target="_blank" rel="noreferrer"
+                className="flex items-center justify-center gap-2 w-full py-3 bg-purple-600 text-white rounded-xl text-sm font-bold hover:bg-purple-700">
+                🏢 Crear cuenta en Resend →
+              </a>
+              <button onClick={() => setResendStep(2)} className="w-full py-2.5 border border-purple-300 text-purple-700 rounded-xl text-sm font-medium hover:bg-purple-100">Ya tengo cuenta →</button>
+            </div>
+          )}
+
+          {resendStep === 2 && (
+            <div className="space-y-3">
+              <p className="text-sm text-purple-800">Ve a <strong>API Keys → Create API Key</strong> en tu cuenta de Resend.</p>
+              <div>
+                <label className={lbl}>API Key de Resend</label>
+                <input className={inp} type="password" placeholder="re_xxxxxxxxxxxxxxxxxxxx" value={resendApiKey} onChange={e => set("resendApiKey", e.target.value, setResendApiKey)} />
+              </div>
+              <button onClick={() => resendApiKey && setResendStep(3)} disabled={!resendApiKey}
+                className="w-full py-2.5 bg-purple-600 text-white rounded-xl text-sm font-bold hover:bg-purple-700 disabled:opacity-40">Continuar →</button>
+            </div>
+          )}
+
+          {resendStep === 3 && (
+            <div className="space-y-3">
+              <p className="text-sm text-purple-800">Añade tu dominio en Resend y copia los registros DNS que te dan en tu proveedor (Cloudflare, GoDaddy, etc.).</p>
+              <a href="https://resend.com/domains" target="_blank" rel="noreferrer"
+                className="flex items-center justify-center gap-2 w-full py-2.5 border border-purple-300 text-purple-700 rounded-xl text-sm font-medium hover:bg-purple-100">
+                Añadir dominio en Resend →
+              </a>
+              <button onClick={() => setShowDns(v => !v)} className="text-xs text-purple-600 underline">{showDns ? "Ocultar" : "Ver"} los 3 registros DNS que necesitas →</button>
+              {showDns && (
+                <div className="bg-white rounded-lg p-3 text-xs text-gray-700 border border-purple-200 space-y-1">
+                  <p className="font-semibold">Resend te dará estos 3 registros para copiar en tu DNS:</p>
+                  <p>• <strong>SPF</strong> (TXT): verifica que puedes enviar desde tu dominio</p>
+                  <p>• <strong>DKIM</strong> (TXT): firma los emails para evitar spam</p>
+                  <p>• <strong>DMARC</strong> (TXT): política de seguridad del dominio</p>
+                  <p className="text-gray-400 pt-1">Cópialos exactamente como aparecen en Resend. Tarda 5-10 min en verificarse.</p>
+                </div>
+              )}
+              <button onClick={() => setResendStep(4)} className="w-full py-2.5 bg-purple-600 text-white rounded-xl text-sm font-bold hover:bg-purple-700">Dominio verificado →</button>
+            </div>
+          )}
+
+          {resendStep === 4 && (
+            <div className="space-y-3">
+              <p className="text-sm text-purple-800">¡Último paso! Configura desde qué email enviarás.</p>
+              <div>
+                <label className={lbl}>Email de envío</label>
+                <input className={inp} type="email" placeholder="reclutamiento@tuagencia.com" value={fromEmail} onChange={e => set("fromEmail", e.target.value, setFromEmail)} />
+              </div>
+              <div>
+                <label className={lbl}>Nombre del remitente</label>
+                <input className={inp} type="text" placeholder="Selección · Tu Agencia" value={fromName} onChange={e => set("fromName", e.target.value, setFromName)} />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Test email (always visible when provider selected) */}
+      {provider !== "none" && (
+        <div className="bg-gray-50 rounded-xl p-4 space-y-2 border border-gray-200">
+          <label className={lbl}>📬 Enviar email de prueba</label>
+          <div className="flex gap-2">
+            <input className={inp + " flex-1"} type="email" placeholder="tu@email.com" value={testEmail} onChange={e => setTestEmail(e.target.value)} />
+            <button onClick={handleTestEmail} disabled={testStatus === "sending" || !testEmail}
+              className="px-4 py-2 bg-gray-800 text-white rounded-xl text-sm font-bold hover:bg-gray-900 disabled:opacity-40 whitespace-nowrap">
+              {testStatus === "sending" ? "Enviando..." : "Probar"}
+            </button>
+          </div>
+          {testStatus === "ok" && <p className="text-xs text-green-600 font-medium">✅ Email recibido correctamente — ¡todo listo!</p>}
+          {testStatus === "error" && <p className="text-xs text-red-500">✗ Error. Revisa los datos e inténtalo de nuevo.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── ONBOARDING SCREEN ────────────────────────────────────────────────────────
+function OnboardingScreen({ user, onComplete }) {
+  const [step, setStep] = useState(0); // 0=welcome, 1=brand, 2=email, 3=done
+  const [brandManual, setBrandManual] = useState("");
+  const [emailConfig, setEmailConfig] = useState({ provider: "none" });
+  const [brandTab, setBrandTab] = useState("text");
   const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState("");
-  const [fileName, setFileName] = useState("");
   const fileRef = useRef(null);
+  const STEPS = ["Bienvenida", "Tu marca", "Email", "¡Listo!"];
 
   const handleFile = async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setUploadError("");
+    const file = e.target.files[0]; if (!file) return;
     setUploading(true);
-    setFileName(file.name);
     try {
       const ext = file.name.split(".").pop().toLowerCase();
-      if (ext === "txt") {
-        const text = await file.text();
-        setBrandManual(text);
-        setTab("text");
-      } else if (ext === "docx") {
+      if (ext === "txt") { setBrandManual(await file.text()); setBrandTab("text"); }
+      else if (ext === "docx") {
         const mammoth = await import("mammoth");
-        const arrayBuffer = await file.arrayBuffer();
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        setBrandManual(result.value);
-        setTab("text");
+        const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+        setBrandManual(result.value); setBrandTab("text");
       } else if (ext === "pdf") {
         const pdfjsLib = await import("pdfjs-dist");
         pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-        const arrayBuffer = await file.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-        let fullText = "";
-        for (let i = 1; i <= pdf.numPages; i++) {
-          const page = await pdf.getPage(i);
-          const content = await page.getTextContent();
-          fullText += content.items.map(item => item.str).join(" ") + "\n";
-        }
-        setBrandManual(fullText.trim());
-        setTab("text");
-      } else {
-        setUploadError("Formato no soportado. Usa .txt, .docx o .pdf");
+        const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+        let t = ""; for (let i = 1; i <= pdf.numPages; i++) { const pg = await pdf.getPage(i); const ct = await pg.getTextContent(); t += ct.items.map(x => x.str).join(" ") + "\n"; }
+        setBrandManual(t.trim()); setBrandTab("text");
       }
-    } catch (err) {
-      setUploadError("Error al leer el archivo. Prueba con .txt o copia el texto manualmente.");
-    }
+    } catch { /* ignore */ }
     setUploading(false);
   };
 
+  const finish = () => onComplete({ brandManual, emailConfig, onboardingCompleted: true });
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl">
+        {/* Header */}
+        <div className="px-8 pt-8 pb-4">
+          <div className="flex justify-between items-center mb-6">
+            <div className="text-2xl font-black text-blue-700">RecruitAI</div>
+            <button onClick={() => finish()} className="text-xs text-gray-400 hover:text-gray-600 underline">Omitir configuración →</button>
+          </div>
+          {/* Progress */}
+          <div className="flex gap-2 mb-2">
+            {STEPS.map((s, i) => (
+              <div key={i} className="flex-1 flex flex-col items-center gap-1">
+                <div className={`h-1.5 w-full rounded-full transition-all ${i <= step ? "bg-blue-600" : "bg-gray-200"}`} />
+                <span className={`text-xs font-medium ${i === step ? "text-blue-600" : "text-gray-400"}`}>{s}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Content */}
+        <div className="px-8 pb-6 max-h-[60vh] overflow-y-auto">
+
+          {/* Step 0: Welcome */}
+          {step === 0 && (
+            <div className="text-center py-4 space-y-4">
+              <div className="text-6xl">👋</div>
+              <h2 className="text-2xl font-black text-gray-900">Hola, {user?.displayName?.split(" ")[0] || "bienvenido"}!</h2>
+              <p className="text-gray-500 text-sm leading-relaxed">Vamos a configurar tu cuenta en 3 pasos para que puedas empezar a automatizar tu proceso de selección.</p>
+              <div className="grid grid-cols-3 gap-3 mt-4">
+                {[["🎨", "Tu marca", "Manual de valores para la IA"], ["📧", "Email", "Notificaciones automáticas"], ["🚀", "Listo", "Crea tu primer proceso"]].map(([ic, t, s]) => (
+                  <div key={t} className="bg-gray-50 rounded-xl p-3 text-center">
+                    <div className="text-2xl mb-1">{ic}</div>
+                    <div className="text-xs font-bold text-gray-700">{t}</div>
+                    <div className="text-xs text-gray-400 mt-0.5">{s}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Step 1: Brand */}
+          {step === 1 && (
+            <div className="space-y-4 py-2">
+              <div>
+                <h2 className="text-lg font-black text-gray-900">🎨 Tu manual de marca</h2>
+                <p className="text-sm text-gray-500 mt-1">La IA usará esta información para evaluar si cada candidato encaja con tu cultura de agencia. Puedes añadirlo ahora o más tarde.</p>
+              </div>
+              <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+                {[["text", "✏️ Escribir / Pegar"], ["upload", "📄 Subir documento"]].map(([id, label]) => (
+                  <button key={id} onClick={() => setBrandTab(id)}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${brandTab === id ? "bg-white shadow text-gray-800" : "text-gray-500"}`}>{label}</button>
+                ))}
+              </div>
+              {brandTab === "text" && (
+                <textarea className={inp} rows={8} value={brandManual} onChange={e => setBrandManual(e.target.value)}
+                  placeholder={"Pega aquí tu manual de marca o los valores de tu agencia.\n\nEjemplo:\n- Somos una agencia orientada a resultados medibles...\n- Buscamos perfiles con actitud, proactividad y orientación al cliente...\n- Tono: cercano, estructurado, confiable..."} />
+              )}
+              {brandTab === "upload" && (
+                <div>
+                  <div onClick={() => fileRef.current?.click()}
+                    className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all">
+                    {uploading ? <p className="text-sm text-blue-600">Extrayendo texto...</p> : (
+                      <><p className="text-3xl mb-2">📁</p><p className="text-sm font-medium text-gray-700">Haz clic para seleccionar</p><p className="text-xs text-gray-400 mt-1">.txt, .docx, .pdf</p></>
+                    )}
+                  </div>
+                  <input ref={fileRef} type="file" accept=".txt,.docx,.pdf" onChange={handleFile} className="hidden" />
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Step 2: Email */}
+          {step === 2 && (
+            <div className="space-y-4 py-2">
+              <div>
+                <h2 className="text-lg font-black text-gray-900">📧 Configura el email</h2>
+                <p className="text-sm text-gray-500 mt-1">Elige cómo quieres enviar los emails automáticos a los candidatos. Puedes cambiar esto en cualquier momento.</p>
+              </div>
+              <EmailSetupWizard emailConfig={emailConfig} onChange={setEmailConfig} />
+            </div>
+          )}
+
+          {/* Step 3: Done */}
+          {step === 3 && (
+            <div className="text-center py-4 space-y-4">
+              <div className="text-6xl">🎉</div>
+              <h2 className="text-2xl font-black text-gray-900">¡Todo listo!</h2>
+              <p className="text-gray-500 text-sm leading-relaxed">Tu cuenta está configurada. Ahora puedes crear tu primer proceso de selección y empezar a recibir candidatos.</p>
+              <div className="bg-blue-50 rounded-xl p-4 text-left space-y-2">
+                <p className="text-sm font-semibold text-blue-800">Resumen de configuración:</p>
+                <p className="text-xs text-blue-700">{brandManual ? "✅ Manual de marca configurado" : "⚪ Manual de marca (puedes añadirlo después en ⚙️)"}</p>
+                <p className="text-xs text-blue-700">{emailConfig.provider !== "none" ? `✅ Email configurado (${emailConfig.provider === "gmail" ? "Gmail" : emailConfig.provider === "resend_shared" ? "Resend" : "Dominio propio"})` : "⚪ Email (puedes configurarlo después en ⚙️)"}</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer buttons */}
+        <div className="px-8 pb-8 flex gap-3">
+          {step > 0 && step < 3 && (
+            <button onClick={() => setStep(s => s - 1)} className="px-6 py-3 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">← Atrás</button>
+          )}
+          {step < 2 && (
+            <button onClick={() => setStep(s => s + 1)} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
+              {step === 0 ? "Empezar configuración →" : "Continuar →"}
+            </button>
+          )}
+          {step === 2 && (
+            <button onClick={() => setStep(3)} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
+              {emailConfig.provider !== "none" ? "Continuar →" : "Omitir por ahora →"}
+            </button>
+          )}
+          {step === 3 && (
+            <button onClick={finish} className="flex-1 py-3 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700">
+              🚀 Ir al dashboard
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── AGENCY SETTINGS MODAL ───────────────────────────────────────────────────
+function AgencySettingsModal({ settings, onSave, onClose }) {
+  const [section, setSection] = useState("marca");
+  const [brandManual, setBrandManual] = useState(settings?.brandManual || "");
+  const [brandTab, setBrandTab] = useState("text");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [emailConfig, setEmailConfig] = useState(settings?.emailConfig || { provider: "none" });
+  const fileRef = useRef(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    setUploadError(""); setUploading(true); setFileName(file.name);
+    try {
+      const ext = file.name.split(".").pop().toLowerCase();
+      if (ext === "txt") { setBrandManual(await file.text()); setBrandTab("text"); }
+      else if (ext === "docx") { const mammoth = await import("mammoth"); const r = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() }); setBrandManual(r.value); setBrandTab("text"); }
+      else if (ext === "pdf") {
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+        const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+        let t = ""; for (let i = 1; i <= pdf.numPages; i++) { const pg = await pdf.getPage(i); const ct = await pg.getTextContent(); t += ct.items.map(x => x.str).join(" ") + "\n"; }
+        setBrandManual(t.trim()); setBrandTab("text");
+      } else { setUploadError("Formato no soportado. Usa .txt, .docx o .pdf"); }
+    } catch { setUploadError("Error al leer. Prueba con .txt."); }
+    setUploading(false);
+  };
+
+  const handleSave = () => { onSave({ brandManual, emailConfig }); onClose(); };
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
-        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
           <h2 className="font-bold text-gray-800">⚙️ Configuración de agencia</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
         </div>
-        <div className="p-6 space-y-4">
-          {/* Tab toggle */}
-          <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
-            <button onClick={() => setTab("text")} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${tab === "text" ? "bg-white shadow text-gray-800" : "text-gray-500 hover:text-gray-700"}`}>
-              ✏️ Escribir / Pegar texto
-            </button>
-            <button onClick={() => setTab("upload")} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${tab === "upload" ? "bg-white shadow text-gray-800" : "text-gray-500 hover:text-gray-700"}`}>
-              📄 Subir documento
-            </button>
-          </div>
 
-          {tab === "text" && (
-            <div>
-              <label className={lbl}>Manual de marca / Valores de la agencia</label>
-              <textarea className={inp} rows={10} value={brandManual} onChange={e => setBrandManual(e.target.value)}
-                placeholder={"Pega aquí tu manual de marca o los valores clave de tu agencia.\n\nEjemplo:\n- Somos una agencia orientada a resultados medibles...\n- Buscamos perfiles que se alineen con nuestros valores de...\n- Tono: cercano, profesional, directo..."} />
-              {fileName && <p className="text-xs text-green-600 mt-1">✓ Extraído de: {fileName}</p>}
-              <p className="text-xs text-gray-400 mt-1">La IA usará este texto para evaluar la alineación cultural de cada candidato.</p>
-            </div>
+        {/* Section tabs */}
+        <div className="flex border-b border-gray-100 shrink-0">
+          {[["marca", "🎨 Marca"], ["email", "📧 Email"]].map(([id, label]) => (
+            <button key={id} onClick={() => setSection(id)}
+              className={`flex-1 py-3 text-sm font-semibold transition-colors ${section === id ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-400 hover:text-gray-600"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* Scrollable content */}
+        <div className="overflow-y-auto flex-1 p-6 space-y-4">
+
+          {/* ── MARCA ── */}
+          {section === "marca" && (
+            <>
+              <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
+                {[["text", "✏️ Escribir / Pegar"], ["upload", "📄 Subir documento"]].map(([id, label]) => (
+                  <button key={id} onClick={() => setBrandTab(id)}
+                    className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${brandTab === id ? "bg-white shadow text-gray-800" : "text-gray-500 hover:text-gray-700"}`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {brandTab === "text" && (
+                <div>
+                  <label className={lbl}>Manual de marca / Valores de la agencia</label>
+                  <textarea className={inp} rows={10} value={brandManual} onChange={e => setBrandManual(e.target.value)}
+                    placeholder={"Pega aquí tu manual de marca o los valores clave de tu agencia.\n\nEjemplo:\n- Somos una agencia orientada a resultados medibles...\n- Buscamos perfiles que se alineen con nuestros valores de...\n- Tono: cercano, profesional, directo..."} />
+                  {fileName && <p className="text-xs text-green-600 mt-1">✓ Extraído de: {fileName}</p>}
+                  <p className="text-xs text-gray-400 mt-1">La IA usará este texto para evaluar la alineación cultural de cada candidato.</p>
+                </div>
+              )}
+              {brandTab === "upload" && (
+                <div>
+                  <div onClick={() => fileRef.current?.click()}
+                    className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all">
+                    {uploading ? <p className="text-sm text-blue-600 font-medium">Extrayendo texto...</p> : (
+                      <><p className="text-3xl mb-2">📁</p>
+                        <p className="text-sm font-medium text-gray-700">Haz clic para seleccionar archivo</p>
+                        <p className="text-xs text-gray-400 mt-1">Formatos: .txt, .docx, .pdf</p></>
+                    )}
+                  </div>
+                  <input ref={fileRef} type="file" accept=".txt,.docx,.pdf" onChange={handleFile} className="hidden" />
+                  {uploadError && <p className="text-xs text-red-500 mt-2">{uploadError}</p>}
+                </div>
+              )}
+            </>
           )}
 
-          {tab === "upload" && (
-            <div>
-              <label className={lbl}>Sube tu documento de marca</label>
-              <div
-                onClick={() => fileRef.current?.click()}
-                className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-300 hover:bg-blue-50 transition-all"
-              >
-                {uploading ? (
-                  <p className="text-sm text-blue-600 font-medium">Extrayendo texto...</p>
-                ) : (
-                  <>
-                    <p className="text-3xl mb-2">📁</p>
-                    <p className="text-sm font-medium text-gray-700">Haz clic para seleccionar archivo</p>
-                    <p className="text-xs text-gray-400 mt-1">Formatos: .txt, .docx, .pdf</p>
-                  </>
-                )}
-              </div>
-              <input ref={fileRef} type="file" accept=".txt,.docx,.pdf" onChange={handleFile} className="hidden" />
-              {uploadError && <p className="text-xs text-red-500 mt-2">{uploadError}</p>}
-              <p className="text-xs text-gray-400 mt-2">El texto del documento se cargará automáticamente y podrás editarlo antes de guardar.</p>
-            </div>
+          {/* ── EMAIL ── */}
+          {section === "email" && (
+            <EmailSetupWizard emailConfig={emailConfig} onChange={setEmailConfig} />
           )}
         </div>
-        <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-100 flex gap-3 shrink-0">
           <button onClick={onClose} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">Cancelar</button>
-          <button onClick={() => { onSave({ brandManual }); onClose(); }} className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">Guardar</button>
+          <button onClick={handleSave} className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">Guardar</button>
         </div>
       </div>
     </div>
@@ -739,8 +1177,35 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
     setEvaluatingInt(false);
   };
 
-  const setFinalDecision = (decision) => {
+  const setFinalDecision = async (decision) => {
     onUpdateCandidate({ ...candidate, estado: decision, finalDecision: decision });
+
+    const emailTypeMap = {
+      "Contratado": "decision_contratado",
+      "Segunda entrevista": "decision_segunda_entrevista",
+      "En cartera": "decision_en_cartera",
+      "Descartado": "decision_descartado",
+    };
+    const emailType = emailTypeMap[decision];
+    const emailConfig = agencySettings?.emailConfig || { provider: "none" };
+    if (!emailType || !candidate.email || emailConfig.provider === "none") return;
+
+    try {
+      await fetch("/api/sendEmail", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: emailType,
+          emailConfig,
+          data: {
+            candidateName: candidate.name || "Candidato",
+            candidateEmail: candidate.email,
+            companyName: process.company?.name || "La empresa",
+            positionTitle: getPositionTitle(process.position) || process.positionType || "la posición",
+          },
+        }),
+      });
+    } catch (e) { console.error("Email error:", e); }
   };
 
   const weightedScore = interviewEval?.candidate?.weights
@@ -933,7 +1398,13 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
   const generatePublicLink = async () => {
     setPublishing(true);
     try {
-      await setDoc(doc(db, "publicProcesses", process.id), { ...process, publishedAt: new Date().toISOString() });
+      await setDoc(doc(db, "publicProcesses", process.id), {
+        ...process,
+        publishedAt: new Date().toISOString(),
+        recruiterEmail: user?.email || "",
+        recruiterName: user?.displayName || "Equipo de selección",
+        emailConfig: agencySettings?.emailConfig || { provider: "none" },
+      });
       const url = `${window.location.origin}/#apply/${process.id}`;
       setPublicLink(url);
       await navigator.clipboard.writeText(url);
@@ -1143,8 +1614,9 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
-  const [agencySettings, setAgencySettings] = useState({ brandManual: "" });
+  const [agencySettings, setAgencySettings] = useState({ brandManual: "", emailConfig: { provider: "none" }, onboardingCompleted: false });
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
@@ -1159,6 +1631,9 @@ export default function App() {
             if (data.settings) setAgencySettings(data.settings);
           }
         } catch (e) { console.error("Error loading:", e); }
+        setSettingsLoaded(true);
+      } else {
+        setSettingsLoaded(true);
       }
       setAuthLoading(false);
     });
@@ -1175,7 +1650,7 @@ export default function App() {
   }, [processes, agencySettings, user]);
 
   const handleLogin = async () => { setLoginLoading(true); try { await signInWithPopup(auth, googleProvider); } catch (e) { console.error(e); setLoginLoading(false); } };
-  const handleLogout = async () => { await signOut(auth); setProcesses(MOCK_PROCESSES); setAgencySettings({ brandManual: "" }); setPhase("dashboard"); };
+  const handleLogout = async () => { await signOut(auth); setProcesses(MOCK_PROCESSES); setAgencySettings({ brandManual: "", emailConfig: { provider: "none" }, onboardingCompleted: false }); setSettingsLoaded(false); setPhase("dashboard"); };
   const goToDashboard = () => { setPhase("dashboard"); setActiveJob(null); setCandidate(null); setEvaluation(null); setInterview(null); };
   const handlePublish = (jobData) => { const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] }; setProcesses(ps => [np, ...ps]); setActiveJob(jobData); setPhase("preview"); };
   const handleToggle = (id) => setProcesses(ps => ps.map(p => p.id === id ? { ...p, status: p.status === "active" ? "paused" : "active" } : p));
@@ -1187,8 +1662,13 @@ export default function App() {
   };
   const handleSaveSettings = (newSettings) => { setAgencySettings(s => ({ ...s, ...newSettings })); };
 
-  if (authLoading) return <LoadingScreen />;
+  const handleCompleteOnboarding = (newSettings) => {
+    setAgencySettings(s => ({ ...s, ...newSettings, onboardingCompleted: true }));
+  };
+
+  if (authLoading || !settingsLoaded) return <LoadingScreen />;
   if (!user) return <LoginScreen onLogin={handleLogin} loading={loginLoading} />;
+  if (!agencySettings.onboardingCompleted) return <OnboardingScreen user={user} onComplete={handleCompleteOnboarding} />;
 
   return (
     <>
