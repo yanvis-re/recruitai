@@ -857,13 +857,14 @@ function EmailSetupWizard({ emailConfig, onChange }) {
 
 // ─── ONBOARDING SCREEN ────────────────────────────────────────────────────────
 function OnboardingScreen({ user, onComplete }) {
-  const [step, setStep] = useState(0); // 0=welcome, 1=brand, 2=email, 3=done
+  const [step, setStep] = useState(0); // 0=welcome, 1=brand, 2=email, 3=slack, 4=done
   const [brandManual, setBrandManual] = useState("");
   const [emailConfig, setEmailConfig] = useState({ provider: "none" });
+  const [slackConfig, setSlackConfig] = useState({ webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } });
   const [brandTab, setBrandTab] = useState("text");
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef(null);
-  const STEPS = ["Bienvenida", "Tu marca", "Email", "¡Listo!"];
+  const STEPS = ["Bienvenida", "Tu marca", "Email", "Slack", "¡Listo!"];
 
   const handleFile = async (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -886,7 +887,9 @@ function OnboardingScreen({ user, onComplete }) {
     setUploading(false);
   };
 
-  const finish = () => onComplete({ brandManual, emailConfig, onboardingCompleted: true });
+  const finish = () => onComplete({ brandManual, emailConfig, slackConfig, onboardingCompleted: true });
+  const next = () => setStep(s => s + 1);
+  const back = () => setStep(s => s - 1);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
@@ -895,14 +898,14 @@ function OnboardingScreen({ user, onComplete }) {
         <div className="px-8 pt-8 pb-4">
           <div className="flex justify-between items-center mb-6">
             <div className="text-2xl font-black text-blue-700">RecruitAI</div>
-            <button onClick={() => finish()} className="text-xs text-gray-400 hover:text-gray-600 underline">Omitir configuración →</button>
+            <button onClick={finish} className="text-xs text-gray-400 hover:text-gray-600 underline">Omitir configuración →</button>
           </div>
-          {/* Progress */}
-          <div className="flex gap-2 mb-2">
+          {/* Progress bar */}
+          <div className="flex gap-1.5 mb-2">
             {STEPS.map((s, i) => (
               <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                <div className={`h-1.5 w-full rounded-full transition-all ${i <= step ? "bg-blue-600" : "bg-gray-200"}`} />
-                <span className={`text-xs font-medium ${i === step ? "text-blue-600" : "text-gray-400"}`}>{s}</span>
+                <div className={`h-1.5 w-full rounded-full transition-all duration-300 ${i <= step ? "bg-blue-600" : "bg-gray-200"}`} />
+                <span className={`text-xs font-medium truncate w-full text-center ${i === step ? "text-blue-600" : "text-gray-400"}`}>{s}</span>
               </div>
             ))}
           </div>
@@ -916,13 +919,15 @@ function OnboardingScreen({ user, onComplete }) {
             <div className="text-center py-4 space-y-4">
               <div className="text-6xl">👋</div>
               <h2 className="text-2xl font-black text-gray-900">Hola, {user?.displayName?.split(" ")[0] || "bienvenido"}!</h2>
-              <p className="text-gray-500 text-sm leading-relaxed">Vamos a configurar tu cuenta en 3 pasos para que puedas empezar a automatizar tu proceso de selección.</p>
-              <div className="grid grid-cols-3 gap-3 mt-4">
-                {[["🎨", "Tu marca", "Manual de valores para la IA"], ["📧", "Email", "Notificaciones automáticas"], ["🚀", "Listo", "Crea tu primer proceso"]].map(([ic, t, s]) => (
-                  <div key={t} className="bg-gray-50 rounded-xl p-3 text-center">
-                    <div className="text-2xl mb-1">{ic}</div>
-                    <div className="text-xs font-bold text-gray-700">{t}</div>
-                    <div className="text-xs text-gray-400 mt-0.5">{s}</div>
+              <p className="text-gray-500 text-sm leading-relaxed">Vamos a configurar tu cuenta en 4 pasos para que puedas empezar a automatizar tu proceso de selección.</p>
+              <div className="grid grid-cols-2 gap-3 mt-4">
+                {[["🎨", "Tu marca", "Manual de valores para la IA"], ["📧", "Email", "Confirmaciones automáticas a candidatos"], ["🔔", "Slack", "Notificaciones al equipo"], ["🚀", "Listo", "Crea tu primer proceso"]].map(([ic, t, s]) => (
+                  <div key={t} className="bg-gray-50 rounded-xl p-3 flex items-start gap-3">
+                    <div className="text-xl shrink-0">{ic}</div>
+                    <div>
+                      <div className="text-xs font-bold text-gray-700">{t}</div>
+                      <div className="text-xs text-gray-400 mt-0.5">{s}</div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -965,22 +970,34 @@ function OnboardingScreen({ user, onComplete }) {
             <div className="space-y-4 py-2">
               <div>
                 <h2 className="text-lg font-black text-gray-900">📧 Configura el email</h2>
-                <p className="text-sm text-gray-500 mt-1">Elige cómo quieres enviar los emails automáticos a los candidatos. Puedes cambiar esto en cualquier momento.</p>
+                <p className="text-sm text-gray-500 mt-1">Elige cómo enviar los emails automáticos a los candidatos. Puedes cambiarlo en cualquier momento.</p>
               </div>
               <EmailSetupWizard emailConfig={emailConfig} onChange={setEmailConfig} />
             </div>
           )}
 
-          {/* Step 3: Done */}
+          {/* Step 3: Slack */}
           {step === 3 && (
+            <div className="space-y-4 py-2">
+              <div>
+                <h2 className="text-lg font-black text-gray-900">🔔 Notificaciones en Slack</h2>
+                <p className="text-sm text-gray-500 mt-1">Conecta tu canal de Slack para recibir avisos cuando lleguen candidatos, se completen evaluaciones o se tomen decisiones. Puedes configurarlo en cualquier momento.</p>
+              </div>
+              <SlackSetupWizard slackConfig={slackConfig} onChange={setSlackConfig} />
+            </div>
+          )}
+
+          {/* Step 4: Done */}
+          {step === 4 && (
             <div className="text-center py-4 space-y-4">
               <div className="text-6xl">🎉</div>
               <h2 className="text-2xl font-black text-gray-900">¡Todo listo!</h2>
               <p className="text-gray-500 text-sm leading-relaxed">Tu cuenta está configurada. Ahora puedes crear tu primer proceso de selección y empezar a recibir candidatos.</p>
               <div className="bg-blue-50 rounded-xl p-4 text-left space-y-2">
                 <p className="text-sm font-semibold text-blue-800">Resumen de configuración:</p>
-                <p className="text-xs text-blue-700">{brandManual ? "✅ Manual de marca configurado" : "⚪ Manual de marca (puedes añadirlo después en ⚙️)"}</p>
-                <p className="text-xs text-blue-700">{emailConfig.provider !== "none" ? `✅ Email configurado (${emailConfig.provider === "gmail" ? "Gmail" : emailConfig.provider === "resend_shared" ? "Resend" : "Dominio propio"})` : "⚪ Email (puedes configurarlo después en ⚙️)"}</p>
+                <p className="text-xs text-blue-700">{brandManual ? "✅ Manual de marca configurado" : "⚪ Manual de marca — configúralo después en ⚙️"}</p>
+                <p className="text-xs text-blue-700">{emailConfig.provider !== "none" ? `✅ Email configurado (${emailConfig.provider === "gmail" ? "Gmail" : emailConfig.provider === "resend_shared" ? "Resend" : "Dominio propio"})` : "⚪ Email — configúralo después en ⚙️"}</p>
+                <p className="text-xs text-blue-700">{slackConfig.webhookUrl ? "✅ Slack conectado" : "⚪ Slack — configúralo después en ⚙️"}</p>
               </div>
             </div>
           )}
@@ -988,20 +1005,20 @@ function OnboardingScreen({ user, onComplete }) {
 
         {/* Footer buttons */}
         <div className="px-8 pb-8 flex gap-3">
-          {step > 0 && step < 3 && (
-            <button onClick={() => setStep(s => s - 1)} className="px-6 py-3 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">← Atrás</button>
+          {step > 0 && step < 4 && (
+            <button onClick={back} className="px-6 py-3 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">← Atrás</button>
           )}
-          {step < 2 && (
-            <button onClick={() => setStep(s => s + 1)} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
+          {step < 3 && (
+            <button onClick={next} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
               {step === 0 ? "Empezar configuración →" : "Continuar →"}
             </button>
           )}
-          {step === 2 && (
-            <button onClick={() => setStep(3)} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
-              {emailConfig.provider !== "none" ? "Continuar →" : "Omitir por ahora →"}
+          {step === 3 && (
+            <button onClick={next} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
+              {slackConfig.webhookUrl ? "Continuar →" : "Omitir por ahora →"}
             </button>
           )}
-          {step === 3 && (
+          {step === 4 && (
             <button onClick={finish} className="flex-1 py-3 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700">
               🚀 Ir al dashboard
             </button>
