@@ -600,29 +600,29 @@ function CandidatePublicScreen({ processId }) {
 
 // ─── EMAIL SETUP WIZARD (shared) ─────────────────────────────────────────────
 function EmailSetupWizard({ emailConfig, onChange }) {
-  const [provider, setProvider] = useState(emailConfig?.provider || "none");
-  const [gmailUser, setGmailUser] = useState(emailConfig?.gmailUser || "");
-  const [gmailAppPassword, setGmailAppPassword] = useState(emailConfig?.gmailAppPassword || "");
+  const [provider, setProvider] = useState(emailConfig?.provider || "app");
   const [resendApiKey, setResendApiKey] = useState(emailConfig?.resendApiKey || "");
   const [fromEmail, setFromEmail] = useState(emailConfig?.fromEmail || "");
   const [fromName, setFromName] = useState(emailConfig?.fromName || "");
-  const [showPass, setShowPass] = useState(false);
   const [showDns, setShowDns] = useState(false);
-  const [resendStep, setResendStep] = useState(1);
   const [testEmail, setTestEmail] = useState("");
   const [testStatus, setTestStatus] = useState(null);
 
   const emit = (updates) => {
-    const next = { provider, gmailUser, gmailAppPassword, resendApiKey, fromEmail, fromName, ...updates };
+    const next = { provider, resendApiKey, fromEmail, fromName, ...updates };
     onChange(next);
   };
-  const set = (field, value, setter) => { setter(value); emit({ [field]: value }); };
+
+  // Auto-emit "app" as default on first mount
+  useEffect(() => {
+    if (!emailConfig?.provider) onChange({ provider: "app", fromName: "" });
+  }, []);
 
   const handleTestEmail = async () => {
     if (!testEmail) return;
     setTestStatus("sending");
     try {
-      const cfg = { provider, gmailUser, gmailAppPassword, resendApiKey, fromEmail, fromName };
+      const cfg = { provider, resendApiKey, fromEmail, fromName };
       const res = await fetch("/api/sendEmail", {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ type: "test", data: { candidateEmail: testEmail, candidateName: "Test", companyName: fromName || "Tu agencia", positionTitle: "Email de prueba" }, emailConfig: cfg }),
@@ -634,9 +634,8 @@ function EmailSetupWizard({ emailConfig, onChange }) {
   };
 
   const PROVIDERS = [
-    { id: "gmail", icon: "📧", title: "Gmail", sub: "Gratis · Sin cuentas nuevas · Configura en 3 min", badge: "Más fácil" },
-    { id: "resend_shared", icon: "🚀", title: "Resend (dominio compartido)", sub: "Gratis hasta 3.000 emails/mes · Sin configurar DNS", badge: "Recomendado" },
-    { id: "resend_domain", icon: "🏢", title: "Resend + dominio propio", sub: "Emails desde tu dominio corporativo · Máxima marca", badge: "Profesional" },
+    { id: "app", icon: "✨", title: "RecruitAI Mail", sub: "Sin configuración · Activado al momento · Gratis", badge: "Recomendado" },
+    { id: "resend_domain", icon: "🏢", title: "Tu dominio propio", sub: "Emails desde tu dirección corporativa · Máxima marca", badge: "Avanzado" },
   ];
 
   return (
@@ -644,7 +643,7 @@ function EmailSetupWizard({ emailConfig, onChange }) {
       {/* Provider cards */}
       <div className="space-y-2">
         {PROVIDERS.map(({ id, icon, title, sub, badge }) => (
-          <div key={id} onClick={() => { setProvider(id); setResendStep(1); emit({ provider: id }); }}
+          <div key={id} onClick={() => { setProvider(id); emit({ provider: id }); }}
             className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${provider === id ? "border-blue-500 bg-blue-50" : "border-gray-200 hover:border-gray-300 bg-white"}`}>
             <div className={`w-5 h-5 rounded-full border-2 mt-0.5 flex items-center justify-center shrink-0 ${provider === id ? "border-blue-500 bg-blue-500" : "border-gray-300"}`}>
               {provider === id && <div className="w-2 h-2 bg-white rounded-full" />}
@@ -660,197 +659,87 @@ function EmailSetupWizard({ emailConfig, onChange }) {
         ))}
       </div>
 
-      {/* Gmail wizard */}
-      {provider === "gmail" && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-4">
-          <p className="text-sm font-semibold text-amber-800">Sigue estos pasos para conectar tu Gmail:</p>
+      {/* RecruitAI Mail: zero config */}
+      {provider === "app" && (
+        <div className="bg-green-50 border border-green-200 rounded-xl p-4 space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="text-xl">✅</span>
+            <p className="text-sm font-bold text-green-800">¡Ya está activado!</p>
+          </div>
+          <p className="text-xs text-green-700">Los emails se enviarán automáticamente desde RecruitAI. No necesitas configurar nada más.</p>
+          <div>
+            <label className={lbl}>Nombre del remitente (opcional)</label>
+            <input className={inp} type="text" placeholder="Selección · Tu Agencia"
+              value={fromName} onChange={e => { setFromName(e.target.value); emit({ fromName: e.target.value }); }} />
+            <p className="text-xs text-gray-400 mt-1">Los candidatos verán: "{fromName || "Tu Agencia"} · RecruitAI"</p>
+          </div>
+        </div>
+      )}
+
+      {/* Domain provider */}
+      {provider === "resend_domain" && (
+        <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-4">
+          <p className="text-sm font-semibold text-purple-800">Configura tu dominio en 3 pasos:</p>
           <div className="space-y-3">
             {[
-              { n: 1, text: "Activa la verificación en 2 pasos en tu cuenta de Google", link: "https://myaccount.google.com/security", linkLabel: "Abrir seguridad de Google →" },
-              { n: 2, text: "En esa misma página, busca \"Contraseñas de aplicación\"" },
-              { n: 3, text: "Crea una nueva contraseña → selecciona \"Otra\" → nombre: RecruitAI" },
-              { n: 4, text: "Google te dará 16 caracteres — cópialos y pégalos abajo" },
+              { n: 1, text: "Crea una cuenta gratuita en Resend", link: "https://resend.com/signup", linkLabel: "Crear cuenta en Resend →" },
+              { n: 2, text: "Ve a Domains → Add Domain → añade tu dominio y copia los registros DNS en tu proveedor (Cloudflare, GoDaddy, etc.)" },
+              { n: 3, text: "Ve a API Keys → Create API Key → copia la clave y pégala abajo" },
             ].map(({ n, text, link, linkLabel }) => (
               <div key={n} className="flex gap-3">
-                <div className="w-6 h-6 rounded-full bg-amber-200 text-amber-800 text-xs font-bold flex items-center justify-center shrink-0">{n}</div>
+                <div className="w-6 h-6 rounded-full bg-purple-200 text-purple-800 text-xs font-bold flex items-center justify-center shrink-0">{n}</div>
                 <div>
-                  <p className="text-xs text-amber-900">{text}</p>
+                  <p className="text-xs text-purple-900">{text}</p>
                   {link && <a href={link} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline">{linkLabel}</a>}
                 </div>
               </div>
             ))}
           </div>
-          <div className="space-y-3 pt-2 border-t border-amber-200">
+          <button onClick={() => setShowDns(v => !v)} className="text-xs text-purple-600 underline">
+            {showDns ? "Ocultar" : "¿Qué registros DNS necesito?"} →
+          </button>
+          {showDns && (
+            <div className="bg-white rounded-lg p-3 text-xs text-gray-700 border border-purple-200 space-y-1">
+              <p className="font-semibold">Resend te dará 3 registros TXT para copiar en tu DNS:</p>
+              <p>• <strong>SPF</strong>: verifica que puedes enviar desde tu dominio</p>
+              <p>• <strong>DKIM</strong>: firma los emails para evitar spam</p>
+              <p>• <strong>DMARC</strong>: política de seguridad del dominio</p>
+              <p className="text-gray-400 pt-1">Cópialos exactamente como aparecen en Resend. Tarda 5–10 min en verificarse.</p>
+            </div>
+          )}
+          <div className="space-y-3 pt-2 border-t border-purple-200">
             <div>
-              <label className={lbl}>Tu dirección de Gmail</label>
-              <input className={inp} type="email" placeholder="tuagencia@gmail.com" value={gmailUser} onChange={e => set("gmailUser", e.target.value, setGmailUser)} />
+              <label className={lbl}>API Key de Resend</label>
+              <input className={inp} type="password" placeholder="re_xxxxxxxxxxxxxxxxxxxx"
+                value={resendApiKey} onChange={e => { setResendApiKey(e.target.value); emit({ resendApiKey: e.target.value }); }} />
             </div>
             <div>
-              <label className={lbl}>Contraseña de aplicación (16 caracteres)</label>
-              <div className="relative">
-                <input className={inp + " pr-10"} type={showPass ? "text" : "password"} placeholder="xxxx xxxx xxxx xxxx" value={gmailAppPassword} onChange={e => set("gmailAppPassword", e.target.value, setGmailAppPassword)} />
-                <button type="button" onClick={() => setShowPass(v => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-xs">{showPass ? "Ocultar" : "Ver"}</button>
-              </div>
+              <label className={lbl}>Email de envío</label>
+              <input className={inp} type="email" placeholder="reclutamiento@tuagencia.com"
+                value={fromEmail} onChange={e => { setFromEmail(e.target.value); emit({ fromEmail: e.target.value }); }} />
             </div>
             <div>
               <label className={lbl}>Nombre del remitente</label>
-              <input className={inp} type="text" placeholder="Selección · Tu Agencia" value={fromName} onChange={e => set("fromName", e.target.value, setFromName)} />
+              <input className={inp} type="text" placeholder="Selección · Tu Agencia"
+                value={fromName} onChange={e => { setFromName(e.target.value); emit({ fromName: e.target.value }); }} />
             </div>
           </div>
         </div>
       )}
 
-      {/* Resend shared wizard */}
-      {provider === "resend_shared" && (
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-4">
-          {/* Step indicators */}
-          <div className="flex gap-2 items-center">
-            {[1, 2, 3].map(s => (
-              <div key={s} className="flex items-center gap-2">
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold cursor-pointer transition-all ${resendStep >= s ? "bg-blue-600 text-white" : "bg-blue-100 text-blue-400"}`}
-                  onClick={() => resendStep > s && setResendStep(s)}>{s}</div>
-                {s < 3 && <div className={`h-0.5 w-8 ${resendStep > s ? "bg-blue-600" : "bg-blue-100"}`} />}
-              </div>
-            ))}
-            <span className="text-xs text-blue-600 font-medium ml-1">
-              {resendStep === 1 && "Crear cuenta"}{resendStep === 2 && "API Key"}{resendStep === 3 && "Personalizar"}
-            </span>
-          </div>
-
-          {resendStep === 1 && (
-            <div className="space-y-3">
-              <p className="text-sm text-blue-800">Crea tu cuenta gratuita en Resend (tarda menos de 1 minuto).</p>
-              <a href="https://resend.com/signup" target="_blank" rel="noreferrer"
-                className="flex items-center justify-center gap-2 w-full py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
-                🚀 Crear cuenta en Resend →
-              </a>
-              <button onClick={() => setResendStep(2)} className="w-full py-2.5 border border-blue-300 text-blue-700 rounded-xl text-sm font-medium hover:bg-blue-100">
-                Ya tengo cuenta →
-              </button>
-            </div>
-          )}
-
-          {resendStep === 2 && (
-            <div className="space-y-3">
-              <p className="text-sm text-blue-800">Dentro de Resend ve a <strong>API Keys → Create API Key</strong> y copia la clave que te dan.</p>
-              <div className="bg-white rounded-lg p-3 text-xs text-gray-600 border border-blue-200">
-                📍 Resend.com → menú lateral → <strong>API Keys</strong> → botón <strong>Create API Key</strong> → nombre: "RecruitAI" → <strong>Copy</strong>
-              </div>
-              <div>
-                <label className={lbl}>Pega tu API Key aquí</label>
-                <input className={inp} type="password" placeholder="re_xxxxxxxxxxxxxxxxxxxx" value={resendApiKey} onChange={e => set("resendApiKey", e.target.value, setResendApiKey)} />
-              </div>
-              <button onClick={() => resendApiKey && setResendStep(3)} disabled={!resendApiKey}
-                className="w-full py-2.5 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 disabled:opacity-40">
-                Continuar →
-              </button>
-            </div>
-          )}
-
-          {resendStep === 3 && (
-            <div className="space-y-3">
-              <p className="text-sm text-blue-800">¡Casi listo! Elige el nombre con el que aparecerán tus emails.</p>
-              <div>
-                <label className={lbl}>Nombre del remitente</label>
-                <input className={inp} type="text" placeholder="Selección · Tu Agencia" value={fromName} onChange={e => set("fromName", e.target.value, setFromName)} />
-                <p className="text-xs text-gray-400 mt-1">Los candidatos verán: "{fromName || "Tu Agencia"} via resend.dev"</p>
-              </div>
-            </div>
-          )}
+      {/* Test email */}
+      <div className="bg-gray-50 rounded-xl p-4 space-y-2 border border-gray-200">
+        <label className={lbl}>📬 Enviar email de prueba</label>
+        <div className="flex gap-2">
+          <input className={inp + " flex-1"} type="email" placeholder="tu@email.com" value={testEmail} onChange={e => setTestEmail(e.target.value)} />
+          <button onClick={handleTestEmail} disabled={testStatus === "sending" || !testEmail}
+            className="px-4 py-2 bg-gray-800 text-white rounded-xl text-sm font-bold hover:bg-gray-900 disabled:opacity-40 whitespace-nowrap">
+            {testStatus === "sending" ? "Enviando..." : "Probar"}
+          </button>
         </div>
-      )}
-
-      {/* Resend domain wizard */}
-      {provider === "resend_domain" && (
-        <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 space-y-4">
-          <div className="flex gap-2 items-center">
-            {[1, 2, 3, 4].map(s => (
-              <div key={s} className="flex items-center gap-2">
-                <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold cursor-pointer ${resendStep >= s ? "bg-purple-600 text-white" : "bg-purple-100 text-purple-400"}`}
-                  onClick={() => resendStep > s && setResendStep(s)}>{s}</div>
-                {s < 4 && <div className={`h-0.5 w-6 ${resendStep > s ? "bg-purple-600" : "bg-purple-100"}`} />}
-              </div>
-            ))}
-            <span className="text-xs text-purple-600 font-medium ml-1">
-              {resendStep === 1 && "Cuenta"}{resendStep === 2 && "API Key"}{resendStep === 3 && "Dominio"}{resendStep === 4 && "Email"}
-            </span>
-          </div>
-
-          {resendStep === 1 && (
-            <div className="space-y-3">
-              <p className="text-sm text-purple-800">Crea tu cuenta gratuita en Resend.</p>
-              <a href="https://resend.com/signup" target="_blank" rel="noreferrer"
-                className="flex items-center justify-center gap-2 w-full py-3 bg-purple-600 text-white rounded-xl text-sm font-bold hover:bg-purple-700">
-                🏢 Crear cuenta en Resend →
-              </a>
-              <button onClick={() => setResendStep(2)} className="w-full py-2.5 border border-purple-300 text-purple-700 rounded-xl text-sm font-medium hover:bg-purple-100">Ya tengo cuenta →</button>
-            </div>
-          )}
-
-          {resendStep === 2 && (
-            <div className="space-y-3">
-              <p className="text-sm text-purple-800">Ve a <strong>API Keys → Create API Key</strong> en tu cuenta de Resend.</p>
-              <div>
-                <label className={lbl}>API Key de Resend</label>
-                <input className={inp} type="password" placeholder="re_xxxxxxxxxxxxxxxxxxxx" value={resendApiKey} onChange={e => set("resendApiKey", e.target.value, setResendApiKey)} />
-              </div>
-              <button onClick={() => resendApiKey && setResendStep(3)} disabled={!resendApiKey}
-                className="w-full py-2.5 bg-purple-600 text-white rounded-xl text-sm font-bold hover:bg-purple-700 disabled:opacity-40">Continuar →</button>
-            </div>
-          )}
-
-          {resendStep === 3 && (
-            <div className="space-y-3">
-              <p className="text-sm text-purple-800">Añade tu dominio en Resend y copia los registros DNS que te dan en tu proveedor (Cloudflare, GoDaddy, etc.).</p>
-              <a href="https://resend.com/domains" target="_blank" rel="noreferrer"
-                className="flex items-center justify-center gap-2 w-full py-2.5 border border-purple-300 text-purple-700 rounded-xl text-sm font-medium hover:bg-purple-100">
-                Añadir dominio en Resend →
-              </a>
-              <button onClick={() => setShowDns(v => !v)} className="text-xs text-purple-600 underline">{showDns ? "Ocultar" : "Ver"} los 3 registros DNS que necesitas →</button>
-              {showDns && (
-                <div className="bg-white rounded-lg p-3 text-xs text-gray-700 border border-purple-200 space-y-1">
-                  <p className="font-semibold">Resend te dará estos 3 registros para copiar en tu DNS:</p>
-                  <p>• <strong>SPF</strong> (TXT): verifica que puedes enviar desde tu dominio</p>
-                  <p>• <strong>DKIM</strong> (TXT): firma los emails para evitar spam</p>
-                  <p>• <strong>DMARC</strong> (TXT): política de seguridad del dominio</p>
-                  <p className="text-gray-400 pt-1">Cópialos exactamente como aparecen en Resend. Tarda 5-10 min en verificarse.</p>
-                </div>
-              )}
-              <button onClick={() => setResendStep(4)} className="w-full py-2.5 bg-purple-600 text-white rounded-xl text-sm font-bold hover:bg-purple-700">Dominio verificado →</button>
-            </div>
-          )}
-
-          {resendStep === 4 && (
-            <div className="space-y-3">
-              <p className="text-sm text-purple-800">¡Último paso! Configura desde qué email enviarás.</p>
-              <div>
-                <label className={lbl}>Email de envío</label>
-                <input className={inp} type="email" placeholder="reclutamiento@tuagencia.com" value={fromEmail} onChange={e => set("fromEmail", e.target.value, setFromEmail)} />
-              </div>
-              <div>
-                <label className={lbl}>Nombre del remitente</label>
-                <input className={inp} type="text" placeholder="Selección · Tu Agencia" value={fromName} onChange={e => set("fromName", e.target.value, setFromName)} />
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Test email (always visible when provider selected) */}
-      {provider !== "none" && (
-        <div className="bg-gray-50 rounded-xl p-4 space-y-2 border border-gray-200">
-          <label className={lbl}>📬 Enviar email de prueba</label>
-          <div className="flex gap-2">
-            <input className={inp + " flex-1"} type="email" placeholder="tu@email.com" value={testEmail} onChange={e => setTestEmail(e.target.value)} />
-            <button onClick={handleTestEmail} disabled={testStatus === "sending" || !testEmail}
-              className="px-4 py-2 bg-gray-800 text-white rounded-xl text-sm font-bold hover:bg-gray-900 disabled:opacity-40 whitespace-nowrap">
-              {testStatus === "sending" ? "Enviando..." : "Probar"}
-            </button>
-          </div>
-          {testStatus === "ok" && <p className="text-xs text-green-600 font-medium">✅ Email recibido correctamente — ¡todo listo!</p>}
-          {testStatus === "error" && <p className="text-xs text-red-500">✗ Error. Revisa los datos e inténtalo de nuevo.</p>}
-        </div>
-      )}
+        {testStatus === "ok" && <p className="text-xs text-green-600 font-medium">✅ Email recibido correctamente — ¡todo listo!</p>}
+        {testStatus === "error" && <p className="text-xs text-red-500">✗ Error. Revisa los datos e inténtalo de nuevo.</p>}
+      </div>
     </div>
   );
 }
@@ -930,7 +819,7 @@ function SkipWarningModal({ warningKey, onConfirm, onCancel }) {
 function OnboardingScreen({ user, onComplete }) {
   const [step, setStep] = useState(0); // 0=welcome, 1=brand, 2=email, 3=slack, 4=done
   const [brandManual, setBrandManual] = useState("");
-  const [emailConfig, setEmailConfig] = useState({ provider: "none" });
+  const [emailConfig, setEmailConfig] = useState({ provider: "app" });
   const [slackConfig, setSlackConfig] = useState({ webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } });
   const [brandTab, setBrandTab] = useState("text");
   const [uploading, setUploading] = useState(false);
@@ -1076,7 +965,7 @@ function OnboardingScreen({ user, onComplete }) {
               <div className="bg-blue-50 rounded-xl p-4 text-left space-y-2">
                 <p className="text-sm font-semibold text-blue-800">Resumen de configuración:</p>
                 <p className="text-xs text-blue-700">{brandManual ? "✅ Manual de marca configurado" : "⚪ Manual de marca — configúralo después en ⚙️"}</p>
-                <p className="text-xs text-blue-700">{emailConfig.provider !== "none" ? `✅ Email configurado (${emailConfig.provider === "gmail" ? "Gmail" : emailConfig.provider === "resend_shared" ? "Resend" : "Dominio propio"})` : "⚪ Email — configúralo después en ⚙️"}</p>
+                <p className="text-xs text-blue-700">{emailConfig.provider === "app" ? "✅ Email activado (RecruitAI Mail)" : emailConfig.provider === "resend_domain" ? "✅ Email configurado (dominio propio)" : "⚪ Email — configúralo después en ⚙️"}</p>
                 <p className="text-xs text-blue-700">{slackConfig.webhookUrl ? "✅ Slack conectado" : "⚪ Slack — configúralo después en ⚙️"}</p>
               </div>
             </div>
@@ -1098,8 +987,8 @@ function OnboardingScreen({ user, onComplete }) {
               </button>
             )}
             {step === 2 && (
-              <button onClick={emailConfig.provider !== "none" ? next : () => trySkip("email")} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
-                {emailConfig.provider !== "none" ? "Continuar →" : "Continuar →"}
+              <button onClick={next} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700">
+                Continuar →
               </button>
             )}
             {step === 3 && (
@@ -1119,7 +1008,7 @@ function OnboardingScreen({ user, onComplete }) {
           )}
           {step === 2 && emailConfig.provider === "none" && (
             <p className="text-center text-xs text-gray-400">
-              <button onClick={() => trySkip("email")} className="underline hover:text-gray-600">Omitir este paso</button>
+              <button onClick={() => trySkip("email")} className="underline hover:text-gray-600">Configurar más tarde</button>
             </p>
           )}
           {step === 3 && !slackConfig.webhookUrl && (
@@ -1160,8 +1049,8 @@ function SlackSetupWizard({ slackConfig, onChange }) {
     newApplication: "both", aiEvaluation: "instant", finalDecision: "both",
     dailyDigest: true,
   });
-  const [guideStep, setGuideStep] = useState(webhookUrl ? null : 1);
   const [testStatus, setTestStatus] = useState(null);
+  const [showManual, setShowManual] = useState(false);
 
   const emit = (updates) => onChange({ webhookUrl, channelName, notifications, ...updates });
   const setNotif = (key, value) => {
@@ -1183,57 +1072,36 @@ function SlackSetupWizard({ slackConfig, onChange }) {
     setTimeout(() => setTestStatus(null), 4000);
   };
 
+  const handleAddToSlack = () => {
+    window.location.href = "/api/slack/install";
+  };
+
+  const handleDisconnect = () => {
+    setWebhookUrl(""); setChannelName("");
+    emit({ webhookUrl: "", channelName: "" });
+  };
+
   const NOTIF_OPTIONS = [
     { key: "newApplication", label: "🔔 Nueva solicitud", desc: "Cuando un candidato aplica a un proceso" },
     { key: "aiEvaluation", label: "🤖 Evaluación IA completada", desc: "Cuando la IA termina de analizar un ejercicio o entrevista" },
     { key: "finalDecision", label: "✅ Decisión final tomada", desc: "Cuando el reclutador decide contratar, descartar, etc." },
   ];
 
-  return (
-    <div className="space-y-5">
-
-      {/* Setup guide */}
-      {!webhookUrl && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-4">
-          <p className="text-sm font-semibold text-amber-800">Conecta tu Slack en 3 pasos:</p>
-          <div className="space-y-3">
-            {[
-              { n: 1, text: "Ve a api.slack.com/apps → Create New App → From scratch", link: "https://api.slack.com/apps", linkLabel: "Abrir Slack API →" },
-              { n: 2, text: "Selecciona tu workspace → en el menú lateral busca \"Incoming Webhooks\" → actívalo → clic en \"Add New Webhook to Workspace\" → elige el canal" },
-              { n: 3, text: "Copia la Webhook URL que aparece (empieza por https://hooks.slack.com/...) y pégala abajo" },
-            ].map(({ n, text, link, linkLabel }) => (
-              <div key={n} className="flex gap-3">
-                <div className="w-6 h-6 rounded-full bg-amber-200 text-amber-800 text-xs font-bold flex items-center justify-center shrink-0">{n}</div>
-                <div>
-                  <p className="text-xs text-amber-900">{text}</p>
-                  {link && <a href={link} target="_blank" rel="noreferrer" className="text-xs text-blue-600 underline">{linkLabel}</a>}
-                </div>
-              </div>
-            ))}
+  // ── Connected state ────────────────────────────────────────────────────────
+  if (webhookUrl) {
+    return (
+      <div className="space-y-5">
+        <div className="bg-green-50 border border-green-200 rounded-xl p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">✅</span>
+            <div>
+              <p className="text-sm font-bold text-green-800">Slack conectado</p>
+              {channelName && <p className="text-xs text-green-600">Canal: {channelName}</p>}
+            </div>
           </div>
+          <button onClick={handleDisconnect} className="text-xs text-red-400 hover:text-red-600 hover:underline">Desconectar</button>
         </div>
-      )}
 
-      {/* Webhook URL */}
-      <div>
-        <label className={lbl}>Webhook URL de Slack</label>
-        <input className={inp} type="url" placeholder="https://hooks.slack.com/services/..." value={webhookUrl}
-          onChange={e => { setWebhookUrl(e.target.value); emit({ webhookUrl: e.target.value }); }} />
-        {webhookUrl && <button onClick={() => setWebhookUrl("") || emit({ webhookUrl: "" })} className="text-xs text-red-500 mt-1 hover:underline">× Desconectar Slack</button>}
-      </div>
-
-      {/* Channel name (optional, just for reference) */}
-      {webhookUrl && (
-        <div>
-          <label className={lbl}>Nombre del canal (referencia)</label>
-          <input className={inp} type="text" placeholder="#reclutamiento" value={channelName}
-            onChange={e => { setChannelName(e.target.value); emit({ channelName: e.target.value }); }} />
-          <p className="text-xs text-gray-400 mt-1">Solo para que recuerdes a qué canal apunta. El canal lo fijaste al crear el webhook en Slack.</p>
-        </div>
-      )}
-
-      {/* Test button */}
-      {webhookUrl && (
         <div className="flex items-center gap-3">
           <button onClick={handleTest} disabled={testStatus === "sending"}
             className="px-4 py-2 bg-gray-800 text-white rounded-xl text-sm font-bold hover:bg-gray-900 disabled:opacity-40">
@@ -1242,10 +1110,7 @@ function SlackSetupWizard({ slackConfig, onChange }) {
           {testStatus === "ok" && <p className="text-xs text-green-600 font-medium">✅ ¡Mensaje recibido en Slack!</p>}
           {testStatus === "error" && <p className="text-xs text-red-500">✗ Error. Revisa la webhook URL.</p>}
         </div>
-      )}
 
-      {/* Notification preferences */}
-      {webhookUrl && (
         <div className="space-y-3">
           <p className="text-sm font-semibold text-gray-700">¿Cuándo quieres recibir notificaciones?</p>
           {NOTIF_OPTIONS.map(({ key, label, desc }) => (
@@ -1269,8 +1134,6 @@ function SlackSetupWizard({ slackConfig, onChange }) {
               </div>
             </div>
           ))}
-
-          {/* Daily digest toggle */}
           <div className="bg-gray-50 rounded-xl p-4">
             <div className="flex items-center justify-between">
               <div>
@@ -1284,7 +1147,50 @@ function SlackSetupWizard({ slackConfig, onChange }) {
             </div>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
+
+  // ── Not connected state ────────────────────────────────────────────────────
+  return (
+    <div className="space-y-4">
+      {/* Primary: Add to Slack OAuth button */}
+      <div className="rounded-2xl p-6 text-center space-y-4" style={{ background: "#4A154B" }}>
+        <div className="text-4xl">💬</div>
+        <p className="text-white font-bold text-base">Conecta RecruitAI con tu Slack</p>
+        <p className="text-sm" style={{ color: "#c9b3ca" }}>Elige un canal y listo. Sin configuraciones técnicas.</p>
+        <button onClick={handleAddToSlack}
+          className="inline-flex items-center gap-2 bg-white font-bold px-6 py-3 rounded-xl hover:bg-gray-100 transition-all text-sm"
+          style={{ color: "#4A154B" }}>
+          <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor">
+            <path d="M6.194 14.144c0 1.073-.87 1.944-1.943 1.944-1.073 0-1.943-.87-1.943-1.944 0-1.072.87-1.942 1.943-1.942h1.943v1.942zm.974 0c0-1.072.87-1.942 1.943-1.942s1.943.87 1.943 1.942v4.862c0 1.073-.87 1.943-1.943 1.943s-1.943-.87-1.943-1.943v-4.862zM9.111 6.2c-1.073 0-1.943-.87-1.943-1.943 0-1.073.87-1.943 1.943-1.943s1.943.87 1.943 1.943v1.943H9.11zm0 .974c1.073 0 1.943.87 1.943 1.942 0 1.073-.87 1.944-1.943 1.944H4.25c-1.073 0-1.944-.87-1.944-1.944 0-1.072.87-1.942 1.944-1.942h4.862zm7.906 1.942c0-1.072.87-1.942 1.943-1.942 1.073 0 1.943.87 1.943 1.942 0 1.073-.87 1.944-1.943 1.944h-1.943V9.116zm-.974 0c0 1.073-.87 1.944-1.943 1.944s-1.943-.87-1.943-1.944V4.254c0-1.073.87-1.943 1.943-1.943s1.943.87 1.943 1.943v4.862zm-1.943 7.9c1.073 0 1.943.87 1.943 1.944 0 1.073-.87 1.943-1.943 1.943s-1.943-.87-1.943-1.943v-1.943h1.943zm0-.974c-1.073 0-1.943-.87-1.943-1.942 0-1.073.87-1.944 1.943-1.944h4.862c1.073 0 1.943.87 1.943 1.944 0 1.072-.87 1.942-1.943 1.942H14.1z"/>
+          </svg>
+          Añadir a Slack
+        </button>
+      </div>
+
+      {/* Manual fallback (collapsed by default) */}
+      <div>
+        <button onClick={() => setShowManual(v => !v)} className="text-xs text-gray-400 hover:text-gray-600 underline">
+          {showManual ? "Ocultar opción manual ↑" : "¿Prefieres introducir la URL manualmente? →"}
+        </button>
+        {showManual && (
+          <div className="mt-3 space-y-3">
+            <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-xs text-gray-600 space-y-1.5">
+              <p className="font-semibold text-gray-700">Para obtener la Webhook URL manualmente:</p>
+              <p>1. Ve a <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="text-blue-600 underline">api.slack.com/apps</a> → Create New App → From scratch</p>
+              <p>2. Activa "Incoming Webhooks" en el menú lateral</p>
+              <p>3. Clic en "Add New Webhook to Workspace" → elige el canal</p>
+              <p>4. Copia la URL que empieza por hooks.slack.com...</p>
+            </div>
+            <div>
+              <label className={lbl}>Webhook URL</label>
+              <input className={inp} type="url" placeholder="https://hooks.slack.com/services/..."
+                value={webhookUrl} onChange={e => { setWebhookUrl(e.target.value); emit({ webhookUrl: e.target.value }); }} />
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1927,7 +1833,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
-  const [agencySettings, setAgencySettings] = useState({ brandManual: "", emailConfig: { provider: "none" }, slackConfig: { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } }, onboardingCompleted: false });
+  const [agencySettings, setAgencySettings] = useState({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } }, onboardingCompleted: false });
   const [showSettings, setShowSettings] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
 
@@ -1962,6 +1868,37 @@ export default function App() {
     return () => clearTimeout(t);
   }, [processes, agencySettings, user]);
 
+  // ── Slack OAuth callback: detect webhook URL returned from /api/slack/callback ──
+  useEffect(() => {
+    if (!user || !settingsLoaded) return;
+    const params = new URLSearchParams(window.location.search);
+    const slackConnected = params.get("slackConnected");
+    const webhookUrl = params.get("slackWebhook");
+    const channel = params.get("slackChannel");
+    if (slackConnected === "1" && webhookUrl) {
+      const newSlackConfig = {
+        ...(agencySettings?.slackConfig || {}),
+        webhookUrl,
+        channelName: channel || "",
+        notifications: agencySettings?.slackConfig?.notifications || {
+          newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true,
+        },
+      };
+      const newSettings = { ...agencySettings, slackConfig: newSlackConfig };
+      setAgencySettings(newSettings);
+      // Save to Firestore
+      import("./firebase.js").then(({ db, doc, setDoc }) => {
+        setDoc(doc(db, "users", user.uid), { slackConfig: newSlackConfig }, { merge: true });
+      }).catch(() => {});
+      // Clean URL
+      window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+    }
+    if (params.get("slackError")) {
+      // Clean URL silently
+      window.history.replaceState({}, "", window.location.pathname + window.location.hash);
+    }
+  }, [user, settingsLoaded]);
+
   // ── Daily Slack digest: fires once per day when user opens the app ──
   useEffect(() => {
     if (!user || !settingsLoaded) return;
@@ -1978,7 +1915,7 @@ export default function App() {
   }, [user, settingsLoaded, agencySettings]);
 
   const handleLogin = async () => { setLoginLoading(true); try { await signInWithPopup(auth, googleProvider); } catch (e) { console.error(e); setLoginLoading(false); } };
-  const handleLogout = async () => { await signOut(auth); setProcesses(MOCK_PROCESSES); setAgencySettings({ brandManual: "", emailConfig: { provider: "none" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setPhase("dashboard"); };
+  const handleLogout = async () => { await signOut(auth); setProcesses(MOCK_PROCESSES); setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setPhase("dashboard"); };
   const goToDashboard = () => { setPhase("dashboard"); setActiveJob(null); setCandidate(null); setEvaluation(null); setInterview(null); };
   const handlePublish = (jobData) => { const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] }; setProcesses(ps => [np, ...ps]); setActiveJob(jobData); setPhase("preview"); };
   const handleToggle = (id) => setProcesses(ps => ps.map(p => p.id === id ? { ...p, status: p.status === "active" ? "paused" : "active" } : p));
