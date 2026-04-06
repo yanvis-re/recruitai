@@ -79,26 +79,68 @@ function buildFinalDecisionMessage({ candidateName, positionTitle, decision }) {
   };
 }
 
+// Readable labels for position types (mirrors frontend POSITIONS array)
+const POSITION_LABELS = {
+  media_buyer: "Media Buyer",
+  copywriter: "Copywriter",
+  automatizador: "Automatizador",
+  estratega: "Estratega / Funnel Builder",
+  asistente_virtual: "Asistente Virtual",
+  project_manager: "Project Manager",
+  estratega_creativo: "Estratega Creativo",
+  creativo_editor: "Creativo / Editor",
+  redes_sociales: "Social Media Manager",
+};
+
+function getProcessTitle(p) {
+  if (p.position?.positionType === "otro") return p.position?.customTitle || "Personalizado";
+  const base = POSITION_LABELS[p.position?.positionType] || p.position?.positionType || "Posición";
+  return p.position?.specialty ? `${base} · ${p.position.specialty}` : base;
+}
+
 function buildDailyDigestMessage({ processes, date }) {
   const active = processes.filter(p => p.status === "active");
-  if (active.length === 0) return null; // Don't send if no active processes
+  if (active.length === 0) return null;
 
+  // Global totals
   const totalCandidates = active.reduce((s, p) => s + (p.candidates?.length || 0), 0);
-  const pending = active.reduce((s, p) => s + (p.candidates?.filter(c => c.estado === "Pendiente").length || 0), 0);
-  const interviews = active.reduce((s, p) => s + (p.candidates?.filter(c => c.estado === "Primera entrevista" || c.estado === "Segunda entrevista").length || 0), 0);
-  const hired = active.reduce((s, p) => s + (p.candidates?.filter(c => c.estado === "Contratado").length || 0), 0);
   const newToday = active.reduce((s, p) => s + (p.candidates?.filter(c => {
     if (!c.submittedAt) return false;
-    const d = new Date(c.submittedAt);
-    const today = new Date();
-    return d.toDateString() === today.toDateString();
+    return new Date(c.submittedAt).toDateString() === new Date().toDateString();
   }).length || 0), 0);
 
-  const processLines = active.map(p => {
-    const total = p.candidates?.length || 0;
-    const pend = p.candidates?.filter(c => c.estado === "Pendiente").length || 0;
-    return `• *${p.position?.title || p.positionType || "Posición"}* — ${total} candidatos${pend > 0 ? `, ${pend} pendientes` : ""}`;
-  }).join("\n");
+  // One section block per active process
+  const processBlocks = active.flatMap(p => {
+    const title = getProcessTitle(p);
+    const company = p.company?.name ? ` · ${p.company.name}` : "";
+    const cs = p.candidates || [];
+    const total = cs.length;
+
+    const pending   = cs.filter(c => c.estado === "Pendiente").length;
+    const interview = cs.filter(c => c.estado === "Primera entrevista" || c.estado === "Segunda entrevista").length;
+    const hired     = cs.filter(c => c.estado === "Contratado").length;
+    const portfolio = cs.filter(c => c.estado === "En cartera").length;
+    const discarded = cs.filter(c => c.estado === "Descartado").length;
+
+    const tags = [
+      pending   > 0 ? `⏳ ${pending} pendiente${pending > 1 ? "s" : ""}` : null,
+      interview > 0 ? `🎤 ${interview} en entrevista` : null,
+      hired     > 0 ? `🎉 ${hired} contratado${hired > 1 ? "s" : ""}` : null,
+      portfolio > 0 ? `📁 ${portfolio} en cartera` : null,
+      discarded > 0 ? `❌ ${discarded} descartado${discarded > 1 ? "s" : ""}` : null,
+    ].filter(Boolean);
+
+    const summary = total === 0
+      ? "Sin candidatos aún"
+      : `${total} candidato${total !== 1 ? "s" : ""} — ${tags.length > 0 ? tags.join("  ·  ") : "sin etapa asignada"}`;
+
+    return [
+      {
+        type: "section",
+        text: { type: "mrkdwn", text: `*${title}*${company}\n${summary}` },
+      },
+    ];
+  });
 
   return {
     blocks: [
@@ -110,17 +152,12 @@ function buildDailyDigestMessage({ processes, date }) {
         type: "section",
         fields: [
           { type: "mrkdwn", text: `*Procesos activos:*\n${active.length}` },
-          { type: "mrkdwn", text: `*Nuevas solicitudes hoy:*\n${newToday}` },
           { type: "mrkdwn", text: `*Total en pipeline:*\n${totalCandidates}` },
-          { type: "mrkdwn", text: `*En entrevista:*\n${interviews}` },
-          { type: "mrkdwn", text: `*Pendientes de revisión:*\n${pending}` },
-          { type: "mrkdwn", text: `*Contratados:*\n${hired}` },
+          { type: "mrkdwn", text: `*Nuevas solicitudes hoy:*\n${newToday > 0 ? `🆕 ${newToday}` : "Ninguna"}` },
         ],
       },
-      ...(processLines ? [{
-        type: "section",
-        text: { type: "mrkdwn", text: `*Procesos:*\n${processLines}` },
-      }] : []),
+      { type: "divider" },
+      ...processBlocks,
       { type: "divider" },
       {
         type: "context",
