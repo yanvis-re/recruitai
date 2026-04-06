@@ -817,15 +817,38 @@ function SkipWarningModal({ warningKey, onConfirm, onCancel }) {
 }
 
 function OnboardingScreen({ user, onComplete }) {
-  const [step, setStep] = useState(0); // 0=welcome, 1=brand, 2=email, 3=slack, 4=done
-  const [brandManual, setBrandManual] = useState("");
-  const [emailConfig, setEmailConfig] = useState({ provider: "app" });
-  const [slackConfig, setSlackConfig] = useState({ webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } });
+  // ── Restore state from localStorage so a Slack OAuth redirect doesn't reset progress ──
+  const _saved = (() => { try { return JSON.parse(localStorage.getItem("recruitai_onboarding") || "{}"); } catch { return {}; } })();
+
+  const [step, setStep] = useState(_saved.step ?? 0);
+  const [brandManual, setBrandManual] = useState(_saved.brandManual || "");
+  const [emailConfig, setEmailConfig] = useState(_saved.emailConfig || { provider: "app" });
+  const [slackConfig, setSlackConfig] = useState(_saved.slackConfig || { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } });
   const [brandTab, setBrandTab] = useState("text");
   const [uploading, setUploading] = useState(false);
   const [skipWarning, setSkipWarning] = useState(null); // null | "all" | "brand" | "email" | "slack"
   const fileRef = useRef(null);
   const STEPS = ["Bienvenida", "Tu marca", "Email", "Slack", "¡Listo!"];
+
+  // Persist progress on every change so the Slack OAuth redirect doesn't lose it
+  useEffect(() => {
+    localStorage.setItem("recruitai_onboarding", JSON.stringify({ step, brandManual, emailConfig, slackConfig }));
+  }, [step, brandManual, emailConfig, slackConfig]);
+
+  // On mount: detect return from Slack OAuth (webhook URL in URL params)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const webhookUrl = params.get("slackWebhook");
+    const channel = params.get("slackChannel");
+    if (webhookUrl) {
+      setSlackConfig(s => ({ ...s, webhookUrl, channelName: channel || "" }));
+      setStep(3); // Jump to Slack step so user sees it connected
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    if (params.get("slackError")) {
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   // Map each skippable step to its warning key
   const STEP_WARNING_KEY = { 1: "brand", 2: "email", 3: "slack" };
@@ -851,7 +874,10 @@ function OnboardingScreen({ user, onComplete }) {
     setUploading(false);
   };
 
-  const finish = () => onComplete({ brandManual, emailConfig, slackConfig, onboardingCompleted: true });
+  const finish = () => {
+    localStorage.removeItem("recruitai_onboarding");
+    onComplete({ brandManual, emailConfig, slackConfig, onboardingCompleted: true });
+  };
   const next = () => setStep(s => s + 1);
   const back = () => setStep(s => s - 1);
 
@@ -1871,6 +1897,8 @@ export default function App() {
   // ── Slack OAuth callback: detect webhook URL returned from /api/slack/callback ──
   useEffect(() => {
     if (!user || !settingsLoaded) return;
+    // During onboarding, OnboardingScreen handles the callback itself
+    if (!agencySettings.onboardingCompleted) return;
     const params = new URLSearchParams(window.location.search);
     const slackConnected = params.get("slackConnected");
     const webhookUrl = params.get("slackWebhook");
