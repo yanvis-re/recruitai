@@ -111,28 +111,34 @@ function templateTest({ companyName }) {
 
 function getFromAddress(emailConfig) {
   const name = emailConfig.fromName || "Equipo de selección";
+  // "app" provider: uses app-level Resend account (env var), shared Resend domain
+  if (emailConfig.provider === "app") {
+    const fromDomain = process.env.FROM_EMAIL || "onboarding@resend.dev";
+    return `${name} <${fromDomain}>`;
+  }
+  if (emailConfig.provider === "resend_domain") return `${name} <${emailConfig.fromEmail}>`;
+  // Legacy fallbacks
   if (emailConfig.provider === "gmail") return `${name} <${emailConfig.gmailUser}>`;
   if (emailConfig.provider === "resend_shared") return `${name} <onboarding@resend.dev>`;
-  if (emailConfig.provider === "resend_domain") return `${name} <${emailConfig.fromEmail}>`;
   return null;
 }
 
-// ── Send via Gmail SMTP ──────────────────────────────────────────────────────
+// ── Send via Resend ──────────────────────────────────────────────────────────
+
+async function sendViaResend(apiKey, from, to, subject, html) {
+  const resend = new Resend(apiKey);
+  await resend.emails.send({ from, to, subject, html });
+}
+
+// ── Send via Gmail SMTP (legacy) ─────────────────────────────────────────────
 
 async function sendViaGmail(emailConfig, to, subject, html) {
   const transporter = nodemailer.createTransporter({
     service: "gmail",
     auth: { user: emailConfig.gmailUser, pass: emailConfig.gmailAppPassword },
   });
-  await transporter.sendMail({ from: getFromAddress(emailConfig), to, subject, html });
-}
-
-// ── Send via Resend ──────────────────────────────────────────────────────────
-
-async function sendViaResend(emailConfig, to, subject, html) {
-  const apiKey = emailConfig.resendApiKey || process.env.RESEND_API_KEY;
-  const resend = new Resend(apiKey);
-  await resend.emails.send({ from: getFromAddress(emailConfig), to, subject, html });
+  const from = getFromAddress(emailConfig);
+  await transporter.sendMail({ from, to, subject, html });
 }
 
 // ── Handler ──────────────────────────────────────────────────────────────────
@@ -144,7 +150,7 @@ export default async function handler(req, res) {
   const provider = emailConfig?.provider || "none";
 
   if (provider === "none") {
-    return res.status(400).json({ error: "Email provider not configured" });
+    return res.status(200).json({ success: false, error: "Email provider not configured" });
   }
 
   const TEMPLATE_MAP = {
@@ -164,13 +170,35 @@ export default async function handler(req, res) {
 
   // Determine recipient
   const to = type === "new_application_alert" ? data.recruiterEmail : data.candidateEmail;
-  if (!to) return res.status(400).json({ error: "No recipient email" });
+  if (!to) return res.status(200).json({ success: false, error: "No recipient email" });
 
   try {
-    if (provider === "gmail") {
+    const from = getFromAddress(emailConfig);
+
+    if (provider === "app") {
+      // App-level Resend: uses RESEND_API_KEY env var (set by developer in Vercel)
+      const apiKey = process.env.RESEND_API_KEY;
+      if (!apiKey) {
+        return res.status(200).json({ success: false, error: "RESEND_API_KEY not set in Vercel env vars. Add it in Vercel → Settings → Environment Variables." });
+      }
+      await sendViaResend(apiKey, from, to, template.subject, template.html);
+
+    } else if (provider === "resend_domain") {
+      // User's own Resend account + custom domain
+      const apiKey = emailConfig.resendApiKey;
+      if (!apiKey) return res.status(200).json({ success: false, error: "Missing Resend API key" });
+      await sendViaResend(apiKey, from, to, template.subject, template.html);
+
+    } else if (provider === "resend_shared") {
+      // Legacy: user's own Resend account, shared domain
+      const apiKey = emailConfig.resendApiKey || process.env.RESEND_API_KEY;
+      if (!apiKey) return res.status(200).json({ success: false, error: "Missing Resend API key" });
+      await sendViaResend(apiKey, from, to, template.subject, template.html);
+
+    } else if (provider === "gmail") {
+      // Legacy Gmail support
       await sendViaGmail(emailConfig, to, template.subject, template.html);
-    } else if (provider === "resend_shared" || provider === "resend_domain") {
-      await sendViaResend(emailConfig, to, template.subject, template.html);
+
     } else {
       return res.status(400).json({ error: `Unknown provider: ${provider}` });
     }
@@ -178,6 +206,6 @@ export default async function handler(req, res) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error("sendEmail error:", err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 }
