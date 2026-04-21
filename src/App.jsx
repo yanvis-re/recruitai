@@ -3199,6 +3199,138 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
   );
 }
 
+// ─── In-app feedback widget (beta testing channel) ──────────────────────────
+function FeedbackWidget({ user }) {
+  const [open, setOpen] = useState(false);
+  const [type, setType] = useState("idea");
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState("");
+
+  const reset = () => { setType("idea"); setMessage(""); setSent(false); setError(""); };
+  const close = () => { setOpen(false); setTimeout(reset, 200); };
+
+  const send = async (e) => {
+    e.preventDefault();
+    if (message.trim().length < 3) return;
+    setSending(true); setError("");
+    try {
+      const res = await fetch("/api/sendFeedback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type,
+          message: message.trim(),
+          url: window.location.href,
+          userAgent: navigator.userAgent || "",
+          userEmail: user?.email || "",
+          userName: user?.displayName || "",
+          viewport: `${window.innerWidth}×${window.innerHeight}`,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) throw new Error(json.error || "No se pudo enviar");
+      if (json.skipped) {
+        setError("El servicio de feedback aún no está configurado por el admin (FEEDBACK_SLACK_WEBHOOK).");
+      } else {
+        setSent(true);
+        setTimeout(close, 2200);
+      }
+    } catch (e) {
+      setError(e.message || "Error al enviar. Inténtalo de nuevo.");
+    }
+    setSending(false);
+  };
+
+  const TYPES = [
+    { id: "bug",      icon: "🐛", label: "Bug",      hint: "Algo no funciona" },
+    { id: "idea",     icon: "💡", label: "Idea",     hint: "Propuesta de mejora" },
+    { id: "confused", icon: "😕", label: "Confuso",  hint: "No lo entiendo" },
+    { id: "love",     icon: "❤️", label: "Me gusta", hint: "Algo que funciona" },
+  ];
+
+  return (
+    <>
+      {/* Floating launcher */}
+      <button onClick={() => setOpen(true)}
+        className="fixed bottom-5 right-5 z-40 bg-gray-900 text-white rounded-full shadow-lg px-4 py-3 font-bold text-sm hover:bg-gray-800 hover:shadow-xl transition-all flex items-center gap-2">
+        <span>💬</span><span className="hidden sm:inline">Feedback</span>
+      </button>
+
+      {/* Modal */}
+      {open && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={close}>
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-5 border-b border-gray-100 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-bold text-gray-900 text-lg">💬 Envía feedback</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Tu feedback llega directo a nuestro Slack. Lo leemos al momento.</p>
+              </div>
+              <button onClick={close} className="text-gray-400 hover:text-gray-900 text-2xl leading-none shrink-0">×</button>
+            </div>
+
+            {sent ? (
+              <div className="p-10 text-center">
+                <div className="text-5xl mb-3">✅</div>
+                <p className="text-xl font-bold text-gray-900">Feedback enviado</p>
+                <p className="text-sm text-gray-500 mt-2 leading-relaxed">Gracias por ayudarnos a mejorar RecruitAI. Lo revisaremos enseguida.</p>
+              </div>
+            ) : (
+              <form onSubmit={send} className="flex-1 overflow-y-auto p-6 space-y-4">
+                <div>
+                  <label className={lbl}>Tipo de feedback</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-1">
+                    {TYPES.map(t => (
+                      <button key={t.id} type="button" onClick={() => setType(t.id)}
+                        className={`p-3 rounded-xl border-2 text-left transition-all ${
+                          type === t.id ? "border-gray-900 bg-gray-900" : "border-gray-200 bg-white hover:border-gray-400"
+                        }`}>
+                        <div className="text-xl mb-1">{t.icon}</div>
+                        <p className={`text-xs font-bold ${type === t.id ? "text-white" : "text-gray-900"}`}>{t.label}</p>
+                        <p className={`text-[10px] mt-0.5 leading-tight ${type === t.id ? "text-white/70" : "text-gray-500"}`}>{t.hint}</p>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className={lbl}>Cuéntanos (lo más específico mejor)</label>
+                  <textarea className={inp} rows={6}
+                    value={message} onChange={e => setMessage(e.target.value)}
+                    placeholder={
+                      type === "bug" ? "¿Qué pasó? ¿Qué esperabas que pasara? Si puedes, los pasos para reproducirlo..."
+                      : type === "idea" ? "¿Qué se puede mejorar? ¿Qué te falta? ¿Cómo te ayudaría?"
+                      : type === "confused" ? "¿Qué no se entiende? ¿Qué esperabas que hiciera esta pantalla o botón?"
+                      : "¿Qué te ha gustado? ¿Qué ha funcionado bien?"
+                    }
+                    autoFocus />
+                  <p className="text-xs text-gray-400 mt-1.5">{message.trim().length} caracteres · mínimo 3</p>
+                </div>
+
+                <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    Adjuntamos automáticamente: tu nombre, email, URL de la pantalla actual y datos del navegador — para diagnosticar mejor los bugs.
+                  </p>
+                </div>
+
+                {error && (
+                  <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 text-sm text-red-700">{error}</div>
+                )}
+
+                <button type="submit" disabled={sending || message.trim().length < 3}
+                  className="w-full py-3.5 bg-gray-900 text-white rounded-xl font-bold hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                  {sending ? "Enviando..." : "Enviar feedback"}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 // ─── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [publicProcessId] = useState(() => { const m = window.location.hash.match(/^#apply\/(.+)$/); return m ? m[1] : null; });
@@ -3374,6 +3506,7 @@ export default function App() {
   return (
     <>
       {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />}
+      <FeedbackWidget user={user} />
       {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={() => setShowSettings(true)} agencySettings={agencySettings} />}
       {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={() => setShowSettings(true)} />; })()}
       {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onBack={goToDashboard} />}
