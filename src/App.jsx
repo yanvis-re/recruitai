@@ -835,13 +835,74 @@ function SkipWarningModal({ warningKey, onConfirm, onCancel }) {
   );
 }
 
+// ─── Brand-manual generator: 9 conversational prompts fed to Claude ──────────
+const BRAND_GEN_QUESTIONS = [
+  { id: "name", title: "¿Cómo se llama tu agencia?", subtitle: "El nombre que quieres que aparezca en el manual.", placeholder: "Proelia Digital, Rumbo Eficiente, Acme Studio...", minLength: 2, rows: 1 },
+  { id: "history", title: "¿Cómo nació tu agencia y por qué existe hoy?", subtitle: "Desde dónde empezasteis, qué os movió a montar algo distinto, qué problema veíais que nadie resolvía bien.", placeholder: "Empezamos en 2020 porque veíamos que las agencias cobraban fortunas y entregaban cosas mediocres...", minLength: 30, rows: 5 },
+  { id: "whatYouDo", title: "¿Qué hacéis, para quién, y qué consiguen trabajando con vosotros?", subtitle: "Lo más específico posible. Sectores, tipo de cliente, resultados medibles si puedes.", placeholder: "Llevamos paid media de ecommerce ya validados hasta 7 cifras. Nuestros clientes duplican ingresos en 12 meses...", minLength: 30, rows: 4 },
+  { id: "differentiator", title: "¿Qué os hace diferentes de otras agencias parecidas?", subtitle: "2-3 cosas concretas con evidencia, método o experiencia detrás. No frases genéricas.", placeholder: "18M invertidos y 50M generados en 2024. Trabajamos con máximo 8 clientes a la vez. Te atiende el CEO, no un becario...", minLength: 30, rows: 4 },
+  { id: "values", title: "¿Cuáles son los 3-4 valores innegociables en vuestro equipo?", subtitle: "Cada uno con una frase explicándolo. Los que si alguien no los comparte, no encaja.", placeholder: "Libertad: nadie vino al mundo para cumplir horarios eternos. Disciplina: sin esfuerzo no hay magia. Honestidad: no prometemos lo que no podemos entregar...", minLength: 40, rows: 5 },
+  { id: "idealClient", title: "Describe a vuestro cliente perfecto", subtitle: "Cómo es, qué le preocupa, qué quiere conseguir. Cuanto más específico mejor — nombre tipo, edad, negocio, contexto vital.", placeholder: "Fundadores de ecommerce o SaaS, 35-45 años, facturan 500k-5M, están quemados haciendo marketing a medias, necesitan un socio que les lleve la parte...", minLength: 40, rows: 5 },
+  { id: "tone", title: "¿Cómo os gusta comunicaros?", subtitle: "Directos, cercanos, con humor, formales... y dame la primera línea de un email que escribirías a un cliente nuevo.", placeholder: "Somos cercanos y directos. Evitamos corporate speak. Un email típico: 'Hola Ana, he visto tu anuncio en Meta y tengo 3 observaciones rápidas que te pueden subir el ROAS...'", minLength: 30, rows: 5 },
+  { id: "redFlags", title: "¿Qué conductas harían que despidierais a un fichaje en su primer mes?", subtitle: "2-3 ejemplos concretos. Los 'no negociables' de comportamiento en el equipo.", placeholder: "Faltar a reuniones sin avisar. Entregar tarde sin pedir ayuda antes. Hablar mal de un cliente en Slack...", minLength: 20, rows: 4 },
+  { id: "idealProfile", title: "¿Qué tipo de persona encaja en vuestro equipo?", subtitle: "Actitud, mentalidad, soft skills. Más allá del CV — qué actitud buscas en el día a día.", placeholder: "Proactivos. Curiosos. Capaces de escribir un email claro en 10 minutos sin que el CEO los revise. Con criterio propio. Que pregunten cuando no saben...", minLength: 30, rows: 5 },
+];
+
+// ── Markdown → DOCX converter with dynamic import of `docx` library ──────────
+async function downloadBrandAsDocx(markdownContent, agencyName) {
+  const { Document, Packer, Paragraph, HeadingLevel, TextRun, AlignmentType } = await import("docx");
+
+  const makeRuns = (text) => {
+    // Parse inline **bold** into TextRun list
+    const parts = text.split(/(\*\*[^*]+\*\*)/);
+    const runs = [];
+    for (const p of parts) {
+      if (!p) continue;
+      if (p.startsWith("**") && p.endsWith("**")) runs.push(new TextRun({ text: p.slice(2, -2), bold: true }));
+      else runs.push(new TextRun({ text: p }));
+    }
+    return runs;
+  };
+
+  const children = [];
+  for (const rawLine of markdownContent.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) { children.push(new Paragraph({ children: [] })); continue; }
+    if (line.startsWith("# ")) {
+      children.push(new Paragraph({ text: line.slice(2), heading: HeadingLevel.HEADING_1, alignment: AlignmentType.LEFT, spacing: { before: 200, after: 200 } }));
+    } else if (line.startsWith("## ")) {
+      children.push(new Paragraph({ text: line.slice(3), heading: HeadingLevel.HEADING_2, spacing: { before: 280, after: 120 } }));
+    } else if (line.startsWith("### ")) {
+      children.push(new Paragraph({ text: line.slice(4), heading: HeadingLevel.HEADING_3, spacing: { before: 200, after: 80 } }));
+    } else if (line.startsWith("- ") || line.startsWith("* ")) {
+      children.push(new Paragraph({ children: makeRuns(line.slice(2)), bullet: { level: 0 } }));
+    } else {
+      children.push(new Paragraph({ children: makeRuns(line) }));
+    }
+  }
+
+  const doc = new Document({ sections: [{ children }] });
+  const blob = await Packer.toBlob(doc);
+  const safe = (agencyName || "agencia").replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `manual_de_marca_${safe}.docx`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 // ─── Conversational onboarding (Rumbo-style: one question per screen) ────────
 function OnboardingScreen({ user, onComplete }) {
   const _saved = (() => { try { return JSON.parse(localStorage.getItem("recruitai_onboarding") || "{}"); } catch { return {}; } })();
 
   const [step, setStep] = useState(_saved.step ?? 0);
-  const [brandChoice, setBrandChoice] = useState(_saved.brandChoice || "");   // "paste" | "upload" | "skip"
+  const [brandChoice, setBrandChoice] = useState(_saved.brandChoice || "");   // "paste" | "upload" | "generate" | "skip"
   const [brandManual, setBrandManual] = useState(_saved.brandManual || "");
+  const [brandAnswers, setBrandAnswers] = useState(_saved.brandAnswers || {}); // { name, history, whatYouDo, ... }
+  const [generatedManual, setGeneratedManual] = useState(_saved.generatedManual || "");
+  const [generating, setGenerating] = useState(false);
+  const [generateError, setGenerateError] = useState("");
   const [emailProvider, setEmailProvider] = useState(_saved.emailProvider || ""); // "app" | "resend_domain"
   const [fromName, setFromName] = useState(_saved.fromName || "");
   const [resendApiKey, setResendApiKey] = useState(_saved.resendApiKey || "");
@@ -857,11 +918,18 @@ function OnboardingScreen({ user, onComplete }) {
   const flow = (() => {
     const f = [{ id: "welcome" }];
     // Section 1 — Tu marca
-    const brandDone = brandChoice === "skip" || (brandChoice && brandManual.trim());
-    const brandTotal = (brandChoice && brandChoice !== "skip") ? 2 : 1;
+    let brandTotal = 1; // just the choice
+    if (brandChoice === "paste" || brandChoice === "upload") brandTotal = 2;
+    if (brandChoice === "generate") brandTotal = 1 + BRAND_GEN_QUESTIONS.length + 1; // choice + 9 questions + result
     f.push({ id: "brand_choice", section: "🎨 Tu marca", n: 1, total: brandTotal });
-    if (brandChoice && brandChoice !== "skip") {
+    if (brandChoice === "paste" || brandChoice === "upload") {
       f.push({ id: "brand_content", section: "🎨 Tu marca", n: 2, total: 2 });
+    }
+    if (brandChoice === "generate") {
+      BRAND_GEN_QUESTIONS.forEach((q, i) => {
+        f.push({ id: `gen_${q.id}`, section: "🎨 Tu marca", n: 2 + i, total: brandTotal });
+      });
+      f.push({ id: "brand_gen_result", section: "🎨 Tu marca", n: brandTotal, total: brandTotal });
     }
     // Section 2 — Emails a candidatos
     const emailTotal = emailProvider ? 2 : 1;
@@ -884,9 +952,10 @@ function OnboardingScreen({ user, onComplete }) {
 
   useEffect(() => {
     localStorage.setItem("recruitai_onboarding", JSON.stringify({
-      step: safeStep, brandChoice, brandManual, emailProvider, fromName, resendApiKey, fromEmail, slackChoice, slackConfig, fileName,
+      step: safeStep, brandChoice, brandManual, brandAnswers, generatedManual,
+      emailProvider, fromName, resendApiKey, fromEmail, slackChoice, slackConfig, fileName,
     }));
-  }, [safeStep, brandChoice, brandManual, emailProvider, fromName, resendApiKey, fromEmail, slackChoice, slackConfig, fileName]);
+  }, [safeStep, brandChoice, brandManual, brandAnswers, generatedManual, emailProvider, fromName, resendApiKey, fromEmail, slackChoice, slackConfig, fileName]);
 
   // Return from Slack OAuth redirect — jump to the connect question
   useEffect(() => {
@@ -944,20 +1013,59 @@ function OnboardingScreen({ user, onComplete }) {
     const finalSlack = slackChoice === "connect"
       ? slackConfig
       : { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } };
+    // Pick the right brand manual source: pasted/uploaded, generated by AI, or skipped.
+    const finalBrandManual =
+      brandChoice === "skip" ? ""
+      : brandChoice === "generate" ? (generatedManual || "")
+      : brandManual;
     onComplete({
-      brandManual: brandChoice !== "skip" ? brandManual : "",
+      brandManual: finalBrandManual,
       emailConfig: finalEmailConfig,
       slackConfig: finalSlack,
       onboardingCompleted: true,
     });
   };
 
+  // Auto-fire generation when the user first lands on the result screen.
+  // The effect is keyed to current.id so it only runs on step transition.
+  useEffect(() => {
+    if (current.id === "brand_gen_result" && !generatedManual && !generating && !generateError) {
+      runGenerateBrand();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current.id]);
+
+  // Call the server to generate the brand manual from the 9 answers.
+  const runGenerateBrand = async () => {
+    setGenerating(true); setGenerateError("");
+    try {
+      const res = await fetch("/api/generateBrand", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answers: brandAnswers, agencyName: brandAnswers.name || "" }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) throw new Error(json.error || "Error desconocido");
+      setGeneratedManual(json.manual || "");
+    } catch (e) {
+      setGenerateError(e.message || "No se pudo generar el manual. Inténtalo de nuevo.");
+    }
+    setGenerating(false);
+  };
+
   // ── Validate current step ──────────────────────────────────────────────────
   const canAdvance = (() => {
+    if (current.id.startsWith("gen_")) {
+      const qKey = current.id.slice(4);
+      const q = BRAND_GEN_QUESTIONS.find(x => x.id === qKey);
+      const answer = brandAnswers[qKey] || "";
+      return answer.trim().length >= (q?.minLength || 10);
+    }
     switch (current.id) {
       case "welcome": return true;
       case "brand_choice": return !!brandChoice;
       case "brand_content": return brandManual.trim().length > 10;
+      case "brand_gen_result": return !!generatedManual && !generating;
       case "email_choice": return !!emailProvider;
       case "email_details":
         if (emailProvider === "app") return true; // fromName is optional
@@ -989,6 +1097,96 @@ function OnboardingScreen({ user, onComplete }) {
   );
 
   const renderQuestion = () => {
+    // ── Dynamic brand-generation questions ───────────────────────────────────
+    if (current.id.startsWith("gen_")) {
+      const qKey = current.id.slice(4);
+      const q = BRAND_GEN_QUESTIONS.find(x => x.id === qKey);
+      if (!q) return null;
+      const value = brandAnswers[qKey] || "";
+      const Input = q.rows > 1 ? "textarea" : "input";
+      return (
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">{q.title}</h2>
+          <p className="text-gray-500 mb-5 leading-relaxed">{q.subtitle}</p>
+          <Input
+            className={inp}
+            {...(q.rows > 1 ? { rows: q.rows } : { type: "text" })}
+            value={value}
+            onChange={e => setBrandAnswers(a => ({ ...a, [qKey]: e.target.value }))}
+            placeholder={q.placeholder}
+          />
+          <p className="text-xs text-gray-400 mt-2">
+            {value.trim().length} caracteres · mínimo {q.minLength}
+          </p>
+        </div>
+      );
+    }
+
+    // ── Brand generation result screen ───────────────────────────────────────
+    if (current.id === "brand_gen_result") {
+      return (
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">
+            {generating ? "✨ Generando tu manual..." : generateError ? "⚠️ Algo falló" : "✅ Tu manual está listo"}
+          </h2>
+          <p className="text-gray-500 mb-5 leading-relaxed">
+            {generating
+              ? "Estoy escribiendo un manual de ~2000 palabras con tu voz y estructura. Esto tarda 20-40 segundos."
+              : generateError
+                ? "La IA no pudo generar el manual esta vez. Puedes reintentar o volver atrás a revisar las respuestas."
+                : "Puedes editarlo aquí, descargarlo como .docx para compartir con tu equipo, o continuar tal cual."}
+          </p>
+
+          {generating && (
+            <div className="bg-gray-50 border border-gray-100 rounded-2xl p-8 flex items-center justify-center">
+              <div className="flex items-center gap-3 text-gray-600">
+                <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+                <span className="text-sm">Redactando tu manual...</span>
+              </div>
+            </div>
+          )}
+
+          {generateError && (
+            <div className="space-y-3">
+              <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">{generateError}</div>
+              <button onClick={runGenerateBrand}
+                className="w-full py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
+                🔄 Reintentar
+              </button>
+            </div>
+          )}
+
+          {generatedManual && !generating && (
+            <>
+              <textarea
+                className={inp + " font-mono text-xs"}
+                rows={14}
+                value={generatedManual}
+                onChange={e => setGeneratedManual(e.target.value)}
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                {generatedManual.split(/\s+/).filter(Boolean).length} palabras · puedes editarlo antes de continuar
+              </p>
+              <div className="flex flex-wrap gap-2 mt-4">
+                <button onClick={() => downloadBrandAsDocx(generatedManual, brandAnswers.name)}
+                  className="flex-1 min-w-[140px] py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 transition-colors">
+                  📥 Descargar .docx
+                </button>
+                <button onClick={() => { navigator.clipboard.writeText(generatedManual); }}
+                  className="py-3 px-4 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50">
+                  📋 Copiar
+                </button>
+                <button onClick={() => { setGeneratedManual(""); setGenerateError(""); runGenerateBrand(); }}
+                  className="py-3 px-4 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50">
+                  🔄 Regenerar
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      );
+    }
+
     switch (current.id) {
       case "welcome":
         return (
@@ -1016,6 +1214,8 @@ function OnboardingScreen({ user, onComplete }) {
                 icon="✏️" title="Sí, lo escribo o lo pego" subtitle="Copia-pega el texto o escríbelo a mano" />
               <ChoiceCard selected={brandChoice === "upload"} onClick={() => setBrandChoice("upload")}
                 icon="📄" title="Sí, lo subo como documento" subtitle="Extraigo el texto automáticamente de un .pdf, .docx o .txt" />
+              <ChoiceCard selected={brandChoice === "generate"} onClick={() => setBrandChoice("generate")}
+                icon="✨" title="No tengo manual, créalo conmigo" subtitle="Respondes 9 preguntas y la IA genera un manual completo basado en tus respuestas. Podrás descargarlo." badge="Nuevo" />
               <ChoiceCard selected={brandChoice === "skip"} onClick={() => setBrandChoice("skip")}
                 icon="⏭" title="Aún no, lo configuro más tarde" subtitle="Podrás añadirlo en ⚙️ Configuración cuando quieras" />
             </div>
@@ -1179,7 +1379,12 @@ function OnboardingScreen({ user, onComplete }) {
             </div>
             <div className="bg-gray-50 rounded-2xl p-5 text-left space-y-2">
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Resumen</p>
-              <p className="text-sm text-gray-800">{brandManual ? "✅" : "⚪"} Manual de marca {brandManual ? `(${brandManual.split(/\s+/).filter(Boolean).length} palabras)` : "— pendiente"}</p>
+              {(() => {
+                const effective = brandChoice === "generate" ? generatedManual : brandManual;
+                const words = effective ? effective.split(/\s+/).filter(Boolean).length : 0;
+                const source = brandChoice === "generate" ? "generado con IA" : brandChoice === "upload" ? "desde documento" : brandChoice === "paste" ? "añadido a mano" : "";
+                return <p className="text-sm text-gray-800">{effective ? "✅" : "⚪"} Manual de marca {effective ? `(${words} palabras · ${source})` : "— pendiente"}</p>;
+              })()}
               <p className="text-sm text-gray-800">{emailProvider === "app" ? "✅ Email · RecruitAI Mail" : emailProvider === "resend_domain" ? "✅ Email · dominio propio" : "⚪ Email — pendiente"}</p>
               <p className="text-sm text-gray-800">{slackConfig.webhookUrl ? "✅ Slack conectado" : "⚪ Slack — pendiente"}</p>
             </div>
