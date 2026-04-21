@@ -150,6 +150,7 @@ const defaultJob = {
   schedulingUrl: "",
 };
 
+// ─── Conversational process-creation flow (same DNA as OnboardingScreen) ─────
 function RecruiterSetupScreen({ onPublish, onBack }) {
   const [step, setStep] = useState(0);
   const [data, setData] = useState(defaultJob);
@@ -164,133 +165,413 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
   const addCr = (eid) => setData(d => ({ ...d, exercises: d.exercises.map(e => e.id === eid ? { ...e, criteria: [...e.criteria, { area: "", indicators: "", maxScore: 5 }] } : e) }));
   const delCr = (eid, i) => setData(d => ({ ...d, exercises: d.exercises.map(e => e.id === eid ? { ...e, criteria: e.criteria.filter((_, j) => j !== i) } : e) }));
   const upCr = (eid, i, f, v) => setData(d => ({ ...d, exercises: d.exercises.map(e => e.id === eid ? { ...e, criteria: e.criteria.map((c, j) => j === i ? { ...c, [f]: v } : c) } : e) }));
-  const tabs = ["Empresa", "Posición", "Ejercicios"];
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="bg-white border-b border-gray-100 sticky top-0 z-10">
-        <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-3">
-          <button onClick={onBack} className="text-gray-400 hover:text-gray-600 text-sm">← Volver al panel</button>
-          <div className="w-px h-4 bg-gray-200" />
-          <span className="text-2xl font-black text-gray-900">RecruitAI</span>
+
+  // Linear flow: intro (not counted) + 7 numbered sections
+  const FLOW = [
+    { id: "intro" },
+    { id: "company",           section: "🏢 Empresa",   n: 1, total: 7 },
+    { id: "position_type",     section: "👤 Posición",  n: 2, total: 7 },
+    { id: "position_details",  section: "👤 Posición",  n: 3, total: 7 },
+    { id: "position_contract", section: "👤 Posición",  n: 4, total: 7 },
+    { id: "scheduling",        section: "🗓 Agenda",     n: 5, total: 7 },
+    { id: "exercises",         section: "🎯 Ejercicios", n: 6, total: 7 },
+    { id: "review",            section: "✅ Revisión",    n: 7, total: 7 },
+  ];
+  const current = FLOW[step];
+
+  const canAdvance = (() => {
+    switch (current.id) {
+      case "intro": return true;
+      case "company": return !!data.company.name.trim();
+      case "position_type":
+        return !!data.position.positionType
+          && (data.position.positionType !== "otro" || !!(data.position.customTitle || "").trim());
+      case "position_details": return true;
+      case "position_contract": return !!data.position.contract;
+      case "scheduling": return true;
+      case "exercises":
+        return data.exercises.length > 0
+          && data.exercises.every(e => e.title.trim().length > 0 && e.description.trim().length >= 10);
+      case "review": return true;
+      default: return true;
+    }
+  })();
+
+  const next = () => setStep(s => Math.min(s + 1, FLOW.length - 1));
+  const back = () => setStep(s => Math.max(0, s - 1));
+  const jumpTo = (id) => { const i = FLOW.findIndex(f => f.id === id); if (i >= 0) setStep(i); };
+
+  // ── Shared card primitive for option grids (same DNA as onboarding) ────────
+  const OptionCard = ({ selected, onClick, icon, title, subtitle, compact }) => (
+    <button type="button" onClick={onClick}
+      className={`w-full text-left rounded-2xl border-2 transition-all ${compact ? "p-3" : "p-4"} ${
+        selected ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 bg-white hover:border-gray-400"
+      }`}>
+      <div className="flex items-start gap-2.5">
+        {icon && <div className={compact ? "text-lg shrink-0" : "text-xl shrink-0"}>{icon}</div>}
+        <div className="flex-1 min-w-0">
+          <p className={`font-bold ${compact ? "text-xs" : "text-sm"} ${selected ? "text-white" : "text-gray-900"}`}>{title}</p>
+          {subtitle && <p className={`${compact ? "text-[11px]" : "text-xs"} mt-0.5 leading-snug ${selected ? "text-white/80" : "text-gray-500"}`}>{subtitle}</p>}
         </div>
       </div>
-      <div className="max-w-3xl mx-auto p-6">
-        <div className="flex gap-2 mb-6">
-          {tabs.map((t, i) => <button key={t} onClick={() => i < step && setStep(i)} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${i === step ? "bg-gray-900 text-white shadow" : i < step ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}`}>{i < step ? "✓ " : ""}{t}</button>)}
-        </div>
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-          {step === 0 && (
-            <div className="space-y-4">
-              <h2 className="font-bold text-gray-800 mb-4">Información de la empresa contratadora</h2>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2"><label className={lbl}>Nombre de la empresa *</label><input className={inp} value={data.company.name} onChange={e => upC("name", e.target.value)} /></div>
-                <div className="col-span-2"><label className={lbl}>Descripción</label><textarea className={inp} rows={3} value={data.company.description} onChange={e => upC("description", e.target.value)} /></div>
-                <div><label className={lbl}>Sector</label><input className={inp} value={data.company.sector} onChange={e => upC("sector", e.target.value)} /></div>
-                <div><label className={lbl}>Ubicación</label><input className={inp} value={data.company.location} onChange={e => upC("location", e.target.value)} /></div>
-                <div><label className={lbl}>Modalidad</label><select className={inp} value={data.company.modality} onChange={e => upC("modality", e.target.value)}>{["Remoto", "Presencial", "Híbrido"].map(m => <option key={m}>{m}</option>)}</select></div>
-              </div>
+    </button>
+  );
+
+  const renderQuestion = () => {
+    switch (current.id) {
+      case "intro":
+        return (
+          <div className="text-center py-6 space-y-5">
+            <div className="text-6xl">📝</div>
+            <div>
+              <h2 className="text-3xl font-black text-gray-900 tracking-tight">Vamos a crear un nuevo proceso</h2>
+              <p className="text-gray-500 mt-3 leading-relaxed">
+                Te guío paso a paso. En ~5 minutos tendrás tu oferta lista para publicar y recibir candidatos.
+              </p>
             </div>
-          )}
-          {step === 1 && (
-            <div className="space-y-5">
-              <h2 className="font-bold text-gray-800">Posición y requisitos</h2>
+            <div className="pt-2 grid grid-cols-3 gap-2 text-xs text-gray-400">
+              <div><span className="font-bold text-gray-700 block">🏢</span>Empresa</div>
+              <div><span className="font-bold text-gray-700 block">👤</span>Posición</div>
+              <div><span className="font-bold text-gray-700 block">🎯</span>Ejercicios</div>
+            </div>
+          </div>
+        );
+
+      case "company":
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Cuéntame sobre la empresa contratadora</h2>
+            <p className="text-gray-500 mb-6 leading-relaxed">Los datos básicos. El candidato verá esta información en la oferta pública.</p>
+            <div className="space-y-4">
               <div>
-                <label className={lbl}>Tipo de posición *</label>
+                <label className={lbl}>Nombre de la empresa *</label>
+                <input className={inp} value={data.company.name} onChange={e => upC("name", e.target.value)} placeholder="Proelia Digital" />
+              </div>
+              <div>
+                <label className={lbl}>Descripción corta</label>
+                <textarea className={inp} rows={3} value={data.company.description} onChange={e => upC("description", e.target.value)} placeholder="Agencia de paid media especializada en infoproductos..." />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className={lbl}>Sector</label><input className={inp} value={data.company.sector} onChange={e => upC("sector", e.target.value)} placeholder="Marketing digital" /></div>
+                <div><label className={lbl}>Ubicación</label><input className={inp} value={data.company.location} onChange={e => upC("location", e.target.value)} placeholder="Madrid / Remoto" /></div>
+              </div>
+              <div>
+                <label className={lbl}>Modalidad de trabajo</label>
                 <div className="grid grid-cols-3 gap-2 mt-1">
-                  {POSITIONS.map(pos => (
-                    <button key={pos.id} type="button" onClick={() => { upP("positionType", pos.id); upP("specialty", ""); }}
-                      className={`p-3 rounded-xl border-2 text-left transition-all ${data.position.positionType === pos.id ? "border-gray-900 bg-gray-50" : "border-gray-200 hover:border-gray-300"}`}>
-                      <div className="text-xl mb-1">{pos.icon}</div>
-                      <p className={`text-xs font-semibold leading-tight ${data.position.positionType === pos.id ? "text-gray-800" : "text-gray-700"}`}>{pos.label}</p>
-                    </button>
+                  {[["Remoto", "🏠"], ["Presencial", "🏢"], ["Híbrido", "🔀"]].map(([m, ic]) => (
+                    <OptionCard key={m} compact icon={ic} title={m}
+                      selected={data.company.modality === m}
+                      onClick={() => upC("modality", m)} />
                   ))}
                 </div>
               </div>
-              {(() => { const pos = POSITIONS.find(p => p.id === data.position.positionType); return pos && pos.specialties.length > 0 ? (<div><label className={lbl}>Especialidad</label><div className="flex flex-wrap gap-2 mt-1">{pos.specialties.map(sp => (<button key={sp} type="button" onClick={() => upP("specialty", data.position.specialty === sp ? "" : sp)} className={`px-3 py-1.5 rounded-lg text-sm font-medium border-2 transition-all ${data.position.specialty === sp ? "border-gray-900 bg-gray-50 text-gray-800" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}>{sp}</button>))}</div></div>) : null; })()}
-              {data.position.positionType === "otro" && (<div><label className={lbl}>Nombre personalizado *</label><input className={inp} value={data.position.customTitle || ""} onChange={e => upP("customTitle", e.target.value)} placeholder="ej. Growth Hacker..." /></div>)}
-              <div><label className={lbl}>Responsabilidades</label><textarea className={inp} rows={3} value={data.position.responsibilities} onChange={e => upP("responsibilities", e.target.value)} /></div>
-              <div><label className={lbl}>Habilidades requeridas</label><textarea className={inp} rows={2} value={data.position.skills} onChange={e => upP("skills", e.target.value)} /></div>
-              <div className="border border-gray-200 rounded-xl p-4 space-y-4 bg-gray-50">
-                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Condiciones del contrato</p>
-                <div>
-                  <label className={lbl}>Tipo de relación contractual *</label>
-                  <div className="flex gap-3 mt-1">
-                    {[["Freelance", "🤝 Freelance"], ["Contrato directo", "📄 Contrato directo"]].map(([val, label]) => (
-                      <button key={val} type="button" onClick={() => upP("contract", val)} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border-2 transition-all ${data.position.contract === val ? "border-gray-900 bg-gray-50 text-gray-800" : "border-gray-200 text-gray-500 hover:border-gray-200"}`}>{label}</button>
-                    ))}
-                  </div>
-                </div>
-                <SalaryWidget positionType={data.position.positionType} contract={data.position.contract} onApplyRanges={applySalary} />
-                {salaryApplied && (<div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700 font-medium"><span>✅</span> Rango aplicado</div>)}
-                <div className="grid grid-cols-3 gap-3">
-                  <div><label className={lbl}>Moneda</label><select className={inp} value={data.company.currency} onChange={e => upC("currency", e.target.value)}>{["EUR", "USD", "GBP", "MXN"].map(m => <option key={m}>{m}</option>)}</select></div>
-                  <div><label className={lbl}>Salario mín./año</label><input className={inp} type="number" value={data.company.salaryMin} onChange={e => upC("salaryMin", e.target.value)} /></div>
-                  <div><label className={lbl}>Salario máx./año</label><input className={inp} type="number" value={data.company.salaryMax} onChange={e => upC("salaryMax", e.target.value)} /></div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div><label className={lbl}>Horas semanales (máx. 40h)</label><input className={inp} type="number" min={1} max={40} value={data.position.hoursPerWeek} onChange={e => upP("hoursPerWeek", Math.min(40, parseInt(e.target.value) || 0).toString())} /></div>
-                  <div><label className={lbl}>Horario</label><div className="flex flex-col gap-1.5 mt-1">{[["Mañanas", "🌅"], ["Tardes", "🌆"], ["Flexible", "🕐"]].map(([h, icon]) => (<button key={h} type="button" onClick={() => upP("schedule", h)} className={`py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${data.position.schedule === h ? "border-gray-900 bg-gray-50 text-gray-800" : "border-gray-200 text-gray-500"}`}>{icon} {h}</button>))}</div></div>
-                </div>
-                <div><label className={lbl}>Años de experiencia</label><input className={inp} type="number" min={0} max={20} value={data.position.experience} onChange={e => upP("experience", e.target.value)} /></div>
-                <div><label className={lbl}>Otros beneficios</label><textarea className={inp} rows={2} value={data.position.benefits} onChange={e => upP("benefits", e.target.value)} /></div>
-              </div>
-              <div className="border border-gray-100 rounded-xl p-4 space-y-3 bg-gray-50">
-                <p className="text-xs font-bold text-gray-800 uppercase tracking-wide">🗓 Agenda para este proceso</p>
-                <div>
-                  <label className={lbl}>Link de agendamiento (opcional)</label>
-                  <input
-                    className={inp}
-                    type="url"
-                    value={data.schedulingUrl || ""}
-                    onChange={e => upTop("schedulingUrl", e.target.value)}
-                    placeholder="https://cal.com/tu-usuario/entrevista"
-                  />
-                  <p className="text-xs text-gray-500 mt-1.5">Si lo configuras, cuando marques un candidato como <strong>"Segunda entrevista"</strong> o <strong>"Contratado"</strong> en este proceso, el email incluirá un botón para que agende directamente. Compatible con Cal.com, Calendly, TidyCal, SavvyCal, Google Appointments, etc.</p>
-                </div>
-              </div>
             </div>
-          )}
-          {step === 2 && (
-            <div>
-              <div className="flex justify-between items-center mb-2">
-                <h2 className="font-bold text-gray-800">Ejercicios prácticos</h2>
-                <button onClick={addEx} className="text-sm bg-gray-50 text-gray-900 px-4 py-1.5 rounded-lg font-medium hover:bg-gray-100">+ Añadir ejercicio</button>
-              </div>
-              <p className="text-xs text-gray-400 mb-4">Cada ejercicio requiere respuesta escrita + vídeo de defensa en Loom.</p>
-              {data.exercises.map(ex => (
-                <div key={ex.id} className="border border-gray-200 rounded-xl p-4 mb-4 bg-gray-50">
-                  <div className="flex items-center gap-2 mb-3">
-                    <input className="flex-1 bg-transparent border-b border-dashed border-gray-300 text-sm font-bold text-gray-800 focus:outline-none pb-1" value={ex.title} onChange={e => upEx(ex.id, "title", e.target.value)} />
-                    {data.exercises.length > 1 && <button onClick={() => delEx(ex.id)} className="text-red-300 hover:text-red-500 text-xl">×</button>}
-                  </div>
-                  <div className="mb-4">
-                    <label className={lbl}>Enunciado del ejercicio</label>
-                    <textarea className={inp + " bg-white"} rows={4} value={ex.description} onChange={e => upEx(ex.id, "description", e.target.value)} placeholder="Describe el reto que el candidato deberá resolver..." />
-                    <p className="text-xs text-gray-900 mt-1.5 flex items-center gap-1.5"><span>💡</span>Cuanto más detallado sea el enunciado, mejores respuestas recibirás.</p>
-                  </div>
-                  <div>
-                    <div className="flex justify-between items-center mb-2"><label className={lbl}>Criterios de evaluación</label><button onClick={() => addCr(ex.id)} className="text-xs text-gray-900 hover:underline">+ Criterio</button></div>
-                    {ex.criteria.map((cr, ci) => (
-                      <div key={ci} className="flex gap-2 items-start bg-white rounded-lg p-3 mb-2 border border-gray-100">
-                        <div className="flex-1 space-y-2">
-                          <input className={inp} value={cr.area} onChange={e => upCr(ex.id, ci, "area", e.target.value)} placeholder="Área evaluada" />
-                          <input className={inp} value={cr.indicators} onChange={e => upCr(ex.id, ci, "indicators", e.target.value)} placeholder="Indicadores clave..." />
-                        </div>
-                        <div className="flex flex-col items-center gap-1 flex-shrink-0">
-                          <span className="text-xs text-gray-400">Pts</span>
-                          <input className="w-14 border border-gray-200 rounded-lg px-2 py-2 text-sm text-center focus:outline-none" type="number" min={1} max={10} value={cr.maxScore} onChange={e => upCr(ex.id, ci, "maxScore", parseInt(e.target.value) || 5)} />
-                        </div>
-                        {ex.criteria.length > 1 && <button onClick={() => delCr(ex.id, ci)} className="text-red-300 hover:text-red-500 text-xl mt-1">×</button>}
-                      </div>
-                    ))}
-                  </div>
-                </div>
+          </div>
+        );
+
+      case "position_type": {
+        const pos = POSITIONS.find(p => p.id === data.position.positionType);
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">¿Qué tipo de posición buscas?</h2>
+            <p className="text-gray-500 mb-6 leading-relaxed">Elige el perfil base. Adaptaré los siguientes pasos y la referencia salarial al rol que elijas.</p>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {POSITIONS.map(p => (
+                <OptionCard key={p.id} compact icon={p.icon} title={p.label}
+                  selected={data.position.positionType === p.id}
+                  onClick={() => { upP("positionType", p.id); upP("specialty", ""); }} />
               ))}
             </div>
+            {pos && pos.specialties.length > 0 && (
+              <div className="mt-5">
+                <label className={lbl}>¿Alguna especialidad concreta?</label>
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {pos.specialties.map(sp => (
+                    <button key={sp} type="button"
+                      onClick={() => upP("specialty", data.position.specialty === sp ? "" : sp)}
+                      className={`px-3 py-1.5 rounded-lg text-sm font-medium border-2 transition-all ${
+                        data.position.specialty === sp ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 text-gray-600 hover:border-gray-400"
+                      }`}>{sp}</button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {data.position.positionType === "otro" && (
+              <div className="mt-5">
+                <label className={lbl}>Nombre personalizado *</label>
+                <input className={inp} value={data.position.customTitle || ""}
+                  onChange={e => upP("customTitle", e.target.value)}
+                  placeholder="ej. Growth Hacker, Head of CRM..." />
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      case "position_details":
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">¿Qué hará esta persona en el día a día?</h2>
+            <p className="text-gray-500 mb-6 leading-relaxed">Responsabilidades concretas y habilidades clave. Todo es opcional pero cuanto más detalles, mejor filtra la IA a los candidatos.</p>
+            <div className="space-y-4">
+              <div>
+                <label className={lbl}>Responsabilidades principales</label>
+                <textarea className={inp} rows={4} value={data.position.responsibilities} onChange={e => upP("responsibilities", e.target.value)}
+                  placeholder="Liderar la estrategia de paid media de 3-5 cuentas. Gestión de campañas en Meta, Google y TikTok. Optimización semanal de ROAS..." />
+              </div>
+              <div>
+                <label className={lbl}>Habilidades requeridas</label>
+                <textarea className={inp} rows={3} value={data.position.skills} onChange={e => upP("skills", e.target.value)}
+                  placeholder="Meta Ads avanzado, Google Ads, TikTok Ads, Looker Studio, Zapier, Notion..." />
+                <p className="text-xs text-gray-400 mt-1.5">Separa con comas. Aparecen como etiquetas en la oferta pública.</p>
+              </div>
+            </div>
+          </div>
+        );
+
+      case "position_contract":
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Condiciones del puesto</h2>
+            <p className="text-gray-500 mb-6 leading-relaxed">Tipo de relación, salario y modalidad horaria. La referencia salarial del mercado te la calculo al momento.</p>
+            <div className="space-y-5">
+              <div>
+                <label className={lbl}>Tipo de relación contractual *</label>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  {[["Freelance", "🤝"], ["Contrato directo", "📄"]].map(([val, icon]) => (
+                    <OptionCard key={val} icon={icon} title={val}
+                      selected={data.position.contract === val}
+                      onClick={() => upP("contract", val)} />
+                  ))}
+                </div>
+              </div>
+              <SalaryWidget positionType={data.position.positionType} contract={data.position.contract} onApplyRanges={applySalary} />
+              {salaryApplied && (
+                <div className="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2 text-sm text-green-700 font-medium">
+                  <span>✅</span> Rango aplicado
+                </div>
+              )}
+              <div className="grid grid-cols-3 gap-3">
+                <div><label className={lbl}>Moneda</label>
+                  <select className={inp} value={data.company.currency} onChange={e => upC("currency", e.target.value)}>
+                    {["EUR", "USD", "GBP", "MXN"].map(m => <option key={m}>{m}</option>)}
+                  </select>
+                </div>
+                <div><label className={lbl}>Salario mín./año</label><input className={inp} type="number" value={data.company.salaryMin} onChange={e => upC("salaryMin", e.target.value)} /></div>
+                <div><label className={lbl}>Salario máx./año</label><input className={inp} type="number" value={data.company.salaryMax} onChange={e => upC("salaryMax", e.target.value)} /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={lbl}>Horas semanales</label>
+                  <input className={inp} type="number" min={1} max={40}
+                    value={data.position.hoursPerWeek}
+                    onChange={e => upP("hoursPerWeek", Math.min(40, parseInt(e.target.value) || 0).toString())} />
+                </div>
+                <div>
+                  <label className={lbl}>Años de experiencia</label>
+                  <input className={inp} type="number" min={0} max={20} value={data.position.experience} onChange={e => upP("experience", e.target.value)} />
+                </div>
+              </div>
+              <div>
+                <label className={lbl}>Horario preferido</label>
+                <div className="grid grid-cols-3 gap-2 mt-1">
+                  {[["Mañanas", "🌅"], ["Tardes", "🌆"], ["Flexible", "🕐"]].map(([h, icon]) => (
+                    <OptionCard key={h} compact icon={icon} title={h}
+                      selected={data.position.schedule === h}
+                      onClick={() => upP("schedule", h)} />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className={lbl}>Otros beneficios (opcional)</label>
+                <textarea className={inp} rows={2} value={data.position.benefits} onChange={e => upP("benefits", e.target.value)}
+                  placeholder="Formación continua, 25 días de vacaciones, material de oficina..." />
+              </div>
+            </div>
+          </div>
+        );
+
+      case "scheduling":
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">¿Tienes un link de agendamiento?</h2>
+            <p className="text-gray-500 mb-6 leading-relaxed">
+              Cuando marques a un candidato como <strong>"Segunda entrevista"</strong> o <strong>"Contratado"</strong> en este proceso, el email incluirá un botón para que agende directamente contigo. Sin esto, el email avisa de que te pondrás en contacto manualmente.
+            </p>
+            <div>
+              <label className={lbl}>URL de calendario (opcional)</label>
+              <input
+                className={inp}
+                type="url"
+                value={data.schedulingUrl || ""}
+                onChange={e => upTop("schedulingUrl", e.target.value)}
+                placeholder="https://cal.com/tu-usuario/entrevista"
+              />
+              <p className="text-xs text-gray-400 mt-2">Compatible con <strong>Cal.com, Calendly, TidyCal, SavvyCal, Google Appointments</strong> o cualquier URL pública.</p>
+            </div>
+            {data.schedulingUrl && (
+              <a href={data.schedulingUrl} target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs text-gray-900 hover:underline font-medium mt-3">
+                🔗 Probar el link en nueva pestaña →
+              </a>
+            )}
+          </div>
+        );
+
+      case "exercises":
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Diseña los ejercicios prácticos</h2>
+            <p className="text-gray-500 mb-5 leading-relaxed">
+              Cada candidato resuelve estos ejercicios con respuesta escrita + vídeo de defensa en Loom. La IA los evalúa con los criterios que definas.
+            </p>
+            {data.exercises.map((ex, idx) => (
+              <div key={ex.id} className="border border-gray-200 rounded-2xl p-4 mb-4 bg-gray-50">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-xs font-bold text-gray-400">#{idx + 1}</span>
+                  <input className="flex-1 bg-transparent border-b border-dashed border-gray-300 text-sm font-bold text-gray-800 focus:outline-none pb-1" value={ex.title} onChange={e => upEx(ex.id, "title", e.target.value)} placeholder="Título del ejercicio" />
+                  {data.exercises.length > 1 && (
+                    <button onClick={() => delEx(ex.id)} className="text-red-300 hover:text-red-500 text-xl leading-none">×</button>
+                  )}
+                </div>
+                <div className="mb-3">
+                  <label className={lbl}>Enunciado *</label>
+                  <textarea className={inp + " bg-white"} rows={3} value={ex.description} onChange={e => upEx(ex.id, "description", e.target.value)}
+                    placeholder="Describe el reto concreto. Cuanto más específico, mejores respuestas recibirás..." />
+                </div>
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className={lbl}>Criterios de evaluación</label>
+                    <button onClick={() => addCr(ex.id)} className="text-xs text-gray-900 hover:underline font-medium">+ Criterio</button>
+                  </div>
+                  {ex.criteria.map((cr, ci) => (
+                    <div key={ci} className="flex gap-2 items-start bg-white rounded-lg p-3 mb-2 border border-gray-100">
+                      <div className="flex-1 space-y-2 min-w-0">
+                        <input className={inp} value={cr.area} onChange={e => upCr(ex.id, ci, "area", e.target.value)} placeholder="Área evaluada" />
+                        <input className={inp} value={cr.indicators} onChange={e => upCr(ex.id, ci, "indicators", e.target.value)} placeholder="Indicadores clave..." />
+                      </div>
+                      <div className="flex flex-col items-center gap-1 shrink-0">
+                        <span className="text-xs text-gray-400">Pts</span>
+                        <input className="w-12 border border-gray-200 rounded-lg px-2 py-2 text-sm text-center focus:outline-none" type="number" min={1} max={10} value={cr.maxScore} onChange={e => upCr(ex.id, ci, "maxScore", parseInt(e.target.value) || 5)} />
+                      </div>
+                      {ex.criteria.length > 1 && (
+                        <button onClick={() => delCr(ex.id, ci)} className="text-red-300 hover:text-red-500 text-xl leading-none mt-1">×</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+            <button onClick={addEx}
+              className="w-full py-3 border-2 border-dashed border-gray-300 text-gray-600 rounded-xl text-sm font-semibold hover:border-gray-900 hover:text-gray-900 transition-colors">
+              + Añadir otro ejercicio
+            </button>
+          </div>
+        );
+
+      case "review":
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Todo listo. Revisa antes de publicar</h2>
+            <p className="text-gray-500 mb-5 leading-relaxed">Si algo no cuadra, edítalo con un clic. Cuando pulses "Publicar", se genera el link público y puedes empezar a recibir candidatos.</p>
+            {[
+              {
+                key: "company", label: "🏢 Empresa",
+                lines: [
+                  data.company.name,
+                  [data.company.sector, data.company.location, data.company.modality].filter(Boolean).join(" · "),
+                ].filter(Boolean),
+              },
+              {
+                key: "position_type", label: "👤 Posición",
+                lines: [
+                  getPositionTitle(data.position),
+                  data.position.experience ? `${data.position.experience} años de experiencia` : null,
+                ].filter(Boolean),
+              },
+              {
+                key: "position_contract", label: "💼 Condiciones",
+                lines: [
+                  [data.position.contract, `${data.position.hoursPerWeek || "?"}h/sem`, data.position.schedule].filter(Boolean).join(" · "),
+                  data.company.salaryMin && data.company.salaryMax
+                    ? `${Number(data.company.salaryMin).toLocaleString()} – ${Number(data.company.salaryMax).toLocaleString()} ${data.company.currency}/año`
+                    : "Salario sin especificar",
+                ].filter(Boolean),
+              },
+              {
+                key: "scheduling", label: "🗓 Agenda",
+                lines: [data.schedulingUrl ? data.schedulingUrl : "— Sin link de agendamiento"],
+              },
+              {
+                key: "exercises", label: "🎯 Ejercicios",
+                lines: [
+                  `${data.exercises.length} ejercicio${data.exercises.length !== 1 ? "s" : ""} con ${data.exercises.reduce((s, e) => s + e.criteria.length, 0)} criterios totales`,
+                  ...data.exercises.map(e => `· ${e.title}`),
+                ],
+              },
+            ].map(row => (
+              <div key={row.key} className="flex items-start justify-between gap-3 py-3 border-b border-gray-100 last:border-0">
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">{row.label}</p>
+                  {row.lines.map((l, i) => <p key={i} className="text-sm text-gray-800 truncate">{l}</p>)}
+                </div>
+                <button onClick={() => jumpTo(row.key)} className="text-xs text-gray-500 hover:text-gray-900 font-medium shrink-0 pt-1">✏️ Editar</button>
+              </div>
+            ))}
+          </div>
+        );
+
+      default: return null;
+    }
+  };
+
+  const isIntro = current.id === "intro";
+  const isReview = current.id === "review";
+  const counterText = step > 0 ? `${step} de ${FLOW.length - 1}` : "";
+
+  return (
+    <div className="min-h-screen bg-white flex flex-col">
+      {/* Top bar */}
+      <div className="px-6 py-5 flex justify-between items-center max-w-2xl mx-auto w-full">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="text-sm text-gray-400 hover:text-gray-900 font-medium">← Panel</button>
+          <div className="w-px h-4 bg-gray-200" />
+          <span className="text-xl font-black text-gray-900 tracking-tight">RecruitAI</span>
+        </div>
+        {counterText && <span className="text-xs text-gray-400 font-medium">{counterText}</span>}
+      </div>
+
+      {/* Main content */}
+      <div className="flex-1 flex items-start sm:items-center justify-center px-6 pb-8">
+        <div className="max-w-2xl w-full">
+          {current.section && (
+            <div className="flex justify-center mb-5">
+              <span className="text-xs font-semibold text-gray-600 bg-gray-100 rounded-full px-3 py-1.5">
+                {current.section} · Paso {current.n} de {current.total}
+              </span>
+            </div>
           )}
-          <div className="flex justify-between mt-6 pt-4 border-t border-gray-100">
-            {step > 0 ? <button onClick={() => setStep(s => s - 1)} className="px-5 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50">← Anterior</button> : <div />}
-            {step < 2 ? <button onClick={() => setStep(s => s + 1)} className="px-6 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-semibold hover:bg-gray-800">Siguiente →</button> : <button onClick={() => onPublish(data)} className="px-6 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700">🚀 Publicar oferta</button>}
+
+          <div className="bg-white rounded-3xl border border-gray-200 p-6 sm:p-8">
+            {renderQuestion()}
+          </div>
+
+          <div className="flex justify-between items-center mt-5">
+            {!isIntro ? (
+              <button onClick={back} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-900 font-medium transition-colors">← Atrás</button>
+            ) : <span />}
+
+            {isReview ? (
+              <button onClick={() => onPublish(data)}
+                className="px-6 py-3 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-colors">
+                🚀 Publicar oferta
+              </button>
+            ) : (
+              <button onClick={next} disabled={!canAdvance}
+                className="px-6 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                {isIntro ? "Comenzar →" : "Siguiente →"}
+              </button>
+            )}
           </div>
         </div>
       </div>
