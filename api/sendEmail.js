@@ -110,6 +110,36 @@ function templateDecisionDescartado({ candidateName, companyName, positionTitle 
   };
 }
 
+function templateWelcome({ userName, appUrl }) {
+  const firstName = (userName || "").trim().split(" ")[0] || "hola";
+  const safeUrl = appUrl || "https://recruitai-smoky.vercel.app";
+  return {
+    subject: `🎉 Bienvenido a RecruitAI`,
+    html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a">
+      <div style="background:#111827;padding:32px;border-radius:12px 12px 0 0"><h1 style="color:white;margin:0;font-size:24px;letter-spacing:-0.02em">🎉 ¡Bienvenido, ${firstName}!</h1></div>
+      <div style="background:#f9fafb;padding:32px;border-radius:0 0 12px 12px;border:1px solid #e5e7eb;border-top:none">
+        <p style="font-size:16px">Me alegra tenerte en <strong>RecruitAI</strong>. Tu cuenta ya está lista y puedes empezar a automatizar tus procesos de selección ahora mismo.</p>
+        <p style="font-size:15px;line-height:1.6;margin-top:20px"><strong>Qué puedes hacer en los próximos 5 minutos:</strong></p>
+        <ol style="padding-left:20px;margin:12px 0">
+          <li style="font-size:15px;line-height:1.8">Completa tu <strong>manual de marca</strong> (o genéralo con IA respondiendo 9 preguntas). Esto hace que la IA evalúe cada candidato alineado con tus valores.</li>
+          <li style="font-size:15px;line-height:1.8">Pulsa <strong>"+ Nuevo proceso"</strong> y rellena empresa, puesto y ejercicios. Te guío paso a paso.</li>
+          <li style="font-size:15px;line-height:1.8">Publica el link y compártelo donde quieras recibir candidatos: LinkedIn, email, Instagram, WhatsApp...</li>
+        </ol>
+        <div style="text-align:center;margin:28px 0">
+          <a href="${safeUrl}" style="display:inline-block;background:#111827;color:white;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:600;font-size:15px">🚀 Abrir mi dashboard</a>
+        </div>
+        <p style="font-size:15px;line-height:1.6">A partir de ahí, la IA:</p>
+        <ul style="padding-left:20px;margin:8px 0">
+          <li style="font-size:14px;line-height:1.7;color:#374151">📝 Lee las respuestas + vídeo Loom de cada candidato y puntúa con tu rúbrica</li>
+          <li style="font-size:14px;line-height:1.7;color:#374151">✉️ Envía emails automáticos a candidatos en cada etapa</li>
+          <li style="font-size:14px;line-height:1.7;color:#374151">🔔 Te avisa en Slack cuando llegue algo importante</li>
+        </ul>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0"/>
+        <p style="font-size:13px;color:#6b7280;line-height:1.5">¿Dudas? Responde a este email y te echo una mano.</p>
+      </div></div>`,
+  };
+}
+
 function templateTest({ companyName }) {
   return {
     subject: `✅ Email de prueba – RecruitAI`,
@@ -175,6 +205,7 @@ export default async function handler(req, res) {
     decision_segunda_entrevista: templateDecisionSegundaEntrevista,
     decision_en_cartera: templateDecisionEnCartera,
     decision_descartado: templateDecisionDescartado,
+    welcome: templateWelcome,
     test: templateTest,
   };
 
@@ -184,7 +215,10 @@ export default async function handler(req, res) {
   const template = templateFn(data);
 
   // Determine recipient
-  const to = type === "new_application_alert" ? data.recruiterEmail : data.candidateEmail;
+  const to =
+    type === "new_application_alert" ? data.recruiterEmail
+    : type === "welcome" ? data.userEmail
+    : data.candidateEmail;
   if (!to) return res.status(200).json({ success: false, error: "No recipient email" });
 
   try {

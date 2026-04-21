@@ -2788,45 +2788,126 @@ function ProcessCard({ process, onView, onToggle }) {
   );
 }
 
-function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout, onOpenSettings }) {
+function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout, onOpenSettings, agencySettings }) {
   const active = processes.filter(p => p.status === "active").length;
   const totalCandidates = processes.reduce((s, p) => s + (p.candidates?.length || 0), 0);
   const hired = processes.reduce((s, p) => s + (p.candidates?.filter(c => c.estado === "Contratado" || c.phase === "hired").length || 0), 0);
+  const isEmpty = processes.length === 0;
+  const firstName = (user?.displayName || "").split(" ")[0];
+
+  // Checklist state for the empty-state hero — tracks what the user already has set up
+  const hasBrand = !!(agencySettings?.brandManual && agencySettings.brandManual.trim());
+  const hasEmail = agencySettings?.emailConfig?.provider && agencySettings.emailConfig.provider !== "none";
+  const hasSlack = !!(agencySettings?.slackConfig?.webhookUrl);
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-2xl font-black text-gray-900">RecruitAI</span>
+            <span className="text-2xl font-black text-gray-900 tracking-tight">RecruitAI</span>
             <span className="text-xs bg-gray-100 text-gray-900 px-2 py-0.5 rounded-full font-semibold">Panel de reclutador</span>
           </div>
           <div className="flex items-center gap-2">
             {user?.photoURL && <img src={user.photoURL} alt={user.displayName} className="w-8 h-8 rounded-full border-2 border-gray-200" />}
-            <span className="text-sm text-gray-600 hidden sm:block">{user?.displayName?.split(" ")[0]}</span>
+            <span className="text-sm text-gray-600 hidden sm:block">{firstName}</span>
             <button onClick={onOpenSettings} className="px-3 py-2 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Configuración de agencia">⚙️</button>
             <button onClick={onNew} className="px-5 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">+ Nuevo proceso</button>
             <button onClick={onLogout} className="px-3 py-2.5 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Cerrar sesión">↩</button>
           </div>
         </div>
       </div>
+
       <div className="max-w-4xl mx-auto p-6">
-        <div className="grid grid-cols-3 gap-4 mb-8">
-          {[{ icon: "📋", label: "Procesos activos", val: active, color: "text-gray-900" }, { icon: "👥", label: "Candidatos totales", val: totalCandidates, color: "text-gray-800" }, { icon: "🎉", label: "Contratados", val: hired, color: "text-green-600" }].map(s => (
-            <div key={s.label} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5"><p className="text-2xl mb-1">{s.icon}</p><p className={`text-3xl font-black ${s.color}`}>{s.val}</p><p className="text-sm text-gray-400 mt-1">{s.label}</p></div>
-          ))}
-        </div>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-black text-gray-900">Procesos de selección</h2>
-          <span className="text-sm text-gray-400">{processes.length} en total</span>
-        </div>
-        {processes.length === 0 ? (
-          <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-12 text-center">
-            <p className="text-4xl mb-3">🚀</p><h3 className="font-bold text-gray-700 mb-1">Sin procesos activos</h3>
-            <p className="text-gray-400 text-sm mb-4">Crea tu primer proceso de selección para empezar.</p>
-            <button onClick={onNew} className="px-6 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">+ Crear proceso</button>
-          </div>
+        {isEmpty ? (
+          // ── Hero empty-state: onboarding tour for a first-time recruiter ──
+          <>
+            <div className="text-center mb-10 pt-6">
+              <div className="text-5xl mb-4">👋</div>
+              <h1 className="text-4xl font-black text-gray-900 tracking-tight mb-3">
+                Hola{firstName ? `, ${firstName}` : ""}. Bienvenido a RecruitAI.
+              </h1>
+              <p className="text-lg text-gray-500 leading-relaxed max-w-xl mx-auto">
+                Tu primer proceso de selección está a 5 minutos. La IA evalúa candidatos, envía emails automáticos y te avisa en Slack — tú solo decides.
+              </p>
+            </div>
+
+            {/* Cómo funciona — 3 pasos visuales */}
+            <div className="mb-8">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-4 text-center">Cómo funciona un proceso</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                {[
+                  { n: "1", icon: "⚙️", title: "Configuras el proceso", text: "Empresa, puesto, ejercicios. Te guío paso a paso — 5 minutos." },
+                  { n: "2", icon: "🔗", title: "Publicas el link", text: "Compártelo en LinkedIn, email, Instagram. Cualquier candidato aplica sin cuenta." },
+                  { n: "3", icon: "🤖", title: "La IA hace el filtrado", text: "Puntúa respuestas + vídeo Loom, te deja solo los que valen la pena ver." },
+                ].map(s => (
+                  <div key={s.n} className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-900 text-white text-xs font-black">{s.n}</span>
+                      <span className="text-2xl">{s.icon}</span>
+                    </div>
+                    <p className="font-bold text-gray-900 text-sm mb-1">{s.title}</p>
+                    <p className="text-xs text-gray-500 leading-relaxed">{s.text}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Primary CTA */}
+            <div className="bg-gray-900 rounded-3xl p-8 text-center mb-8">
+              <p className="text-white font-black text-xl mb-2">Empieza creando tu primer proceso</p>
+              <p className="text-gray-300 text-sm mb-5 max-w-md mx-auto">Puedes crear un proceso de prueba para familiarizarte con la herramienta, o uno real desde el primer momento.</p>
+              <button onClick={onNew}
+                className="px-8 py-3.5 bg-white text-gray-900 rounded-xl font-bold text-sm hover:bg-gray-100 transition-colors">
+                🚀 Crear mi primer proceso →
+              </button>
+            </div>
+
+            {/* Setup checklist — nudges toward completing configuration */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+              <div className="flex items-center justify-between mb-3">
+                <p className="font-bold text-gray-900 text-sm">Antes de recibir candidatos…</p>
+                <button onClick={onOpenSettings} className="text-xs text-gray-500 hover:text-gray-900 font-medium">Abrir ⚙️ Configuración</button>
+              </div>
+              <div className="space-y-2">
+                {[
+                  { done: hasBrand, icon: "🎨", label: "Manual de marca configurado", hint: "La IA evalúa la compatibilidad cultural de cada candidato" },
+                  { done: hasEmail, icon: "📧", label: "Email configurado", hint: "Los candidatos reciben confirmación al aplicar y decisión final" },
+                  { done: hasSlack, icon: "🔔", label: "Slack conectado", hint: "Avisos instantáneos cuando llega un candidato o termina una evaluación" },
+                ].map((r, i) => (
+                  <div key={i} className="flex items-start gap-3 py-2 border-b border-gray-50 last:border-0">
+                    <span className={`text-lg shrink-0 ${r.done ? "" : "opacity-40"}`}>{r.done ? "✅" : "⚪"}</span>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-sm font-semibold ${r.done ? "text-gray-700" : "text-gray-500"}`}>{r.icon} {r.label}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">{r.hint}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
         ) : (
-          <div className="space-y-4">{processes.map(p => <ProcessCard key={p.id} process={p} onView={onView} onToggle={onToggle} />)}</div>
+          // ── Normal dashboard with processes ──
+          <>
+            <div className="grid grid-cols-3 gap-4 mb-8">
+              {[
+                { icon: "📋", label: "Procesos activos", val: active, color: "text-gray-900" },
+                { icon: "👥", label: "Candidatos totales", val: totalCandidates, color: "text-gray-800" },
+                { icon: "🎉", label: "Contratados", val: hired, color: "text-green-600" },
+              ].map(s => (
+                <div key={s.label} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+                  <p className="text-2xl mb-1">{s.icon}</p>
+                  <p className={`text-3xl font-black ${s.color}`}>{s.val}</p>
+                  <p className="text-sm text-gray-400 mt-1">{s.label}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-black text-gray-900">Procesos de selección</h2>
+              <span className="text-sm text-gray-400">{processes.length} en total</span>
+            </div>
+            <div className="space-y-4">{processes.map(p => <ProcessCard key={p.id} process={p} onView={onView} onToggle={onToggle} />)}</div>
+          </>
         )}
       </div>
     </div>
@@ -2839,7 +2920,7 @@ export default function App() {
   if (publicProcessId) return <CandidatePublicScreen processId={publicProcessId} />;
 
   const [phase, setPhase] = useState("dashboard");
-  const [processes, setProcesses] = useState(MOCK_PROCESSES);
+  const [processes, setProcesses] = useState([]);
   const [activeJob, setActiveJob] = useState(null);
   const [candidate, setCandidate] = useState(null);
   const [evaluation, setEvaluation] = useState(null);
@@ -2865,6 +2946,20 @@ export default function App() {
             const data = snap.data();
             if (data.processes?.length > 0) setProcesses(data.processes);
             if (data.settings) setAgencySettings(data.settings);
+          } else {
+            // First-time user: send a welcome email (fire-and-forget).
+            // Gated on !snap.exists() so sign-in events don't re-trigger it.
+            if (u.email) {
+              fetch("/api/sendEmail", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  type: "welcome",
+                  data: { userName: u.displayName || "", userEmail: u.email, appUrl: window.location.origin },
+                  emailConfig: { provider: "app", fromName: "RecruitAI" },
+                }),
+              }).catch(e => console.error("Welcome email error:", e));
+            }
           }
         } catch (e) { console.error("Error loading:", e); }
         setSettingsLoaded(true);
@@ -2956,7 +3051,7 @@ export default function App() {
   };
 
   const clearAuthState = () => { setEmailError(""); setResetSent(false); };
-  const handleLogout = async () => { await signOut(auth); setProcesses(MOCK_PROCESSES); setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setPhase("dashboard"); };
+  const handleLogout = async () => { await signOut(auth); setProcesses([]); setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setPhase("dashboard"); };
   const goToDashboard = () => { setPhase("dashboard"); setActiveJob(null); setCandidate(null); setEvaluation(null); setInterview(null); };
   const handlePublish = (jobData) => { const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] }; setProcesses(ps => [np, ...ps]); setActiveJob(jobData); setPhase("preview"); };
   const handleToggle = (id) => setProcesses(ps => ps.map(p => p.id === id ? { ...p, status: p.status === "active" ? "paused" : "active" } : p));
@@ -2984,7 +3079,7 @@ export default function App() {
   return (
     <>
       {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />}
-      {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={() => setShowSettings(true)} />}
+      {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={() => setShowSettings(true)} agencySettings={agencySettings} />}
       {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} />; })()}
       {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onBack={goToDashboard} />}
       {phase === "preview" && <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />}
