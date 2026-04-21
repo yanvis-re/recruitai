@@ -1231,6 +1231,7 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
   const [fileName, setFileName] = useState("");
   const [emailConfig, setEmailConfig] = useState(settings?.emailConfig || { provider: "none" });
   const [slackConfig, setSlackConfig] = useState(settings?.slackConfig || { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } });
+  const [schedulingUrl, setSchedulingUrl] = useState(settings?.schedulingUrl || "");
   const fileRef = useRef(null);
 
   const handleFile = async (e) => {
@@ -1251,7 +1252,7 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
     setUploading(false);
   };
 
-  const handleSave = () => { onSave({ brandManual, emailConfig, slackConfig }); onClose(); };
+  const handleSave = () => { onSave({ brandManual, emailConfig, slackConfig, schedulingUrl: schedulingUrl.trim() }); onClose(); };
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -1263,10 +1264,10 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
         </div>
 
         {/* Section tabs */}
-        <div className="flex border-b border-gray-100 shrink-0">
-          {[["marca", "🎨 Marca"], ["email", "📧 Email"], ["slack", "🔔 Slack"]].map(([id, label]) => (
+        <div className="flex border-b border-gray-100 shrink-0 overflow-x-auto">
+          {[["marca", "🎨 Marca"], ["agenda", "🗓 Agenda"], ["email", "📧 Email"], ["slack", "🔔 Slack"]].map(([id, label]) => (
             <button key={id} onClick={() => setSection(id)}
-              className={`flex-1 py-3 text-sm font-semibold transition-colors ${section === id ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-400 hover:text-gray-600"}`}>
+              className={`flex-1 py-3 text-sm font-semibold transition-colors whitespace-nowrap ${section === id ? "border-b-2 border-blue-600 text-blue-600" : "text-gray-400 hover:text-gray-600"}`}>
               {label}
             </button>
           ))}
@@ -1310,6 +1311,40 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
                 </div>
               )}
             </>
+          )}
+
+          {/* ── AGENDA ── */}
+          {section === "agenda" && (
+            <div className="space-y-4">
+              <div>
+                <h3 className="font-bold text-gray-800 text-sm">🗓 Link de agendamiento para entrevistas</h3>
+                <p className="text-xs text-gray-500 mt-1">Pega la URL pública de tu calendario. Cuando marques un candidato como <strong>"Segunda entrevista"</strong> o <strong>"Contratado"</strong>, el email automático incluirá un botón para que agende directamente contigo.</p>
+              </div>
+              <div>
+                <label className={lbl}>URL de tu calendario</label>
+                <input
+                  className={inp}
+                  type="url"
+                  value={schedulingUrl}
+                  onChange={e => setSchedulingUrl(e.target.value)}
+                  placeholder="https://cal.com/tu-usuario/entrevista"
+                />
+                <p className="text-xs text-gray-400 mt-1.5">Compatible con <strong>Cal.com, Calendly, TidyCal, Google Calendar Appointment Schedules, SavvyCal</strong> o cualquier URL pública de agendamiento.</p>
+              </div>
+              {schedulingUrl && (
+                <a href={schedulingUrl} target="_blank" rel="noreferrer"
+                   className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:underline font-medium">
+                  🔗 Probar el link en nueva pestaña →
+                </a>
+              )}
+              {!schedulingUrl && (
+                <div className="bg-blue-50 border border-blue-100 rounded-xl p-3">
+                  <p className="text-xs text-blue-700 leading-relaxed">
+                    💡 <strong>Sin configurar:</strong> el email avisará al candidato de que te pondrás en contacto manualmente. Con link configurado, la experiencia es 100% self-service.
+                  </p>
+                </div>
+              )}
+            </div>
           )}
 
           {/* ── EMAIL ── */}
@@ -1439,6 +1474,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
             candidateEmail: candidate.email,
             companyName: process.company?.name || "La empresa",
             positionTitle: getPositionTitle(process.position) || process.positionType || "la posición",
+            schedulingUrl: agencySettings?.schedulingUrl || "",
           },
         }),
       });
@@ -1642,13 +1678,30 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
   const generatePublicLink = async () => {
     setPublishing(true);
     try {
+      // Strip secrets before writing to the public document.
+      // publicProcesses/{id} is readable by anyone — never expose API keys or webhooks.
+      const ec = agencySettings?.emailConfig || { provider: "none" };
+      const publicEmailConfig = {
+        provider: ec.provider || "none",
+        fromName: ec.fromName || "",
+        fromEmail: ec.fromEmail || "",
+      };
+      const sc = agencySettings?.slackConfig || {};
+      const publicSlackConfig = {
+        // Webhook URL is sensitive: anyone with it can post to the Slack channel.
+        // Keep only notification preferences; the server will look up the real webhook
+        // from the recruiter's private doc when needed.
+        notifications: sc.notifications || {},
+      };
+
       await setDoc(doc(db, "publicProcesses", process.id), {
         ...process,
+        recruiterUid: user?.uid || "",
         publishedAt: new Date().toISOString(),
         recruiterEmail: user?.email || "",
         recruiterName: user?.displayName || "Equipo de selección",
-        emailConfig: agencySettings?.emailConfig || { provider: "none" },
-        slackConfig: agencySettings?.slackConfig || { webhookUrl: "" },
+        emailConfig: publicEmailConfig,
+        slackConfig: publicSlackConfig,
       });
       const url = `${window.location.origin}/#apply/${process.id}`;
       setPublicLink(url);

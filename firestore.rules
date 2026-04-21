@@ -1,0 +1,65 @@
+// Firestore Security Rules for RecruitAI.
+// Deploy with:  firebase deploy --only firestore:rules
+//
+// Model:
+//   recruiters/{uid}              → private recruiter data (processes, settings). Owner-only.
+//   users/{uid}                   → legacy/secondary doc (slackConfig). Owner-only.
+//   publicProcesses/{id}          → published job offers. Public READ, owner-only WRITE.
+//   publicProcesses/{id}/applications/{appId} → candidate submissions. Public CREATE, owner-only READ.
+
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Recruiter private workspace ──────────────────────────────────────────
+    // Each recruiter owns exactly one doc matching their auth uid.
+    match /recruiters/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // ── Legacy/secondary user doc (slackConfig persisted separately) ─────────
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // ── Published job processes (candidate-facing) ───────────────────────────
+    match /publicProcesses/{processId} {
+
+      // Anyone can READ a published process — that's the whole point of the
+      // public link. Secrets (API keys, webhooks) are stripped client-side
+      // in generatePublicLink before writing here.
+      allow read: if true;
+
+      // Only authenticated users can publish, and only as themselves.
+      // The document MUST carry recruiterUid == auth.uid.
+      allow create: if request.auth != null
+        && request.resource.data.recruiterUid == request.auth.uid;
+
+      // Updates: the owner can change contents, but can't change recruiterUid
+      // (prevents a recruiter from hijacking someone else's process).
+      allow update: if request.auth != null
+        && resource.data.recruiterUid == request.auth.uid
+        && request.resource.data.recruiterUid == request.auth.uid;
+
+      allow delete: if request.auth != null
+        && resource.data.recruiterUid == request.auth.uid;
+
+      // ── Candidate applications (subcollection) ─────────────────────────────
+      match /applications/{appId} {
+
+        // Anyone (including anonymous) can submit an application.
+        // This is the candidate apply flow — no auth required.
+        allow create: if true;
+
+        // Only the process owner can read applications.
+        allow read: if request.auth != null
+          && get(/databases/$(database)/documents/publicProcesses/$(processId)).data.recruiterUid == request.auth.uid;
+
+        // Applications are immutable from the client. If you ever need to edit
+        // (e.g. mark status), do it via a Cloud Function with admin SDK instead.
+        allow update, delete: if false;
+      }
+    }
+  }
+}

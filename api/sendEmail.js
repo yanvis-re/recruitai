@@ -35,7 +35,18 @@ function templateNewApplicationAlert({ candidateName, positionTitle, recruiterNa
   };
 }
 
-function templateDecisionContratado({ candidateName, companyName, positionTitle }) {
+function ctaButton(url, label, color = "#1e40af") {
+  if (!url) return "";
+  return `<div style="text-align:center;margin:28px 0">
+      <a href="${url}" style="display:inline-block;background:${color};color:white;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:600;font-size:15px">${label}</a>
+      <p style="font-size:12px;color:#9ca3af;margin-top:10px">O copia este enlace en tu navegador:<br/><a href="${url}" style="color:${color};word-break:break-all">${url}</a></p>
+    </div>`;
+}
+
+function templateDecisionContratado({ candidateName, companyName, positionTitle, schedulingUrl }) {
+  const cta = schedulingUrl
+    ? ctaButton(schedulingUrl, "📅 Agendar nuestra próxima reunión", "#16a34a")
+    : `<p style="font-size:15px;line-height:1.6">Nos pondremos en contacto contigo muy pronto para darte todos los detalles.</p>`;
   return {
     subject: `¡Enhorabuena! Oferta de trabajo – ${positionTitle}`,
     html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a">
@@ -43,14 +54,17 @@ function templateDecisionContratado({ candidateName, companyName, positionTitle 
       <div style="background:#f9fafb;padding:32px;border-radius:0 0 12px 12px;border:1px solid #e5e7eb;border-top:none">
         <p style="font-size:16px">Hola <strong>${candidateName}</strong>,</p>
         <p style="font-size:15px;line-height:1.6">Es un placer comunicarte que hemos decidido hacerte una oferta para unirte al equipo de <strong>${companyName}</strong> como <strong>${positionTitle}</strong>. 🎉</p>
-        <p style="font-size:15px;line-height:1.6">Nos pondremos en contacto contigo muy pronto para darte todos los detalles.</p>
+        ${cta}
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0"/>
         <p style="font-size:13px;color:#6b7280">Este es un mensaje automático. Por favor no respondas a este correo.</p>
       </div></div>`,
   };
 }
 
-function templateDecisionSegundaEntrevista({ candidateName, companyName, positionTitle }) {
+function templateDecisionSegundaEntrevista({ candidateName, companyName, positionTitle, schedulingUrl }) {
+  const cta = schedulingUrl
+    ? ctaButton(schedulingUrl, "🗓 Agendar mi entrevista ahora")
+    : `<p style="font-size:15px;line-height:1.6">En breve te contactaremos para coordinar fecha y hora.</p>`;
   return {
     subject: `Siguiente paso en tu proceso – ${positionTitle}`,
     html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a">
@@ -58,7 +72,8 @@ function templateDecisionSegundaEntrevista({ candidateName, companyName, positio
       <div style="background:#f9fafb;padding:32px;border-radius:0 0 12px 12px;border:1px solid #e5e7eb;border-top:none">
         <p style="font-size:16px">Hola <strong>${candidateName}</strong>,</p>
         <p style="font-size:15px;line-height:1.6">Tras revisar tu candidatura para <strong>${positionTitle}</strong>, nos gustaría avanzar contigo a una segunda entrevista.</p>
-        <p style="font-size:15px;line-height:1.6">En breve te contactaremos para coordinar fecha y hora. ¡Gracias por tu dedicación!</p>
+        ${cta}
+        <p style="font-size:15px;line-height:1.6">¡Gracias por tu dedicación!</p>
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0"/>
         <p style="font-size:13px;color:#6b7280">Este es un mensaje automático. Por favor no respondas a este correo.</p>
       </div></div>`,
@@ -184,10 +199,17 @@ export default async function handler(req, res) {
       await sendViaResend(apiKey, from, to, template.subject, template.html);
 
     } else if (provider === "resend_domain") {
-      // User's own Resend account + custom domain
-      const apiKey = emailConfig.resendApiKey;
+      // User's own Resend account + custom domain.
+      // Fallback to the app-level key when the request comes from a public process
+      // (where the API key is intentionally stripped — see generatePublicLink in App.jsx).
+      const apiKey = emailConfig.resendApiKey || process.env.RESEND_API_KEY;
       if (!apiKey) return res.status(200).json({ success: false, error: "Missing Resend API key" });
-      await sendViaResend(apiKey, from, to, template.subject, template.html);
+      // If we fell back to the app-level key, the user's custom domain isn't verified
+      // against that account — use the shared app domain for `from` to avoid Resend rejecting.
+      const actualFrom = emailConfig.resendApiKey
+        ? from
+        : `${emailConfig.fromName || "Equipo de selección"} <${process.env.FROM_EMAIL || "onboarding@resend.dev"}>`;
+      await sendViaResend(apiKey, actualFrom, to, template.subject, template.html);
 
     } else if (provider === "resend_shared") {
       // Legacy: user's own Resend account, shared domain
