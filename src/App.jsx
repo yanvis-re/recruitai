@@ -561,16 +561,19 @@ function CandidatePublicScreen({ processId }) {
         ]);
       }
 
-      // Slack instant notification (new application)
-      const slackConfig = processData?.slackConfig;
-      if (slackConfig?.webhookUrl) {
-        sendSlackNotification(slackConfig, "new_application", {
+      // Slack notification — server-side lookup of the webhook for security.
+      // The webhook URL is NOT stored in the public process doc (sensitive),
+      // so the server reads it from the recruiter's private doc via Admin SDK.
+      // Fire-and-forget: we don't want to block the candidate's confirmation on Slack.
+      fetch("/api/notifyApplication", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          processId,
           candidateName: candidate?.name || "Candidato",
           candidateEmail: candidate?.email || "",
-          positionTitle: processData?.position?.title || processData?.positionType || "la posición",
-          companyName: processData?.company?.name || "La empresa",
-        });
-      }
+        }),
+      }).catch(e => console.error("Slack notify error:", e));
 
       setSubmitted(true);
     } catch (e) { alert("Error al enviar. Inténtalo de nuevo."); }
