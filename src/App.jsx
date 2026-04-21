@@ -2863,28 +2863,61 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
               </button>
             </div>
 
-            {/* Setup checklist — nudges toward completing configuration */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
-              <div className="flex items-center justify-between mb-3">
-                <p className="font-bold text-gray-900 text-sm">Antes de recibir candidatos…</p>
-                <button onClick={onOpenSettings} className="text-xs text-gray-500 hover:text-gray-900 font-medium">Abrir ⚙️ Configuración</button>
-              </div>
-              <div className="space-y-2">
-                {[
-                  { done: hasBrand, icon: "🎨", label: "Manual de marca configurado", hint: "La IA evalúa la compatibilidad cultural de cada candidato" },
-                  { done: hasEmail, icon: "📧", label: "Email configurado", hint: "Los candidatos reciben confirmación al aplicar y decisión final" },
-                  { done: hasSlack, icon: "🔔", label: "Slack conectado", hint: "Avisos instantáneos cuando llega un candidato o termina una evaluación" },
-                ].map((r, i) => (
-                  <div key={i} className="flex items-start gap-3 py-2 border-b border-gray-50 last:border-0">
-                    <span className={`text-lg shrink-0 ${r.done ? "" : "opacity-40"}`}>{r.done ? "✅" : "⚪"}</span>
+            {/* Setup checklist — visually escalates when incomplete */}
+            {(() => {
+              const pending = [hasBrand, hasEmail, hasSlack].filter(x => !x).length;
+              const allDone = pending === 0;
+              return (
+                <div className={`rounded-2xl shadow-sm p-5 transition-colors ${
+                  allDone ? "bg-white border border-gray-100" : "bg-amber-50 border-2 border-amber-300"
+                }`}>
+                  <div className="flex items-start justify-between gap-3 mb-4">
                     <div className="flex-1 min-w-0">
-                      <p className={`text-sm font-semibold ${r.done ? "text-gray-700" : "text-gray-500"}`}>{r.icon} {r.label}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{r.hint}</p>
+                      {allDone ? (
+                        <p className="font-bold text-gray-900 text-sm">✅ Todo listo para recibir candidatos</p>
+                      ) : (
+                        <>
+                          <p className="font-bold text-amber-900 text-sm flex items-center gap-2">
+                            <span>⚠️</span>
+                            <span>Antes de recibir candidatos, completa la configuración de tu agencia</span>
+                          </p>
+                          <p className="text-xs text-amber-700 mt-1 ml-6">
+                            {pending} {pending === 1 ? "paso pendiente" : "pasos pendientes"} · La IA no podrá evaluar con precisión hasta que lo completes
+                          </p>
+                        </>
+                      )}
                     </div>
+                    <button onClick={onOpenSettings}
+                      className={`shrink-0 text-xs font-bold rounded-lg transition-colors px-3 py-2 ${
+                        allDone
+                          ? "text-gray-500 hover:text-gray-900"
+                          : "bg-gray-900 text-white hover:bg-gray-800 px-4"
+                      }`}>
+                      {allDone ? "Abrir ⚙️" : "Completar configuración →"}
+                    </button>
                   </div>
-                ))}
-              </div>
-            </div>
+                  <div className="space-y-2">
+                    {[
+                      { done: hasBrand, icon: "🎨", label: "Manual de marca configurado", hint: "La IA evalúa la compatibilidad cultural de cada candidato" },
+                      { done: hasEmail, icon: "📧", label: "Email configurado", hint: "Los candidatos reciben confirmación al aplicar y decisión final" },
+                      { done: hasSlack, icon: "🔔", label: "Slack conectado", hint: "Avisos instantáneos cuando llega un candidato o termina una evaluación" },
+                    ].map((r, i) => (
+                      <div key={i} className={`flex items-start gap-3 py-2 border-b last:border-0 ${
+                        allDone ? "border-gray-50" : "border-amber-200/60"
+                      }`}>
+                        <span className={`text-lg shrink-0 ${r.done ? "" : "opacity-50"}`}>{r.done ? "✅" : "⚪"}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-sm font-semibold ${r.done ? "text-gray-700" : allDone ? "text-gray-500" : "text-amber-900"}`}>
+                            {r.icon} {r.label}
+                          </p>
+                          <p className={`text-xs mt-0.5 ${allDone ? "text-gray-400" : "text-amber-700/80"}`}>{r.hint}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
           </>
         ) : (
           // ── Normal dashboard with processes ──
