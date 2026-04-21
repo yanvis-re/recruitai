@@ -2635,7 +2635,17 @@ const ESTADO_COLORS = { "Pendiente": "bg-gray-100 text-gray-700", "Primera entre
 const PROGRESO_COLORS = { "Ingreso": "bg-purple-100 text-purple-700", "Prueba técnica": "bg-gray-100 text-gray-800", "Entrevista": "bg-indigo-100 text-indigo-700", "Onboarding": "bg-teal-100 text-teal-700", "Descalificado": "bg-red-100 text-red-700", "En cartera": "bg-yellow-100 text-yellow-700", "Desiste": "bg-gray-100 text-gray-800", "Validación prueba técnica": "bg-cyan-100 text-cyan-700", "Entrevista RRHH": "bg-violet-100 text-violet-700" };
 
 // ─── PROCESS DETAIL SCREEN ───────────────────────────────────────────────────
-function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, agencySettings }) {
+function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, agencySettings, onOpenSettings }) {
+  // What's required before the user can generate a public link / receive candidates.
+  // brandManual + emailConfig are blocking (IA needs context, candidates need confirmations).
+  // Slack is considered a nice-to-have, not blocking.
+  const hasBrand = !!(agencySettings?.brandManual && agencySettings.brandManual.trim());
+  const hasEmail = agencySettings?.emailConfig?.provider && agencySettings.emailConfig.provider !== "none";
+  const missingForPublish = [
+    !hasBrand && { label: "Manual de marca", hint: "Sin esto la IA no puede evaluar la compatibilidad cultural de los candidatos." },
+    !hasEmail && { label: "Email", hint: "Sin esto los candidatos no reciben confirmación al aplicar ni los mensajes de decisión final." },
+  ].filter(Boolean);
+  const [showMissingConfigModal, setShowMissingConfigModal] = useState(false);
   const [candidates, setCandidates] = useState((process.candidates || []).map(c => ({ estado: "Pendiente", progreso: "Ingreso", entrevistador: "", notas: "", ...c })));
   const [showAddForm, setShowAddForm] = useState(false);
   const [newName, setNewName] = useState("");
@@ -2666,6 +2676,11 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
   const removeCandidate = (id) => { if (!window.confirm("¿Eliminar este candidato?")) return; const u = candidates.filter(c => c.id !== id); setCandidates(u); onUpdate(process.id, u); };
 
   const generatePublicLink = async () => {
+    // Block public publication until minimum config is set.
+    if (missingForPublish.length > 0) {
+      setShowMissingConfigModal(true);
+      return;
+    }
     setPublishing(true);
     try {
       // Strip secrets before writing to the public document.
@@ -2784,6 +2799,39 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
   return (
     <div className="min-h-screen bg-gray-50">
       {evalCandidate && <CandidateEvaluationPanel candidate={evalCandidate} process={process} agencySettings={agencySettings} onUpdateCandidate={updateCandidateFull} onClose={() => setEvalCandidate(null)} />}
+      {showMissingConfigModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-xl max-w-md w-full">
+            <div className="p-8 text-center">
+              <div className="text-5xl mb-3">⚠️</div>
+              <h2 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Completa tu configuración antes de publicar</h2>
+              <p className="text-gray-500 leading-relaxed text-sm">
+                Tu proceso está guardado. Para poder compartir el link con candidatos, primero necesitas completar:
+              </p>
+            </div>
+            <div className="px-8 pb-6">
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-3">
+                {missingForPublish.map((item, i) => (
+                  <div key={i}>
+                    <p className="text-sm font-bold text-amber-900">⚪ {item.label}</p>
+                    <p className="text-xs text-amber-800 mt-0.5 leading-relaxed">{item.hint}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="px-6 pb-6 flex gap-2">
+              <button onClick={() => setShowMissingConfigModal(false)}
+                className="flex-1 py-3 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50">
+                Seguir editando
+              </button>
+              <button onClick={() => { setShowMissingConfigModal(false); onOpenSettings?.(); }}
+                className="flex-1 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
+                Ir a Configuración →
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center gap-3">
           <button onClick={onBack} className="text-gray-400 hover:text-gray-700 text-sm shrink-0">← Panel</button>
@@ -3107,6 +3155,25 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
         ) : (
           // ── Normal dashboard with processes ──
           <>
+            {/* Warning banner when minimum publish config is missing.
+                Only brand + email are required to publish; slack is optional. */}
+            {(!hasBrand || !hasEmail) && (
+              <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 mb-5 flex items-start justify-between gap-3">
+                <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                  <span className="text-xl shrink-0">⚠️</span>
+                  <div>
+                    <p className="text-sm font-bold text-amber-900">Configuración de agencia incompleta</p>
+                    <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
+                      No podrás publicar el link público de tus procesos hasta que completes {!hasBrand && !hasEmail ? "el manual de marca y el email" : !hasBrand ? "el manual de marca" : "la configuración de email"}.
+                    </p>
+                  </div>
+                </div>
+                <button onClick={onOpenSettings} className="shrink-0 bg-gray-900 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-gray-800 transition-colors">
+                  Completar →
+                </button>
+              </div>
+            )}
+
             <div className="grid grid-cols-3 gap-4 mb-8">
               {[
                 { icon: "📋", label: "Procesos activos", val: active, color: "text-gray-900" },
@@ -3152,6 +3219,10 @@ export default function App() {
   const [agencySettings, setAgencySettings] = useState({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } }, onboardingCompleted: false });
   const [showSettings, setShowSettings] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  // Onboarding visibility is now decoupled from agencySettings.onboardingCompleted.
+  // Shown only on the first-ever login (!snap.exists()); after that, the user
+  // goes straight to the dashboard even if they never finished the wizard.
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
@@ -3165,8 +3236,10 @@ export default function App() {
             if (data.processes?.length > 0) setProcesses(data.processes);
             if (data.settings) setAgencySettings(data.settings);
           } else {
-            // First-time user: send a welcome email (fire-and-forget).
-            // Gated on !snap.exists() so sign-in events don't re-trigger it.
+            // First-time user: show onboarding wizard and send welcome email.
+            // After this one shot, they go straight to the dashboard on every
+            // subsequent login, whether or not they completed all 3 steps.
+            setShowOnboarding(true);
             if (u.email) {
               fetch("/api/sendEmail", {
                 method: "POST",
@@ -3191,10 +3264,13 @@ export default function App() {
 
   useEffect(() => {
     if (!user) return;
+    // 400ms debounce (was 1000ms). Short enough that a refresh shortly after
+    // creating a process still catches the write; long enough to avoid
+    // hammering Firestore during rapid edits in the evaluation panel.
     const t = setTimeout(async () => {
       try { await setDoc(doc(db, "recruiters", user.uid), { processes, settings: agencySettings, updatedAt: new Date().toISOString() }, { merge: true }); }
       catch (e) { console.error("Error saving:", e); }
-    }, 1000);
+    }, 400);
     return () => clearTimeout(t);
   }, [processes, agencySettings, user]);
 
@@ -3202,7 +3278,7 @@ export default function App() {
   useEffect(() => {
     if (!user || !settingsLoaded) return;
     // During onboarding, OnboardingScreen handles the callback itself
-    if (!agencySettings.onboardingCompleted) return;
+    if (showOnboarding) return;
     const params = new URLSearchParams(window.location.search);
     const slackConnected = params.get("slackConnected");
     const webhookUrl = params.get("slackWebhook");
@@ -3269,7 +3345,7 @@ export default function App() {
   };
 
   const clearAuthState = () => { setEmailError(""); setResetSent(false); };
-  const handleLogout = async () => { await signOut(auth); setProcesses([]); setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setPhase("dashboard"); };
+  const handleLogout = async () => { await signOut(auth); setProcesses([]); setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setShowOnboarding(false); setPhase("dashboard"); };
   const goToDashboard = () => { setPhase("dashboard"); setActiveJob(null); setCandidate(null); setEvaluation(null); setInterview(null); };
   const handlePublish = (jobData) => { const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] }; setProcesses(ps => [np, ...ps]); setActiveJob(jobData); setPhase("preview"); };
   const handleToggle = (id) => setProcesses(ps => ps.map(p => p.id === id ? { ...p, status: p.status === "active" ? "paused" : "active" } : p));
@@ -3283,6 +3359,7 @@ export default function App() {
 
   const handleCompleteOnboarding = (newSettings) => {
     setAgencySettings(s => ({ ...s, ...newSettings, onboardingCompleted: true }));
+    setShowOnboarding(false);
   };
 
   if (authLoading || !settingsLoaded) return <LoadingScreen />;
@@ -3292,13 +3369,13 @@ export default function App() {
     emailError={emailError} resetSent={resetSent}
     onClearAuthState={clearAuthState}
   />;
-  if (!agencySettings.onboardingCompleted) return <OnboardingScreen user={user} onComplete={handleCompleteOnboarding} />;
+  if (showOnboarding) return <OnboardingScreen user={user} onComplete={handleCompleteOnboarding} />;
 
   return (
     <>
       {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />}
       {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={() => setShowSettings(true)} agencySettings={agencySettings} />}
-      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} />; })()}
+      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={() => setShowSettings(true)} />; })()}
       {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onBack={goToDashboard} />}
       {phase === "preview" && <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />}
       {phase === "apply" && <CandidateApplyScreen job={activeJob} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />}
