@@ -835,236 +835,412 @@ function SkipWarningModal({ warningKey, onConfirm, onCancel }) {
   );
 }
 
+// ─── Conversational onboarding (Rumbo-style: one question per screen) ────────
 function OnboardingScreen({ user, onComplete }) {
-  // ── Restore state from localStorage so a Slack OAuth redirect doesn't reset progress ──
   const _saved = (() => { try { return JSON.parse(localStorage.getItem("recruitai_onboarding") || "{}"); } catch { return {}; } })();
 
   const [step, setStep] = useState(_saved.step ?? 0);
+  const [brandChoice, setBrandChoice] = useState(_saved.brandChoice || "");   // "paste" | "upload" | "skip"
   const [brandManual, setBrandManual] = useState(_saved.brandManual || "");
-  const [emailConfig, setEmailConfig] = useState(_saved.emailConfig || { provider: "app" });
+  const [emailProvider, setEmailProvider] = useState(_saved.emailProvider || ""); // "app" | "resend_domain"
+  const [fromName, setFromName] = useState(_saved.fromName || "");
+  const [resendApiKey, setResendApiKey] = useState(_saved.resendApiKey || "");
+  const [fromEmail, setFromEmail] = useState(_saved.fromEmail || "");
+  const [slackChoice, setSlackChoice] = useState(_saved.slackChoice || ""); // "connect" | "later"
   const [slackConfig, setSlackConfig] = useState(_saved.slackConfig || { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } });
-  const [brandTab, setBrandTab] = useState("text");
   const [uploading, setUploading] = useState(false);
-  const [skipWarning, setSkipWarning] = useState(null); // null | "all" | "brand" | "email" | "slack"
+  const [fileName, setFileName] = useState(_saved.fileName || "");
   const fileRef = useRef(null);
-  const STEPS = ["Bienvenida", "Tu marca", "Email", "Slack", "¡Listo!"];
 
-  // Persist progress on every change so the Slack OAuth redirect doesn't lose it
+  // Dynamic flow: steps are computed from answers so branches don't create dead screens.
+  // Each entry: { id, section?, n?, total? }
+  const flow = (() => {
+    const f = [{ id: "welcome" }];
+    // Section 1 — Tu marca
+    const brandDone = brandChoice === "skip" || (brandChoice && brandManual.trim());
+    const brandTotal = (brandChoice && brandChoice !== "skip") ? 2 : 1;
+    f.push({ id: "brand_choice", section: "🎨 Tu marca", n: 1, total: brandTotal });
+    if (brandChoice && brandChoice !== "skip") {
+      f.push({ id: "brand_content", section: "🎨 Tu marca", n: 2, total: 2 });
+    }
+    // Section 2 — Emails a candidatos
+    const emailTotal = emailProvider ? 2 : 1;
+    f.push({ id: "email_choice", section: "📧 Emails a candidatos", n: 1, total: emailTotal });
+    if (emailProvider) {
+      f.push({ id: "email_details", section: "📧 Emails a candidatos", n: 2, total: 2 });
+    }
+    // Section 3 — Notificaciones
+    const slackTotal = slackChoice === "connect" ? 2 : 1;
+    f.push({ id: "slack_choice", section: "🔔 Notificaciones en Slack", n: 1, total: slackTotal });
+    if (slackChoice === "connect") {
+      f.push({ id: "slack_connect", section: "🔔 Notificaciones en Slack", n: 2, total: 2 });
+    }
+    f.push({ id: "done" });
+    return f;
+  })();
+  // Keep step within bounds when the flow shrinks (e.g. user changes answer)
+  const safeStep = Math.min(step, flow.length - 1);
+  const current = flow[safeStep];
+
   useEffect(() => {
-    localStorage.setItem("recruitai_onboarding", JSON.stringify({ step, brandManual, emailConfig, slackConfig }));
-  }, [step, brandManual, emailConfig, slackConfig]);
+    localStorage.setItem("recruitai_onboarding", JSON.stringify({
+      step: safeStep, brandChoice, brandManual, emailProvider, fromName, resendApiKey, fromEmail, slackChoice, slackConfig, fileName,
+    }));
+  }, [safeStep, brandChoice, brandManual, emailProvider, fromName, resendApiKey, fromEmail, slackChoice, slackConfig, fileName]);
 
-  // On mount: detect return from Slack OAuth (webhook URL in URL params)
+  // Return from Slack OAuth redirect — jump to the connect question
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const webhookUrl = params.get("slackWebhook");
     const channel = params.get("slackChannel");
     if (webhookUrl) {
       setSlackConfig(s => ({ ...s, webhookUrl, channelName: channel || "" }));
-      setStep(3); // Jump to Slack step so user sees it connected
+      setSlackChoice("connect");
+      // Jump to slack_connect step (after flow rebuilds)
+      setTimeout(() => {
+        const idx = flow.findIndex(f => f.id === "slack_connect");
+        if (idx > -1) setStep(idx);
+      }, 0);
       window.history.replaceState({}, "", window.location.pathname);
     }
     if (params.get("slackError")) {
       window.history.replaceState({}, "", window.location.pathname);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Map each skippable step to its warning key
-  const STEP_WARNING_KEY = { 1: "brand", 2: "email", 3: "slack" };
 
   const handleFile = async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    setUploading(true);
+    setUploading(true); setFileName(file.name);
     try {
       const ext = file.name.split(".").pop().toLowerCase();
-      if (ext === "txt") { setBrandManual(await file.text()); setBrandTab("text"); }
+      if (ext === "txt") setBrandManual(await file.text());
       else if (ext === "docx") {
         const mammoth = await import("mammoth");
-        const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
-        setBrandManual(result.value); setBrandTab("text");
+        const r = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+        setBrandManual(r.value);
       } else if (ext === "pdf") {
         const pdfjsLib = await import("pdfjs-dist");
         pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
         const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
         let t = ""; for (let i = 1; i <= pdf.numPages; i++) { const pg = await pdf.getPage(i); const ct = await pg.getTextContent(); t += ct.items.map(x => x.str).join(" ") + "\n"; }
-        setBrandManual(t.trim()); setBrandTab("text");
+        setBrandManual(t.trim());
       }
     } catch { /* ignore */ }
     setUploading(false);
   };
 
+  const next = () => setStep(s => Math.min(s + 1, flow.length - 1));
+  const back = () => setStep(s => Math.max(0, s - 1));
+
   const finish = () => {
     localStorage.removeItem("recruitai_onboarding");
-    onComplete({ brandManual, emailConfig, slackConfig, onboardingCompleted: true });
+    const finalEmailConfig =
+      emailProvider === "app"
+        ? { provider: "app", fromName: fromName.trim() }
+        : emailProvider === "resend_domain"
+          ? { provider: "resend_domain", resendApiKey: resendApiKey.trim(), fromEmail: fromEmail.trim(), fromName: fromName.trim() }
+          : { provider: "none" };
+    const finalSlack = slackChoice === "connect"
+      ? slackConfig
+      : { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } };
+    onComplete({
+      brandManual: brandChoice !== "skip" ? brandManual : "",
+      emailConfig: finalEmailConfig,
+      slackConfig: finalSlack,
+      onboardingCompleted: true,
+    });
   };
-  const next = () => setStep(s => s + 1);
-  const back = () => setStep(s => s - 1);
 
-  // Try to skip — show warning if step has important config missing
-  const trySkip = (warningKey) => setSkipWarning(warningKey);
-  const confirmSkip = () => { setSkipWarning(null); if (skipWarning === "all") finish(); else next(); };
-  const cancelSkip = () => setSkipWarning(null);
+  // ── Validate current step ──────────────────────────────────────────────────
+  const canAdvance = (() => {
+    switch (current.id) {
+      case "welcome": return true;
+      case "brand_choice": return !!brandChoice;
+      case "brand_content": return brandManual.trim().length > 10;
+      case "email_choice": return !!emailProvider;
+      case "email_details":
+        if (emailProvider === "app") return true; // fromName is optional
+        return resendApiKey.trim() && fromEmail.trim();
+      case "slack_choice": return !!slackChoice;
+      case "slack_connect": return !!slackConfig.webhookUrl;
+      case "done": return true;
+      default: return false;
+    }
+  })();
+
+  // ── Question renderers ─────────────────────────────────────────────────────
+  const ChoiceCard = ({ selected, onClick, icon, title, subtitle, badge }) => (
+    <button onClick={onClick}
+      className={`w-full text-left rounded-2xl border-2 p-5 transition-all ${
+        selected ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 bg-white hover:border-gray-400"
+      }`}>
+      <div className="flex items-start gap-3">
+        <div className="text-2xl shrink-0">{icon}</div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={`font-bold text-sm ${selected ? "text-white" : "text-gray-900"}`}>{title}</span>
+            {badge && <span className={`text-xs px-2 py-0.5 rounded-full ${selected ? "bg-white/20 text-white" : "bg-gray-100 text-gray-600"}`}>{badge}</span>}
+          </div>
+          <p className={`text-xs mt-1 leading-relaxed ${selected ? "text-white/80" : "text-gray-500"}`}>{subtitle}</p>
+        </div>
+      </div>
+    </button>
+  );
+
+  const renderQuestion = () => {
+    switch (current.id) {
+      case "welcome":
+        return (
+          <div className="text-center py-6 space-y-5">
+            <div className="text-6xl">👋</div>
+            <div>
+              <h2 className="text-3xl font-black text-gray-900 tracking-tight">Hola, {user?.displayName?.split(" ")[0] || "bienvenido"}</h2>
+              <p className="text-gray-500 mt-3 leading-relaxed">Vamos a configurar tu cuenta en 3 minutos. Te haré unas preguntas sobre tu agencia para adaptar la IA a tu estilo.</p>
+            </div>
+            <div className="pt-2 grid grid-cols-3 gap-2 text-xs text-gray-400">
+              <div><span className="font-bold text-gray-700 block">🎨</span>Tu marca</div>
+              <div><span className="font-bold text-gray-700 block">📧</span>Emails</div>
+              <div><span className="font-bold text-gray-700 block">🔔</span>Notificaciones</div>
+            </div>
+          </div>
+        );
+
+      case "brand_choice":
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">¿Tienes un manual de marca o valores de tu agencia?</h2>
+            <p className="text-gray-500 mb-6 leading-relaxed">La IA lo usará para evaluar si cada candidato encaja con tu cultura. Sin esto, la evaluación cultural será genérica.</p>
+            <div className="space-y-2.5">
+              <ChoiceCard selected={brandChoice === "paste"} onClick={() => setBrandChoice("paste")}
+                icon="✏️" title="Sí, lo escribo o lo pego" subtitle="Copia-pega el texto o escríbelo a mano" />
+              <ChoiceCard selected={brandChoice === "upload"} onClick={() => setBrandChoice("upload")}
+                icon="📄" title="Sí, lo subo como documento" subtitle="Extraigo el texto automáticamente de un .pdf, .docx o .txt" />
+              <ChoiceCard selected={brandChoice === "skip"} onClick={() => setBrandChoice("skip")}
+                icon="⏭" title="Aún no, lo configuro más tarde" subtitle="Podrás añadirlo en ⚙️ Configuración cuando quieras" />
+            </div>
+          </div>
+        );
+
+      case "brand_content":
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">
+              {brandChoice === "upload" ? "Sube tu documento" : "Pega aquí tu manual"}
+            </h2>
+            <p className="text-gray-500 mb-5 leading-relaxed">
+              {brandChoice === "upload"
+                ? "Formatos admitidos: .txt, .docx, .pdf. Extraigo el texto y lo muestro abajo para que lo revises."
+                : "Cuanta más contexto des a la IA (valores, tono, qué buscáis, qué evitáis), mejor evaluará la compatibilidad cultural."}
+            </p>
+            {brandChoice === "upload" && (
+              <div className="mb-4">
+                <div onClick={() => fileRef.current?.click()}
+                  className="border-2 border-dashed border-gray-200 rounded-2xl p-6 text-center cursor-pointer hover:border-gray-400 hover:bg-gray-50 transition-all">
+                  {uploading ? <p className="text-sm text-gray-700 font-medium">Extrayendo texto...</p> : (
+                    <>
+                      <p className="text-3xl mb-2">📁</p>
+                      <p className="text-sm font-medium text-gray-700">{fileName ? `✓ ${fileName}` : "Haz clic para seleccionar archivo"}</p>
+                      <p className="text-xs text-gray-400 mt-1">.txt · .docx · .pdf</p>
+                    </>
+                  )}
+                </div>
+                <input ref={fileRef} type="file" accept=".txt,.docx,.pdf" onChange={handleFile} className="hidden" />
+              </div>
+            )}
+            <textarea className={inp} rows={brandChoice === "upload" ? 6 : 10}
+              value={brandManual} onChange={e => setBrandManual(e.target.value)}
+              placeholder="Somos una agencia orientada a resultados medibles. Buscamos perfiles con proactividad y pensamiento estratégico. Tono: cercano, directo, sin tecnicismos..." />
+            <p className="text-xs text-gray-400 mt-2">{brandManual.split(/\s+/).filter(Boolean).length} palabras</p>
+          </div>
+        );
+
+      case "email_choice":
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">¿Cómo quieres enviar emails a los candidatos?</h2>
+            <p className="text-gray-500 mb-6 leading-relaxed">Los candidatos reciben confirmación al aplicar, y los contactas automáticamente al tomar decisiones finales.</p>
+            <div className="space-y-2.5">
+              <ChoiceCard selected={emailProvider === "app"} onClick={() => setEmailProvider("app")}
+                icon="✨" title="Con RecruitAI Mail" subtitle="Sin configuración · activado al momento · gratis" badge="Recomendado" />
+              <ChoiceCard selected={emailProvider === "resend_domain"} onClick={() => setEmailProvider("resend_domain")}
+                icon="🏢" title="Con mi dominio propio" subtitle="Los candidatos ven tu dirección corporativa · máxima marca" badge="Avanzado" />
+            </div>
+          </div>
+        );
+
+      case "email_details":
+        if (emailProvider === "app") {
+          return (
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">¿Cómo quieres firmar los emails?</h2>
+              <p className="text-gray-500 mb-6 leading-relaxed">El nombre que verán los candidatos en la bandeja de entrada. Opcional.</p>
+              <div>
+                <label className={lbl}>Nombre del remitente</label>
+                <input className={inp} type="text" value={fromName} onChange={e => setFromName(e.target.value)}
+                  placeholder="Selección · Tu Agencia" />
+                <p className="text-xs text-gray-400 mt-2">Los candidatos verán: "<strong>{fromName || "Tu Agencia"}</strong> · RecruitAI"</p>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Conecta tu cuenta de Resend</h2>
+            <p className="text-gray-500 mb-5 leading-relaxed">Necesitas una cuenta en Resend con tu dominio verificado. <a href="https://resend.com/signup" target="_blank" rel="noreferrer" className="text-gray-900 underline">Crear cuenta gratis →</a></p>
+            <div className="space-y-4">
+              <div>
+                <label className={lbl}>API Key de Resend</label>
+                <input className={inp} type="password" value={resendApiKey} onChange={e => setResendApiKey(e.target.value)}
+                  placeholder="re_..." />
+              </div>
+              <div>
+                <label className={lbl}>Email remitente (de tu dominio verificado)</label>
+                <input className={inp} type="email" value={fromEmail} onChange={e => setFromEmail(e.target.value)}
+                  placeholder="seleccion@tu-agencia.com" />
+              </div>
+              <div>
+                <label className={lbl}>Nombre del remitente</label>
+                <input className={inp} type="text" value={fromName} onChange={e => setFromName(e.target.value)}
+                  placeholder="Selección · Tu Agencia" />
+              </div>
+            </div>
+          </div>
+        );
+
+      case "slack_choice":
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">¿Quieres avisos en Slack cuando llegue un candidato?</h2>
+            <p className="text-gray-500 mb-6 leading-relaxed">Recibirás notificaciones instantáneas + un resumen diario del pipeline. También se avisa cuando la IA termina una evaluación o cuando tomas una decisión.</p>
+            <div className="space-y-2.5">
+              <ChoiceCard selected={slackChoice === "connect"} onClick={() => setSlackChoice("connect")}
+                icon="🔔" title="Sí, conectar Slack" subtitle="1 clic para autorizar · elige el canal donde quieres los avisos" />
+              <ChoiceCard selected={slackChoice === "later"} onClick={() => setSlackChoice("later")}
+                icon="⏭" title="Más tarde" subtitle="Puedes conectarlo cuando quieras en ⚙️ Configuración → Slack" />
+            </div>
+          </div>
+        );
+
+      case "slack_connect":
+        return (
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 mb-2">Autoriza RecruitAI en Slack</h2>
+            <p className="text-gray-500 mb-6 leading-relaxed">
+              {slackConfig.webhookUrl
+                ? "✅ Slack conectado correctamente. Elige qué notificaciones quieres recibir."
+                : "Al hacer clic abajo se abrirá Slack para elegir el workspace y el canal. Después te traemos de vuelta aquí."}
+            </p>
+            {!slackConfig.webhookUrl ? (
+              <a href="/api/slack/install"
+                className="block text-center w-full py-4 bg-[#4A154B] text-white rounded-2xl font-bold hover:opacity-90 transition-opacity">
+                🔗 Conectar con Slack
+              </a>
+            ) : (
+              <div className="space-y-3">
+                <div className="bg-gray-50 rounded-xl p-4 flex items-center gap-3">
+                  <div className="text-2xl">✅</div>
+                  <div>
+                    <p className="text-sm font-bold text-gray-900">Conectado</p>
+                    {slackConfig.channelName && <p className="text-xs text-gray-500">Canal: {slackConfig.channelName}</p>}
+                  </div>
+                </div>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide pt-2">Preferencias</p>
+                {[
+                  ["newApplication", "🔔 Nueva aplicación", ["both", "instant"]],
+                  ["aiEvaluation", "🤖 Evaluación IA terminada", ["both", "instant"]],
+                  ["finalDecision", "✅ Decisión final tomada", ["both", "instant"]],
+                ].map(([key, label, onValues]) => (
+                  <label key={key} className="flex items-center justify-between bg-white border border-gray-100 rounded-xl px-4 py-3 cursor-pointer">
+                    <span className="text-sm text-gray-700 font-medium">{label}</span>
+                    <input type="checkbox" checked={onValues.includes(slackConfig.notifications?.[key])}
+                      onChange={e => setSlackConfig(s => ({ ...s, notifications: { ...s.notifications, [key]: e.target.checked ? "instant" : "off" } }))}
+                      className="w-5 h-5 accent-gray-900" />
+                  </label>
+                ))}
+                <label className="flex items-center justify-between bg-white border border-gray-100 rounded-xl px-4 py-3 cursor-pointer">
+                  <span className="text-sm text-gray-700 font-medium">📊 Resumen diario del pipeline</span>
+                  <input type="checkbox" checked={!!slackConfig.notifications?.dailyDigest}
+                    onChange={e => setSlackConfig(s => ({ ...s, notifications: { ...s.notifications, dailyDigest: e.target.checked } }))}
+                    className="w-5 h-5 accent-gray-900" />
+                </label>
+              </div>
+            )}
+          </div>
+        );
+
+      case "done":
+        return (
+          <div className="text-center py-4 space-y-5">
+            <div className="text-6xl">🎉</div>
+            <div>
+              <h2 className="text-3xl font-black text-gray-900 tracking-tight">¡Todo listo, {user?.displayName?.split(" ")[0] || ""}!</h2>
+              <p className="text-gray-500 mt-3 leading-relaxed">Tu cuenta está configurada. Ya puedes crear tu primer proceso de selección.</p>
+            </div>
+            <div className="bg-gray-50 rounded-2xl p-5 text-left space-y-2">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Resumen</p>
+              <p className="text-sm text-gray-800">{brandManual ? "✅" : "⚪"} Manual de marca {brandManual ? `(${brandManual.split(/\s+/).filter(Boolean).length} palabras)` : "— pendiente"}</p>
+              <p className="text-sm text-gray-800">{emailProvider === "app" ? "✅ Email · RecruitAI Mail" : emailProvider === "resend_domain" ? "✅ Email · dominio propio" : "⚪ Email — pendiente"}</p>
+              <p className="text-sm text-gray-800">{slackConfig.webhookUrl ? "✅ Slack conectado" : "⚪ Slack — pendiente"}</p>
+            </div>
+          </div>
+        );
+
+      default: return null;
+    }
+  };
+
+  // ── Layout ─────────────────────────────────────────────────────────────────
+  const isWelcome = current.id === "welcome";
+  const isDone = current.id === "done";
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl">
-        {/* Header */}
-        <div className="px-8 pt-8 pb-4">
-          <div className="flex justify-between items-center mb-6">
-            <div className="text-2xl font-black text-gray-800">RecruitAI</div>
-            <button onClick={() => trySkip("all")} className="text-xs text-gray-400 hover:text-gray-600 underline">Omitir configuración →</button>
+    <div className="min-h-screen bg-white flex flex-col">
+      {/* Top bar */}
+      <div className="px-6 py-5 flex justify-between items-center max-w-2xl mx-auto w-full">
+        <span className="text-xl font-black text-gray-900 tracking-tight">RecruitAI</span>
+        <span className="text-xs text-gray-400 font-medium">{safeStep + 1} de {flow.length}</span>
+      </div>
+
+      {/* Main content */}
+      <div className="flex-1 flex items-start sm:items-center justify-center px-6 pb-8">
+        <div className="max-w-lg w-full">
+          {/* Section pill */}
+          {current.section && (
+            <div className="flex justify-center mb-5">
+              <span className="text-xs font-semibold text-gray-600 bg-gray-100 rounded-full px-3 py-1.5">
+                {current.section} · Pregunta {current.n} de {current.total}
+              </span>
+            </div>
+          )}
+
+          {/* Card */}
+          <div className="bg-white rounded-3xl border border-gray-200 p-6 sm:p-8">
+            {renderQuestion()}
           </div>
-          {/* Progress bar */}
-          <div className="flex gap-1.5 mb-2">
-            {STEPS.map((s, i) => (
-              <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                <div className={`h-1.5 w-full rounded-full transition-all duration-300 ${i <= step ? "bg-gray-900" : "bg-gray-200"}`} />
-                <span className={`text-xs font-medium truncate w-full text-center ${i === step ? "text-gray-900" : "text-gray-400"}`}>{s}</span>
-              </div>
-            ))}
-          </div>
-        </div>
 
-        {/* Content */}
-        <div className="px-8 pb-6 max-h-[60vh] overflow-y-auto">
+          {/* Footer nav */}
+          <div className="flex justify-between items-center mt-5">
+            {!isWelcome ? (
+              <button onClick={back}
+                className="px-4 py-2 text-sm text-gray-500 hover:text-gray-900 font-medium transition-colors">
+                ← Atrás
+              </button>
+            ) : <span />}
 
-          {/* Step 0: Welcome */}
-          {step === 0 && (
-            <div className="text-center py-4 space-y-4">
-              <div className="text-6xl">👋</div>
-              <h2 className="text-2xl font-black text-gray-900">Hola, {user?.displayName?.split(" ")[0] || "bienvenido"}!</h2>
-              <p className="text-gray-500 text-sm leading-relaxed">Vamos a configurar tu cuenta en 4 pasos para que puedas empezar a automatizar tu proceso de selección.</p>
-              <div className="grid grid-cols-2 gap-3 mt-4">
-                {[["🎨", "Tu marca", "Manual de valores para la IA"], ["📧", "Email", "Confirmaciones automáticas a candidatos"], ["🔔", "Slack", "Notificaciones al equipo"], ["🚀", "Listo", "Crea tu primer proceso"]].map(([ic, t, s]) => (
-                  <div key={t} className="bg-gray-50 rounded-xl p-3 flex items-start gap-3">
-                    <div className="text-xl shrink-0">{ic}</div>
-                    <div>
-                      <div className="text-xs font-bold text-gray-700">{t}</div>
-                      <div className="text-xs text-gray-400 mt-0.5">{s}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Step 1: Brand */}
-          {step === 1 && (
-            <div className="space-y-4 py-2">
-              <div>
-                <h2 className="text-lg font-black text-gray-900">🎨 Tu manual de marca</h2>
-                <p className="text-sm text-gray-500 mt-1">La IA usará esta información para evaluar si cada candidato encaja con tu cultura de agencia. Puedes añadirlo ahora o más tarde.</p>
-              </div>
-              <div className="flex gap-2 bg-gray-100 p-1 rounded-xl">
-                {[["text", "✏️ Escribir / Pegar"], ["upload", "📄 Subir documento"]].map(([id, label]) => (
-                  <button key={id} onClick={() => setBrandTab(id)}
-                    className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${brandTab === id ? "bg-white shadow text-gray-800" : "text-gray-500"}`}>{label}</button>
-                ))}
-              </div>
-              {brandTab === "text" && (
-                <textarea className={inp} rows={8} value={brandManual} onChange={e => setBrandManual(e.target.value)}
-                  placeholder={"Pega aquí tu manual de marca o los valores de tu agencia.\n\nEjemplo:\n- Somos una agencia orientada a resultados medibles...\n- Buscamos perfiles con actitud, proactividad y orientación al cliente...\n- Tono: cercano, estructurado, confiable..."} />
-              )}
-              {brandTab === "upload" && (
-                <div>
-                  <div onClick={() => fileRef.current?.click()}
-                    className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-gray-300 hover:bg-gray-50 transition-all">
-                    {uploading ? <p className="text-sm text-gray-900">Extrayendo texto...</p> : (
-                      <><p className="text-3xl mb-2">📁</p><p className="text-sm font-medium text-gray-700">Haz clic para seleccionar</p><p className="text-xs text-gray-400 mt-1">.txt, .docx, .pdf</p></>
-                    )}
-                  </div>
-                  <input ref={fileRef} type="file" accept=".txt,.docx,.pdf" onChange={handleFile} className="hidden" />
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* Step 2: Email */}
-          {step === 2 && (
-            <div className="space-y-4 py-2">
-              <div>
-                <h2 className="text-lg font-black text-gray-900">📧 Configura el email</h2>
-                <p className="text-sm text-gray-500 mt-1">Elige cómo enviar los emails automáticos a los candidatos. Puedes cambiarlo en cualquier momento.</p>
-              </div>
-              <EmailSetupWizard emailConfig={emailConfig} onChange={setEmailConfig} />
-            </div>
-          )}
-
-          {/* Step 3: Slack */}
-          {step === 3 && (
-            <div className="space-y-4 py-2">
-              <div>
-                <h2 className="text-lg font-black text-gray-900">🔔 Notificaciones en Slack</h2>
-                <p className="text-sm text-gray-500 mt-1">Conecta tu canal de Slack para recibir avisos cuando lleguen candidatos, se completen evaluaciones o se tomen decisiones. Puedes configurarlo en cualquier momento.</p>
-              </div>
-              <SlackSetupWizard slackConfig={slackConfig} onChange={setSlackConfig} />
-            </div>
-          )}
-
-          {/* Step 4: Done */}
-          {step === 4 && (
-            <div className="text-center py-4 space-y-4">
-              <div className="text-6xl">🎉</div>
-              <h2 className="text-2xl font-black text-gray-900">¡Todo listo!</h2>
-              <p className="text-gray-500 text-sm leading-relaxed">Tu cuenta está configurada. Ahora puedes crear tu primer proceso de selección y empezar a recibir candidatos.</p>
-              <div className="bg-gray-50 rounded-xl p-4 text-left space-y-2">
-                <p className="text-sm font-semibold text-gray-700">Resumen de configuración:</p>
-                <p className="text-xs text-gray-800">{brandManual ? "✅ Manual de marca configurado" : "⚪ Manual de marca — configúralo después en ⚙️"}</p>
-                <p className="text-xs text-gray-800">{emailConfig.provider === "app" ? "✅ Email activado (RecruitAI Mail)" : emailConfig.provider === "resend_domain" ? "✅ Email configurado (dominio propio)" : "⚪ Email — configúralo después en ⚙️"}</p>
-                <p className="text-xs text-gray-800">{slackConfig.webhookUrl ? "✅ Slack conectado" : "⚪ Slack — configúralo después en ⚙️"}</p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Footer buttons */}
-        <div className="px-8 pb-8 space-y-2">
-          <div className="flex gap-3">
-            {step > 0 && step < 4 && (
-              <button onClick={back} className="px-6 py-3 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">← Atrás</button>
-            )}
-            {step === 0 && (
-              <button onClick={next} className="flex-1 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">Empezar configuración →</button>
-            )}
-            {step === 1 && (
-              <button onClick={brandManual ? next : () => trySkip("brand")} className="flex-1 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
-                {brandManual ? "Continuar →" : "Continuar →"}
+            {isDone ? (
+              <button onClick={finish}
+                className="px-6 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 transition-colors">
+                🚀 Ir al dashboard
+              </button>
+            ) : (
+              <button onClick={next} disabled={!canAdvance}
+                className="px-6 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                {isWelcome ? "Comenzar →" : "Siguiente →"}
               </button>
             )}
-            {step === 2 && (
-              <button onClick={next} className="flex-1 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
-                Continuar →
-              </button>
-            )}
-            {step === 3 && (
-              <button onClick={slackConfig.webhookUrl ? next : () => trySkip("slack")} className="flex-1 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
-                {slackConfig.webhookUrl ? "Continuar →" : "Continuar →"}
-              </button>
-            )}
-            {step === 4 && (
-              <button onClick={finish} className="flex-1 py-3 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700">🚀 Ir al dashboard</button>
-            )}
           </div>
-          {/* Per-step skip link (only for configurable steps not yet filled) */}
-          {step === 1 && !brandManual && (
-            <p className="text-center text-xs text-gray-400">
-              <button onClick={() => trySkip("brand")} className="underline hover:text-gray-600">Omitir este paso</button>
-            </p>
-          )}
-          {step === 2 && emailConfig.provider === "none" && (
-            <p className="text-center text-xs text-gray-400">
-              <button onClick={() => trySkip("email")} className="underline hover:text-gray-600">Configurar más tarde</button>
-            </p>
-          )}
-          {step === 3 && !slackConfig.webhookUrl && (
-            <p className="text-center text-xs text-gray-400">
-              <button onClick={() => trySkip("slack")} className="underline hover:text-gray-600">Omitir este paso</button>
-            </p>
-          )}
         </div>
-
-        {/* Skip warning modal */}
-        {skipWarning && <SkipWarningModal warningKey={skipWarning} onConfirm={confirmSkip} onCancel={cancelSkip} />}
       </div>
     </div>
   );
