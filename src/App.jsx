@@ -1035,7 +1035,9 @@ function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, 
       <div className="bg-white rounded-3xl shadow-xl border border-gray-100 p-8 sm:p-10 max-w-md w-full">
         {/* Header */}
         <div className="text-center mb-7">
-          <div className="w-16 h-16 bg-gray-900 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-5">🤖</div>
+          <div className="w-16 h-16 bg-gray-900 rounded-2xl flex items-center justify-center mx-auto mb-5">
+            <img src="/iso-on-dark.png" alt="" className="w-10 h-10 object-contain" />
+          </div>
           <h1 className="text-4xl font-black text-gray-900 mb-2 tracking-tight">RecruitAI</h1>
           <p className="text-gray-500 leading-relaxed text-sm">Automatización de selección para agencias digitales</p>
         </div>
