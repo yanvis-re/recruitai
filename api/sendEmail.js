@@ -133,7 +133,7 @@ async function sendViaResend(apiKey, from, to, subject, html) {
 // ── Send via Gmail SMTP (legacy) ─────────────────────────────────────────────
 
 async function sendViaGmail(emailConfig, to, subject, html) {
-  const transporter = nodemailer.createTransporter({
+  const transporter = nodemailer.createTransport({
     service: "gmail",
     auth: { user: emailConfig.gmailUser, pass: emailConfig.gmailAppPassword },
   });
