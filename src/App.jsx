@@ -1434,7 +1434,12 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
   };
 
   const setFinalDecision = async (decision) => {
-    onUpdateCandidate({ ...candidate, estado: decision, finalDecision: decision });
+    const finalStates = ["Contratado", "Descartado", "En cartera"];
+    const update = { ...candidate, estado: decision, finalDecision: decision };
+    if (finalStates.includes(decision) && !candidate.decidedAt) {
+      update.decidedAt = new Date().toISOString();
+    }
+    onUpdateCandidate(update);
 
     const emailTypeMap = {
       "Contratado": "decision_contratado",
@@ -1654,7 +1659,20 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
   const [importCount, setImportCount] = useState(0);
   const [evalCandidate, setEvalCandidate] = useState(null);
 
-  const updateCandidate = (id, field, value) => { const u = candidates.map(c => c.id === id ? { ...c, [field]: value } : c); setCandidates(u); onUpdate(process.id, u); };
+  const FINAL_ESTADOS = ["Contratado", "Descartado", "En cartera"];
+  const updateCandidate = (id, field, value) => {
+    const u = candidates.map(c => {
+      if (c.id !== id) return c;
+      const next = { ...c, [field]: value };
+      // Stamp decidedAt when the candidate reaches a terminal state for the first time.
+      // Used by the analytics panel to compute average time-to-decision.
+      if (field === "estado" && FINAL_ESTADOS.includes(value) && !c.decidedAt) {
+        next.decidedAt = new Date().toISOString();
+      }
+      return next;
+    });
+    setCandidates(u); onUpdate(process.id, u);
+  };
   const updateCandidateFull = (updated) => { const u = candidates.map(c => c.id === updated.id ? updated : c); setCandidates(u); onUpdate(process.id, u); if (evalCandidate?.id === updated.id) setEvalCandidate(updated); };
   const addCandidate = () => { if (!newName.trim()) return; const nc = { id: `c_${Date.now()}`, name: newName.trim(), email: newEmail.trim(), phase: "applied", estado: "Pendiente", progreso: "Ingreso", entrevistador: user?.displayName || "", notas: "" }; const u = [...candidates, nc]; setCandidates(u); onUpdate(process.id, u); setNewName(""); setNewEmail(""); setShowAddForm(false); };
   const removeCandidate = (id) => { if (!window.confirm("¿Eliminar este candidato?")) return; const u = candidates.filter(c => c.id !== id); setCandidates(u); onUpdate(process.id, u); };
@@ -1713,6 +1731,68 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
   const statsByEstado = ESTADO_OPTIONS.map(e => ({ label: e, count: candidates.filter(c => (c.estado || "Pendiente") === e).length }));
   const statColors = ["bg-gray-50 text-gray-700", "bg-gray-50 text-gray-800", "bg-indigo-50 text-indigo-700", "bg-yellow-50 text-yellow-700", "bg-red-50 text-red-600", "bg-green-50 text-green-700"];
 
+  // ── Pipeline analytics ──────────────────────────────────────────────────────
+  const analytics = (() => {
+    const total = candidates.length;
+    const interviewStates = ["Primera entrevista", "Segunda entrevista", "Contratado"];
+    const interviewed = candidates.filter(c => interviewStates.includes(c.estado)).length;
+    const hired = candidates.filter(c => c.estado === "Contratado").length;
+    const decided = candidates.filter(c => FINAL_ESTADOS.includes(c.estado)).length;
+
+    const weekAgoTs = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const newThisWeek = candidates.filter(c => c.submittedAt && new Date(c.submittedAt).getTime() > weekAgoTs).length;
+
+    const appToInterview = total > 0 ? Math.round((interviewed / total) * 100) : 0;
+    const interviewToHire = interviewed > 0 ? Math.round((hired / interviewed) * 100) : 0;
+    const overallHireRate = total > 0 ? Math.round((hired / total) * 100) : 0;
+
+    const decisionTimesDays = candidates
+      .filter(c => c.submittedAt && c.decidedAt)
+      .map(c => (new Date(c.decidedAt).getTime() - new Date(c.submittedAt).getTime()) / (1000 * 60 * 60 * 24));
+    const avgDecisionDays = decisionTimesDays.length > 0
+      ? Math.round(decisionTimesDays.reduce((a, b) => a + b, 0) / decisionTimesDays.length)
+      : null;
+
+    return { total, interviewed, hired, decided, newThisWeek, appToInterview, interviewToHire, overallHireRate, avgDecisionDays };
+  })();
+
+  // ── CSV export ──────────────────────────────────────────────────────────────
+  const exportCSV = () => {
+    if (candidates.length === 0) return;
+    const headers = ["Nombre", "Email", "Teléfono", "LinkedIn", "Estado", "Progreso", "Entrevistador", "Fecha aplicación", "Fecha decisión", "Score ejercicio", "Recom. ejercicio", "Score entrevista", "Recom. entrevista", "Decisión final", "Notas"];
+    const rows = candidates.map(c => [
+      c.name || "",
+      c.email || "",
+      c.phone || "",
+      c.linkedin || "",
+      c.estado || "",
+      c.progreso || "",
+      c.entrevistador || "",
+      c.submittedAt ? new Date(c.submittedAt).toLocaleDateString("es-ES") : "",
+      c.decidedAt ? new Date(c.decidedAt).toLocaleDateString("es-ES") : "",
+      c.exerciseEvaluation?.overall ?? "",
+      c.exerciseEvaluation?.recommendation ?? "",
+      c.interviewEvaluation?.candidate?.overall ?? "",
+      c.interviewEvaluation?.candidate?.recommendation ?? "",
+      c.finalDecision || "",
+      (c.notas || "").replace(/[\r\n]+/g, " "),
+    ]);
+    const escape = (v) => {
+      const s = String(v ?? "");
+      return /[",\n\r;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [headers, ...rows].map(r => r.map(escape).join(",")).join("\n");
+    // BOM prefix so Excel opens it as UTF-8
+    const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const safeTitle = getPositionTitle(process.position).replace(/[^a-z0-9]+/gi, "_").toLowerCase();
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `candidatos_${safeTitle}_${new Date().toISOString().split("T")[0]}.csv`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {evalCandidate && <CandidateEvaluationPanel candidate={evalCandidate} process={process} agencySettings={agencySettings} onUpdateCandidate={updateCandidateFull} onClose={() => setEvalCandidate(null)} />}
@@ -1733,9 +1813,71 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
           {process.position?.hoursPerWeek && <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{process.position.hoursPerWeek}h/sem</span>}
           {process.company?.salaryMin && <span className="text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full">{Number(process.company.salaryMin).toLocaleString()}–{Number(process.company.salaryMax).toLocaleString()} {process.company.currency}</span>}
         </div>
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-5">
+        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-4">
           {statsByEstado.map(({ label, count }, i) => (<div key={label} className={`rounded-xl border border-gray-100 p-3 text-center shadow-sm ${statColors[i]}`}><p className="text-2xl font-black leading-none">{count}</p><p className="text-xs leading-tight mt-1 opacity-80">{label}</p></div>))}
         </div>
+
+        {/* ── Analytics panel ─────────────────────────────────────────────── */}
+        {candidates.length > 0 && (
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-gray-900 text-sm">📊 Analítica del proceso</h3>
+              <span className="text-xs text-gray-400">Desde {new Date(process.createdAt).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" })}</span>
+            </div>
+            {/* KPI cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+              <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
+                <p className="text-xs text-gray-500 font-semibold">Candidatos totales</p>
+                <p className="text-2xl font-black text-gray-900 leading-none mt-1">{analytics.total}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
+                <p className="text-xs text-gray-500 font-semibold">Nuevos esta semana</p>
+                <p className="text-2xl font-black text-gray-900 leading-none mt-1">
+                  {analytics.newThisWeek > 0 ? `+${analytics.newThisWeek}` : "0"}
+                </p>
+              </div>
+              <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
+                <p className="text-xs text-gray-500 font-semibold">Tasa contratación</p>
+                <p className="text-2xl font-black text-gray-900 leading-none mt-1">{analytics.overallHireRate}%</p>
+                <p className="text-xs text-gray-400 mt-0.5">{analytics.hired} de {analytics.total}</p>
+              </div>
+              <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
+                <p className="text-xs text-gray-500 font-semibold">Tiempo medio</p>
+                <p className="text-2xl font-black text-gray-900 leading-none mt-1">
+                  {analytics.avgDecisionDays !== null ? `${analytics.avgDecisionDays}d` : <span className="text-gray-300">—</span>}
+                </p>
+                <p className="text-xs text-gray-400 mt-0.5">hasta decisión</p>
+              </div>
+            </div>
+            {/* Funnel */}
+            <div>
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Funnel de conversión</p>
+              <div className="space-y-2.5">
+                {[
+                  { label: "Aplicaron", count: analytics.total, from: null },
+                  { label: "Llegaron a entrevista", count: analytics.interviewed, from: analytics.total, rate: analytics.appToInterview, fromLabel: "del total" },
+                  { label: "Contratados", count: analytics.hired, from: analytics.interviewed, rate: analytics.interviewToHire, fromLabel: "de entrevistas" },
+                ].map((row, i) => {
+                  const pct = analytics.total > 0 ? (row.count / analytics.total) * 100 : 0;
+                  return (
+                    <div key={i}>
+                      <div className="flex items-center justify-between text-sm mb-1">
+                        <span className="text-gray-700 font-medium">{row.label}</span>
+                        <span className="text-gray-900 font-bold">
+                          {row.count}
+                          {row.rate != null && <span className="text-gray-400 text-xs ml-2 font-normal">({row.rate}% {row.fromLabel})</span>}
+                        </span>
+                      </div>
+                      <div className="bg-gray-100 rounded-full h-2 overflow-hidden">
+                        <div className="bg-gray-900 h-full rounded-full transition-all duration-500" style={{ width: `${Math.max(pct, 2)}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
         {/* Link público */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 mb-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1751,9 +1893,15 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
         </div>
         {/* Candidate Table */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 gap-2">
             <h2 className="font-bold text-gray-800">Candidatos <span className="text-gray-400 font-normal text-sm">({candidates.length})</span></h2>
-            <button onClick={() => setShowAddForm(v => !v)} className="px-4 py-2 bg-gray-900 text-white rounded-xl text-xs font-bold hover:bg-gray-800">+ Añadir candidato</button>
+            <div className="flex gap-2 flex-wrap">
+              <button onClick={exportCSV} disabled={candidates.length === 0}
+                className="px-3 py-2 border border-gray-200 text-gray-700 rounded-xl text-xs font-bold hover:bg-gray-50 disabled:opacity-40 transition-colors">
+                ⬇ Exportar CSV
+              </button>
+              <button onClick={() => setShowAddForm(v => !v)} className="px-4 py-2 bg-gray-900 text-white rounded-xl text-xs font-bold hover:bg-gray-800">+ Añadir candidato</button>
+            </div>
           </div>
           {showAddForm && (
             <div className="px-5 py-4 bg-gray-50 border-b border-gray-100 flex flex-wrap items-end gap-3">
