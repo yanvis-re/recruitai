@@ -1,5 +1,29 @@
 import { useState, useEffect, useRef } from "react";
-import { auth, db, googleProvider, doc, getDoc, setDoc, collection, addDoc, getDocs, signInWithPopup, signOut, onAuthStateChanged } from "./firebase.js";
+import {
+  auth, db, googleProvider,
+  doc, getDoc, setDoc, collection, addDoc, getDocs,
+  signInWithPopup, signOut, onAuthStateChanged,
+  createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile,
+} from "./firebase.js";
+
+// Spanish-friendly translations for the most common Firebase Auth error codes.
+function translateAuthError(code) {
+  const map = {
+    "auth/email-already-in-use": "Este email ya está registrado. Inicia sesión o usa otro.",
+    "auth/invalid-email": "El email no tiene un formato válido.",
+    "auth/weak-password": "La contraseña es muy débil. Usa al menos 6 caracteres.",
+    "auth/user-not-found": "No existe ninguna cuenta con este email.",
+    "auth/wrong-password": "Contraseña incorrecta.",
+    "auth/invalid-credential": "Email o contraseña incorrectos.",
+    "auth/invalid-login-credentials": "Email o contraseña incorrectos.",
+    "auth/too-many-requests": "Demasiados intentos fallidos. Prueba en unos minutos o recupera tu contraseña.",
+    "auth/network-request-failed": "Error de red. Revisa tu conexión.",
+    "auth/operation-not-allowed": "Este método de autenticación no está habilitado. El admin debe activarlo en Firebase Console.",
+    "auth/user-disabled": "Esta cuenta ha sido deshabilitada.",
+    "auth/missing-password": "Introduce una contraseña.",
+  };
+  return map[code] || null;
+}
 
 // ─── AI evaluation (simulated fallback) ───────────────────────────────────────
 function generateAIEvaluation(responses, jobData) {
@@ -781,20 +805,137 @@ function LoadingScreen() {
   );
 }
 
-function LoginScreen({ onLogin, loading }) {
+function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, resetSent, onClearAuthState }) {
+  const [mode, setMode] = useState("choose"); // "choose" | "signin" | "signup" | "reset"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [name, setName] = useState("");
+
+  const resetForm = () => { setEmail(""); setPassword(""); setName(""); onClearAuthState?.(); };
+  const goToChooser = () => { setMode("choose"); resetForm(); };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (mode === "reset") onEmailAuth({ mode: "reset", email });
+    else if (mode === "signup") onEmailAuth({ mode: "signup", email, password, name });
+    else onEmailAuth({ mode: "signin", email, password });
+  };
+
+  const GoogleIcon = () => (
+    <svg className="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+  );
+
   return (
     <div className="min-h-screen bg-white flex items-center justify-center p-6">
-      <div className="bg-white rounded-3xl shadow-xl border border-gray-100 p-10 max-w-md w-full text-center">
-        <div className="w-16 h-16 bg-gray-900 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-6">🤖</div>
-        <h1 className="text-4xl font-black text-gray-900 mb-3 tracking-tight">RecruitAI</h1>
-        <p className="text-gray-500 mb-8 leading-relaxed">Automatización de selección de personal para agencias digitales</p>
-        <button onClick={onLogin} disabled={loading}
-          className="w-full flex items-center justify-center gap-3 py-3.5 px-6 border-2 border-gray-200 rounded-xl font-semibold text-gray-700 hover:border-gray-400 hover:bg-gray-50 transition-all disabled:opacity-50">
-          {loading ? <span className="text-sm">Iniciando sesión...</span> : (
-            <><svg className="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg><span>Continuar con Google</span></>
-          )}
-        </button>
-        <p className="text-xs text-gray-400 mt-4">Tus datos se guardan de forma segura en Firebase</p>
+      <div className="bg-white rounded-3xl shadow-xl border border-gray-100 p-8 sm:p-10 max-w-md w-full">
+        {/* Header */}
+        <div className="text-center mb-7">
+          <div className="w-16 h-16 bg-gray-900 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-5">🤖</div>
+          <h1 className="text-4xl font-black text-gray-900 mb-2 tracking-tight">RecruitAI</h1>
+          <p className="text-gray-500 leading-relaxed text-sm">Automatización de selección para agencias digitales</p>
+        </div>
+
+        {mode === "choose" && (
+          <>
+            <button onClick={onLogin} disabled={loading}
+              className="w-full flex items-center justify-center gap-3 py-3.5 px-6 border-2 border-gray-200 rounded-xl font-semibold text-gray-700 hover:border-gray-400 hover:bg-gray-50 transition-all disabled:opacity-50 mb-3">
+              {loading ? <span className="text-sm">Iniciando sesión...</span> : (<><GoogleIcon /><span>Continuar con Google</span></>)}
+            </button>
+
+            <div className="flex items-center gap-3 my-4">
+              <div className="flex-1 h-px bg-gray-200" />
+              <span className="text-xs text-gray-400 font-medium">o</span>
+              <div className="flex-1 h-px bg-gray-200" />
+            </div>
+
+            <button onClick={() => setMode("signin")}
+              className="w-full py-3.5 px-6 border-2 border-gray-200 rounded-xl font-semibold text-gray-700 hover:border-gray-400 hover:bg-gray-50 transition-colors mb-3">
+              ✉️ Iniciar sesión con email
+            </button>
+            <button onClick={() => setMode("signup")}
+              className="w-full py-3.5 px-6 bg-gray-900 text-white rounded-xl font-bold hover:bg-gray-800 transition-colors">
+              Crear cuenta nueva
+            </button>
+          </>
+        )}
+
+        {mode !== "choose" && (
+          <>
+            {mode !== "reset" && (
+              <div className="flex gap-1 bg-gray-100 p-1 rounded-xl mb-5">
+                <button onClick={() => { setMode("signin"); setName(""); onClearAuthState?.(); }}
+                  className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${mode === "signin" ? "bg-white shadow text-gray-900" : "text-gray-500 hover:text-gray-900"}`}>
+                  Iniciar sesión
+                </button>
+                <button onClick={() => { setMode("signup"); onClearAuthState?.(); }}
+                  className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${mode === "signup" ? "bg-white shadow text-gray-900" : "text-gray-500 hover:text-gray-900"}`}>
+                  Crear cuenta
+                </button>
+              </div>
+            )}
+
+            {mode === "reset" && (
+              <p className="text-sm text-gray-600 leading-relaxed mb-4">
+                Introduce tu email y te enviaremos un enlace para restablecer tu contraseña.
+              </p>
+            )}
+
+            <form onSubmit={handleSubmit} className="space-y-3">
+              {mode === "signup" && (
+                <div>
+                  <label className={lbl}>Nombre completo</label>
+                  <input type="text" className={inp} value={name} onChange={e => setName(e.target.value)} required autoFocus placeholder="Tu nombre" />
+                </div>
+              )}
+              <div>
+                <label className={lbl}>Email</label>
+                <input type="email" className={inp} value={email} onChange={e => setEmail(e.target.value)} required autoFocus={mode !== "signup"} placeholder="tu@email.com" />
+              </div>
+              {mode !== "reset" && (
+                <div>
+                  <label className={lbl}>Contraseña{mode === "signup" ? " (mín. 6 caracteres)" : ""}</label>
+                  <input type="password" className={inp} value={password} onChange={e => setPassword(e.target.value)} required minLength={mode === "signup" ? 6 : 1} placeholder="••••••••" />
+                </div>
+              )}
+
+              {emailError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 text-sm text-red-700">{emailError}</div>
+              )}
+              {resetSent && (
+                <div className="bg-green-50 border border-green-200 rounded-xl px-3 py-2.5 text-sm text-green-700">
+                  ✅ Email enviado. Revisa tu bandeja (y spam) para restablecer la contraseña.
+                </div>
+              )}
+
+              <button type="submit" disabled={emailLoading}
+                className="w-full py-3.5 bg-gray-900 text-white rounded-xl font-bold hover:bg-gray-800 disabled:opacity-50 transition-colors">
+                {emailLoading ? "Un momento..." : mode === "reset" ? "Enviar email de recuperación" : mode === "signup" ? "Crear cuenta" : "Iniciar sesión"}
+              </button>
+
+              {mode === "signin" && (
+                <button type="button" onClick={() => { setMode("reset"); onClearAuthState?.(); }}
+                  className="w-full text-xs text-gray-500 hover:text-gray-900 py-2">
+                  ¿Olvidaste tu contraseña?
+                </button>
+              )}
+              {mode === "reset" && (
+                <button type="button" onClick={() => { setMode("signin"); onClearAuthState?.(); }}
+                  className="w-full text-xs text-gray-500 hover:text-gray-900 py-2">
+                  ← Volver al login
+                </button>
+              )}
+            </form>
+
+            <div className="mt-5 pt-5 border-t border-gray-100">
+              <button onClick={goToChooser}
+                className="w-full text-xs text-gray-400 hover:text-gray-900">
+                ← Usar otro método de login
+              </button>
+            </div>
+          </>
+        )}
+
+        <p className="text-xs text-gray-400 mt-6 text-center">Tus datos se guardan de forma segura en Firebase</p>
       </div>
     </div>
   );
@@ -2706,6 +2847,9 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
+  const [emailLoading, setEmailLoading] = useState(false);
+  const [emailError, setEmailError] = useState("");
+  const [resetSent, setResetSent] = useState(false);
   const [agencySettings, setAgencySettings] = useState({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } }, onboardingCompleted: false });
   const [showSettings, setShowSettings] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
@@ -2790,6 +2934,28 @@ export default function App() {
   }, [user, settingsLoaded, agencySettings]);
 
   const handleLogin = async () => { setLoginLoading(true); try { await signInWithPopup(auth, googleProvider); } catch (e) { console.error(e); setLoginLoading(false); } };
+
+  const handleEmailAuth = async ({ mode, email, password, name }) => {
+    setEmailLoading(true); setEmailError(""); setResetSent(false);
+    try {
+      if (mode === "signup") {
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        if (name && name.trim()) {
+          try { await updateProfile(cred.user, { displayName: name.trim() }); } catch { /* non-fatal */ }
+        }
+      } else if (mode === "reset") {
+        await sendPasswordResetEmail(auth, email);
+        setResetSent(true);
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+      }
+    } catch (e) {
+      setEmailError(translateAuthError(e.code) || e.message || "Error de autenticación");
+    }
+    setEmailLoading(false);
+  };
+
+  const clearAuthState = () => { setEmailError(""); setResetSent(false); };
   const handleLogout = async () => { await signOut(auth); setProcesses(MOCK_PROCESSES); setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setPhase("dashboard"); };
   const goToDashboard = () => { setPhase("dashboard"); setActiveJob(null); setCandidate(null); setEvaluation(null); setInterview(null); };
   const handlePublish = (jobData) => { const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] }; setProcesses(ps => [np, ...ps]); setActiveJob(jobData); setPhase("preview"); };
@@ -2807,7 +2973,12 @@ export default function App() {
   };
 
   if (authLoading || !settingsLoaded) return <LoadingScreen />;
-  if (!user) return <LoginScreen onLogin={handleLogin} loading={loginLoading} />;
+  if (!user) return <LoginScreen
+    onLogin={handleLogin} loading={loginLoading}
+    onEmailAuth={handleEmailAuth} emailLoading={emailLoading}
+    emailError={emailError} resetSent={resetSent}
+    onClearAuthState={clearAuthState}
+  />;
   if (!agencySettings.onboardingCompleted) return <OnboardingScreen user={user} onComplete={handleCompleteOnboarding} />;
 
   return (
