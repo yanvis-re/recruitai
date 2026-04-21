@@ -97,11 +97,6 @@ function ProgressStepper({ current }) {
 const inp = "w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400 bg-white";
 const lbl = "block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1";
 
-const MOCK_PROCESSES = [
-  { id: "p1", status: "active", createdAt: "2026-03-10", company: { name: "Proelia Digital", sector: "Marketing Digital", location: "Madrid / Remoto", modality: "Remoto", salaryMin: "40000", salaryMax: "55000", currency: "EUR", description: "Agencia especializada en infoproductos." }, position: { positionType: "media_buyer", specialty: "", customTitle: "", responsibilities: "Liderar la estrategia de paid media.", skills: "Meta Ads, Google Ads, TikTok Ads", experience: "5", contract: "Freelance", hoursPerWeek: "20", schedule: "Flexible", benefits: "" }, exercises: [{ id: 1, title: "Ejercicio Estratégico", description: "Diseña una estrategia de paid media para un lanzamiento de curso online.", criteria: [{ area: "Diagnóstico estratégico", indicators: "Análisis coherente", maxScore: 5 }, { area: "Funnel y táctica", indicators: "Claridad en campañas", maxScore: 5 }] }], candidates: [{ id: "c1", name: "Laura Martínez", email: "laura@example.com", phase: "review", estado: "Primera entrevista", progreso: "Entrevista", entrevistador: "", notas: "" }, { id: "c2", name: "Carlos Ruiz", email: "carlos@example.com", phase: "applied", estado: "Pendiente", progreso: "Ingreso", entrevistador: "", notas: "" }] },
-  { id: "p2", status: "active", createdAt: "2026-02-20", company: { name: "Proelia Digital", sector: "Marketing Digital", location: "Remoto", modality: "Remoto", salaryMin: "28000", salaryMax: "38000", currency: "EUR", description: "" }, position: { positionType: "media_buyer", specialty: "", customTitle: "", responsibilities: "Gestión de campañas.", skills: "Meta Ads, Google Ads", experience: "3", contract: "Contrato directo", hoursPerWeek: "40", schedule: "Mañanas", benefits: "Formación continua" }, exercises: [{ id: 1, title: "Caso Práctico", description: "Analiza las métricas de una cuenta y propón mejoras.", criteria: [{ area: "Análisis de datos", indicators: "Lectura correcta de métricas", maxScore: 5 }] }], candidates: [{ id: "c5", name: "Marta López", email: "marta@example.com", phase: "applied", estado: "Pendiente", progreso: "Prueba técnica", entrevistador: "", notas: "" }] },
-];
-
 const POSITIONS = [
   { id: "media_buyer", label: "Media Buyer", icon: "📊", specialties: [] },
   { id: "copywriter", label: "Copywriter", icon: "✍️", specialties: ["Web", "Email Marketing", "Redes Sociales", "Otros"] },
@@ -167,8 +162,12 @@ function getPositionTitle(position) {
   return position.specialty ? `${base} — ${position.specialty}` : base;
 }
 
+// Neutral defaults. NO hardcoded brand names — each recruiter starts clean
+// and fills in their own agency info. A few safe, generic defaults are kept
+// (position type, currency, hours, schedule, contract) because they're the
+// most common choice — the recruiter can change them instantly if wrong.
 const defaultJob = {
-  company: { name: "Proelia Digital", description: "Agencia de marketing digital especializada en infoproductos.", sector: "Marketing Digital", location: "Madrid / Remoto", modality: "Remoto", salaryMin: "", salaryMax: "", currency: "EUR" },
+  company: { name: "", description: "", sector: "", location: "", modality: "Remoto", salaryMin: "", salaryMax: "", currency: "EUR" },
   position: { positionType: "media_buyer", specialty: "", customTitle: "", responsibilities: "", skills: "", experience: "3", contract: "Freelance", hoursPerWeek: "20", schedule: "Flexible", benefits: "" },
   exercises: [{ id: 1, title: "Ejercicio Práctico", description: "", criteria: [{ area: "Análisis y diagnóstico", indicators: "Capacidad de identificar el problema y proponer soluciones", maxScore: 5 }, { area: "Propuesta estratégica", indicators: "Coherencia y calidad de la propuesta", maxScore: 5 }] }],
   schedulingUrl: "",
@@ -269,7 +268,7 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
             <div className="space-y-4">
               <div>
                 <label className={lbl}>Nombre de la empresa *</label>
-                <input className={inp} value={data.company.name} onChange={e => upC("name", e.target.value)} placeholder="Proelia Digital" />
+                <input className={inp} value={data.company.name} onChange={e => upC("name", e.target.value)} placeholder="Nombre de tu agencia" />
               </div>
               <div>
                 <label className={lbl}>Descripción corta</label>
@@ -1445,7 +1444,7 @@ function SkipWarningModal({ warningKey, onConfirm, onCancel }) {
 
 // ─── Brand-manual generator: 9 conversational prompts fed to Claude ──────────
 const BRAND_GEN_QUESTIONS = [
-  { id: "name", title: "¿Cómo se llama tu agencia?", subtitle: "El nombre que quieres que aparezca en el manual.", placeholder: "Proelia Digital, Rumbo Eficiente, Acme Studio...", minLength: 2, rows: 1 },
+  { id: "name", title: "¿Cómo se llama tu agencia?", subtitle: "El nombre que quieres que aparezca en el manual.", placeholder: "Acme Studio, Brand Lab, Tu Agencia...", minLength: 2, rows: 1 },
   { id: "history", title: "¿Cómo nació tu agencia y por qué existe hoy?", subtitle: "Desde dónde empezasteis, qué os movió a montar algo distinto, qué problema veíais que nadie resolvía bien.", placeholder: "Empezamos en 2020 porque veíamos que las agencias cobraban fortunas y entregaban cosas mediocres...", minLength: 30, rows: 5 },
   { id: "whatYouDo", title: "¿Qué hacéis, para quién, y qué consiguen trabajando con vosotros?", subtitle: "Lo más específico posible. Sectores, tipo de cliente, resultados medibles si puedes.", placeholder: "Llevamos paid media de ecommerce ya validados hasta 7 cifras. Nuestros clientes duplican ingresos en 12 meses...", minLength: 30, rows: 4 },
   { id: "differentiator", title: "¿Qué os hace diferentes de otras agencias parecidas?", subtitle: "2-3 cosas concretas con evidencia, método o experiencia detrás. No frases genéricas.", placeholder: "18M invertidos y 50M generados en 2024. Trabajamos con máximo 8 clientes a la vez. Te atiende el CEO, no un becario...", minLength: 30, rows: 4 },
