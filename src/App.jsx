@@ -603,41 +603,120 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
   );
 }
 
-function JobPreviewScreen({ job, onApply, onBack }) {
+// ─── Shared top bar for all candidate-facing screens ─────────────────────────
+function CandidateTopBar({ counterText }) {
   return (
-    <div className="min-h-screen bg-gray-200 p-4">
-      <div className="max-w-2xl mx-auto">
-        <div className="bg-white shadow-xl rounded-b-2xl">
-          <div className="p-6 border-b border-gray-100">
+    <div className="border-b border-gray-100 bg-white">
+      <div className="max-w-2xl mx-auto px-6 py-5 flex justify-between items-center">
+        <span className="text-xl font-black text-gray-900 tracking-tight">RecruitAI</span>
+        {counterText && <span className="text-xs text-gray-400 font-medium">{counterText}</span>}
+      </div>
+    </div>
+  );
+}
+
+function JobPreviewScreen({ job, onApply, onBack }) {
+  const exCount = job.exercises?.length || 1;
+  return (
+    <div className="min-h-screen bg-white">
+      <div className="border-b border-gray-100">
+        <div className="max-w-2xl mx-auto px-6 py-5 flex justify-between items-center">
+          {onBack ? (
+            <button onClick={onBack} className="text-sm text-gray-400 hover:text-gray-900 font-medium">← Volver</button>
+          ) : <span />}
+          <span className="text-xl font-black text-gray-900 tracking-tight">RecruitAI</span>
+          <span style={{ width: 50 }} />
+        </div>
+      </div>
+
+      <div className="max-w-2xl mx-auto px-6 py-8 sm:py-10">
+        {/* Company + position hero */}
+        <div className="bg-white rounded-3xl border border-gray-200 overflow-hidden mb-5">
+          <div className="p-6 sm:p-8 border-b border-gray-100">
             <div className="flex items-start gap-4">
-              <div className="w-16 h-16 bg-gray-900 rounded-xl flex items-center justify-center text-white text-2xl font-black flex-shrink-0">{job.company?.name?.[0] || "R"}</div>
-              <div>
-                <h1 className="text-xl font-bold text-gray-900">{job.position?.title || getPositionTitle(job.position)}</h1>
-                <p className="text-gray-900 font-semibold">{job.company?.name}</p>
-                <p className="text-gray-500 text-sm">{job.company?.location} · {job.company?.modality} · {job.position?.contract}</p>
-                <div className="flex flex-wrap gap-2 mt-2">
-                  <span className="text-xs bg-gray-50 text-gray-800 px-2.5 py-1 rounded-full font-medium">{job.company?.sector}</span>
-                  {job.company?.salaryMin && <span className="text-xs bg-green-50 text-green-700 px-2.5 py-1 rounded-full font-medium">{Number(job.company.salaryMin).toLocaleString()} – {Number(job.company.salaryMax).toLocaleString()} {job.company.currency}/año</span>}
-                  <span className="text-xs bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full">+{job.position?.experience} años exp.</span>
-                </div>
+              <div className="w-14 h-14 bg-gray-900 rounded-2xl flex items-center justify-center text-white text-2xl font-black shrink-0">
+                {job.company?.name?.[0] || "R"}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm text-gray-500 font-medium">{job.company?.name}</p>
+                <h1 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight leading-tight">
+                  {job.position?.title || getPositionTitle(job.position)}
+                </h1>
+                <p className="text-sm text-gray-500 mt-1">
+                  {[job.company?.location, job.company?.modality, job.position?.contract].filter(Boolean).join(" · ")}
+                </p>
               </div>
             </div>
-            <button onClick={onApply} className="mt-4 w-full bg-gray-900 text-white py-2.5 rounded-full font-bold hover:bg-gray-800 text-sm">Solicitar empleo</button>
-          </div>
-          <div className="p-6 space-y-5 text-sm text-gray-700">
-            {job.company?.description && <section><h3 className="font-bold text-gray-900 mb-2">Sobre {job.company.name}</h3><p>{job.company.description}</p></section>}
-            {job.position?.responsibilities && <section><h3 className="font-bold text-gray-900 mb-2">Responsabilidades</h3><p className="whitespace-pre-wrap">{job.position.responsibilities}</p></section>}
-            {job.position?.skills && <section><h3 className="font-bold text-gray-900 mb-2">Habilidades</h3><div className="flex flex-wrap gap-2">{job.position.skills.split(",").map((s) => <span key={s} className="bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-xs">{s.trim()}</span>)}</div></section>}
-            <div className="bg-gray-50 border border-gray-100 rounded-xl p-4">
-              <p className="font-semibold text-gray-700 mb-1">📋 Proceso 100% digital</p>
-              <p className="text-xs text-gray-900">Este proceso incluye {job.exercises?.length || 1} ejercicio(s) práctico(s). Cada uno requiere una respuesta escrita y un vídeo de defensa en Loom.</p>
+
+            <div className="flex flex-wrap gap-2 mt-4">
+              {job.company?.sector && (
+                <span className="text-xs bg-gray-100 text-gray-700 px-3 py-1.5 rounded-full font-medium">{job.company.sector}</span>
+              )}
+              {job.company?.salaryMin && (
+                <span className="text-xs bg-green-50 text-green-700 px-3 py-1.5 rounded-full font-medium">
+                  {Number(job.company.salaryMin).toLocaleString()} – {Number(job.company.salaryMax).toLocaleString()} {job.company.currency}/año
+                </span>
+              )}
+              {job.position?.experience && (
+                <span className="text-xs bg-gray-100 text-gray-700 px-3 py-1.5 rounded-full font-medium">+{job.position.experience} años exp.</span>
+              )}
+              {job.position?.hoursPerWeek && (
+                <span className="text-xs bg-gray-100 text-gray-700 px-3 py-1.5 rounded-full font-medium">{job.position.hoursPerWeek}h/sem</span>
+              )}
             </div>
+
+            <button onClick={onApply}
+              className="mt-5 w-full bg-gray-900 text-white py-3.5 rounded-xl font-bold hover:bg-gray-800 text-sm transition-colors">
+              Solicitar empleo
+            </button>
           </div>
-          <div className="p-6 pt-0">
-            <button onClick={onApply} className="w-full bg-gray-900 text-white py-3 rounded-full font-bold hover:bg-gray-800">Solicitar empleo</button>
-            {onBack && <button onClick={onBack} className="w-full mt-2 text-sm text-gray-400 hover:text-gray-600 py-2">← Volver</button>}
+
+          <div className="p-6 sm:p-8 space-y-6">
+            {job.company?.description && (
+              <section>
+                <h3 className="font-bold text-gray-500 mb-2 text-xs uppercase tracking-wide">Sobre {job.company.name}</h3>
+                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{job.company.description}</p>
+              </section>
+            )}
+            {job.position?.responsibilities && (
+              <section>
+                <h3 className="font-bold text-gray-500 mb-2 text-xs uppercase tracking-wide">Responsabilidades</h3>
+                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{job.position.responsibilities}</p>
+              </section>
+            )}
+            {job.position?.skills && (
+              <section>
+                <h3 className="font-bold text-gray-500 mb-2 text-xs uppercase tracking-wide">Habilidades requeridas</h3>
+                <div className="flex flex-wrap gap-2">
+                  {job.position.skills.split(",").filter(s => s.trim()).map((s, i) => (
+                    <span key={i} className="bg-gray-100 text-gray-700 px-3 py-1.5 rounded-full text-xs font-medium">{s.trim()}</span>
+                  ))}
+                </div>
+              </section>
+            )}
+            {job.position?.benefits && (
+              <section>
+                <h3 className="font-bold text-gray-500 mb-2 text-xs uppercase tracking-wide">Otros beneficios</h3>
+                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{job.position.benefits}</p>
+              </section>
+            )}
           </div>
         </div>
+
+        {/* Process explainer */}
+        <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5 mb-6">
+          <p className="font-bold text-gray-900 mb-3 text-sm">📋 Cómo es el proceso de selección</p>
+          <ol className="space-y-2 text-sm text-gray-700">
+            <li className="flex gap-2"><span className="text-gray-400">1.</span><span>Rellenas tus datos básicos — 2 minutos</span></li>
+            <li className="flex gap-2"><span className="text-gray-400">2.</span><span>Resuelves {exCount} ejercicio{exCount !== 1 ? "s" : ""} práctico{exCount !== 1 ? "s" : ""} con respuesta escrita + vídeo de defensa en Loom</span></li>
+            <li className="flex gap-2"><span className="text-gray-400">3.</span><span>El equipo revisa tu candidatura y te responde en 48-72h</span></li>
+          </ol>
+        </div>
+
+        <button onClick={onApply}
+          className="w-full bg-gray-900 text-white py-4 rounded-xl font-bold hover:bg-gray-800 transition-colors">
+          🚀 Solicitar empleo
+        </button>
       </div>
     </div>
   );
@@ -648,26 +727,61 @@ function CandidateApplyScreen({ job, onNext }) {
   const up = (f, v) => setForm((d) => ({ ...d, [f]: v }));
   const valid = form.name && form.email && form.presentation.trim().length > 20;
   return (
-    <div className="min-h-screen bg-gray-50 p-4">
-      <div className="max-w-2xl mx-auto">
-        <div className="bg-gradient-to-r from-purple-600 to-indigo-600 text-white rounded-t-2xl p-6">
-          <h1 className="text-xl font-bold">Aplicar a: {job.position?.title || getPositionTitle(job.position)}</h1>
-          <p className="text-purple-200 text-sm">{job.company?.name} · {job.company?.location}</p>
-        </div>
-        <div className="bg-white rounded-b-2xl shadow-lg p-6 space-y-5">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2 sm:col-span-1"><label className={lbl}>Nombre completo *</label><input className={inp} value={form.name} onChange={(e) => up("name", e.target.value)} /></div>
-            <div className="col-span-2 sm:col-span-1"><label className={lbl}>Teléfono</label><input className={inp} value={form.phone} onChange={(e) => up("phone", e.target.value)} /></div>
-            <div><label className={lbl}>Email *</label><input className={inp} value={form.email} onChange={(e) => up("email", e.target.value)} /></div>
-            <div><label className={lbl}>LinkedIn</label><input className={inp} value={form.linkedin} onChange={(e) => up("linkedin", e.target.value)} /></div>
+    <div className="min-h-screen bg-white flex flex-col">
+      <CandidateTopBar counterText="Paso 1 de 2" />
+
+      <div className="flex-1 flex items-start justify-center px-6 py-8 sm:py-12">
+        <div className="max-w-xl w-full">
+          <div className="flex justify-center mb-5">
+            <span className="text-xs font-semibold text-gray-600 bg-gray-100 rounded-full px-3 py-1.5">
+              📝 Tu aplicación · {job.company?.name}
+            </span>
           </div>
-          <div>
-            <label className={lbl}>Presentación personal *</label>
-            <textarea className={inp} rows={5} value={form.presentation} onChange={(e) => up("presentation", e.target.value)} placeholder="Cuéntanos sobre ti, tu trayectoria y por qué eres el perfil ideal..." />
+
+          <div className="bg-white rounded-3xl border border-gray-200 p-6 sm:p-8">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight mb-2">Cuéntanos quién eres</h1>
+            <p className="text-gray-500 leading-relaxed mb-6">
+              Aplicas a <strong>{job.position?.title || getPositionTitle(job.position)}</strong>. Rellena tus datos y añade una presentación breve antes de pasar a los ejercicios.
+            </p>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className={lbl}>Nombre completo *</label>
+                  <input className={inp} value={form.name} onChange={(e) => up("name", e.target.value)} placeholder="Nombre y apellidos" />
+                </div>
+                <div>
+                  <label className={lbl}>Teléfono</label>
+                  <input className={inp} value={form.phone} onChange={(e) => up("phone", e.target.value)} placeholder="+34 600 000 000" />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className={lbl}>Email *</label>
+                  <input className={inp} type="email" value={form.email} onChange={(e) => up("email", e.target.value)} placeholder="tu@email.com" />
+                </div>
+                <div>
+                  <label className={lbl}>LinkedIn</label>
+                  <input className={inp} value={form.linkedin} onChange={(e) => up("linkedin", e.target.value)} placeholder="linkedin.com/in/..." />
+                </div>
+              </div>
+              <div>
+                <label className={lbl}>Presentación personal *</label>
+                <textarea className={inp} rows={5} value={form.presentation} onChange={(e) => up("presentation", e.target.value)}
+                  placeholder="Cuéntanos sobre ti, tu trayectoria y por qué crees que eres el perfil ideal para este puesto..." />
+                <p className="text-xs text-gray-400 mt-1.5">
+                  {form.presentation.trim().length} caracteres · mínimo 20
+                </p>
+              </div>
+            </div>
           </div>
-          <button onClick={() => onNext(form)} disabled={!valid} className="w-full bg-purple-600 text-white py-3 rounded-xl font-bold hover:bg-purple-700 disabled:opacity-40 transition-colors">
-            Continuar con los ejercicios →
-          </button>
+
+          <div className="flex justify-end items-center mt-5">
+            <button onClick={() => onNext(form)} disabled={!valid}
+              className="px-6 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+              Continuar con los ejercicios →
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -683,38 +797,69 @@ function ExercisesScreen({ job, candidate, onSubmit, submitting }) {
   const canNext = resp?.response?.trim().length > 30 && resp?.loomUrl?.trim().length > 5;
   const isLast = idx === job.exercises.length - 1;
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="bg-white border-b border-gray-100 px-4 py-3 flex items-center gap-3">
-        <span className="text-xl font-black text-gray-900">RecruitAI</span>
-        <span className="text-xs text-gray-400">· Ejercicio {idx + 1} de {job.exercises.length}</span>
-      </div>
-      <div className="max-w-2xl mx-auto p-4">
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-4">
-          <h2 className="font-bold text-gray-900 mb-1">{ex.title}</h2>
-          <p className="text-gray-600 text-sm mb-4 whitespace-pre-wrap">{ex.description}</p>
-          <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 mb-4">
-            <p className="text-xs text-gray-800 font-semibold">📋 Criterios de evaluación</p>
-            {ex.criteria.map((c, i) => <p key={i} className="text-xs text-gray-900 mt-1">· {c.area}: {c.indicators}</p>)}
+    <div className="min-h-screen bg-white flex flex-col">
+      <CandidateTopBar counterText="Paso 2 de 2" />
+
+      <div className="flex-1 flex items-start justify-center px-6 py-8 sm:py-12">
+        <div className="max-w-2xl w-full">
+          <div className="flex justify-center mb-5">
+            <span className="text-xs font-semibold text-gray-600 bg-gray-100 rounded-full px-3 py-1.5">
+              🎯 Ejercicio {idx + 1} de {job.exercises.length}
+            </span>
           </div>
-          <div className="space-y-4">
-            <div>
-              <label className={lbl}>Tu respuesta escrita *</label>
-              <textarea className={inp} rows={8} value={resp?.response || ""} onChange={e => upR("response", e.target.value)} placeholder="Desarrolla tu propuesta aquí..." />
-              <p className="text-xs text-gray-400 mt-1">{(resp?.response || "").split(/\s+/).filter(Boolean).length} palabras</p>
+
+          <div className="bg-white rounded-3xl border border-gray-200 p-6 sm:p-8 mb-4">
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight mb-2">{ex.title}</h1>
+            <p className="text-gray-500 leading-relaxed mb-5 whitespace-pre-wrap">{ex.description}</p>
+
+            <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 mb-5">
+              <p className="text-xs font-bold text-gray-900 uppercase tracking-wide mb-2">📋 Criterios que se evalúan</p>
+              <ul className="space-y-1.5">
+                {ex.criteria.map((c, i) => (
+                  <li key={i} className="text-xs text-gray-700 leading-relaxed">
+                    <strong className="text-gray-900">{c.area}:</strong> {c.indicators}
+                  </li>
+                ))}
+              </ul>
             </div>
-            <div>
-              <label className={lbl}>Enlace de Loom — Vídeo de defensa *</label>
-              <input className={inp} value={resp?.loomUrl || ""} onChange={e => upR("loomUrl", e.target.value)} placeholder="https://www.loom.com/share/..." />
-              <p className="text-xs text-gray-900 mt-1.5 flex items-center gap-1">🎥 Graba un vídeo en Loom defendiendo tu propuesta (máx. 5 min) y pega el enlace aquí.</p>
+
+            <div className="space-y-5">
+              <div>
+                <label className={lbl}>Tu respuesta escrita *</label>
+                <textarea className={inp} rows={10} value={resp?.response || ""} onChange={e => upR("response", e.target.value)}
+                  placeholder="Desarrolla tu propuesta aquí. Sé específico, cita ejemplos y muestra tu método..." />
+                <p className="text-xs text-gray-400 mt-1.5">{(resp?.response || "").split(/\s+/).filter(Boolean).length} palabras</p>
+              </div>
+              <div>
+                <label className={lbl}>Enlace de Loom — Vídeo de defensa *</label>
+                <input className={inp} type="url" value={resp?.loomUrl || ""} onChange={e => upR("loomUrl", e.target.value)}
+                  placeholder="https://www.loom.com/share/..." />
+                <p className="text-xs text-gray-500 mt-1.5 flex items-start gap-1.5">
+                  <span className="shrink-0">🎥</span>
+                  <span>Graba un vídeo en <a href="https://loom.com" target="_blank" rel="noreferrer" className="text-gray-900 underline font-medium">Loom</a> (máx. 5 min) defendiendo tu propuesta y pega el enlace aquí. La IA también analiza la transcripción del vídeo.</span>
+                </p>
+              </div>
             </div>
           </div>
-        </div>
-        <div className="flex gap-3">
-          {idx > 0 && <button onClick={() => setIdx(i => i - 1)} className="px-5 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-600">← Anterior</button>}
-          {!isLast
-            ? <button onClick={() => setIdx(i => i + 1)} disabled={!canNext} className="flex-1 bg-gray-900 text-white py-3 rounded-xl font-bold hover:bg-gray-800 disabled:opacity-40">Siguiente ejercicio →</button>
-            : <button onClick={() => onSubmit(resps)} disabled={!canNext || submitting} className="flex-1 bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 disabled:opacity-40">{submitting ? "Enviando..." : "✅ Enviar solicitud"}</button>
-          }
+
+          <div className="flex justify-between items-center">
+            {idx > 0 ? (
+              <button onClick={() => setIdx(i => i - 1)} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-900 font-medium">
+                ← Ejercicio anterior
+              </button>
+            ) : <span />}
+            {!isLast ? (
+              <button onClick={() => setIdx(i => i + 1)} disabled={!canNext}
+                className="px-6 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                Siguiente ejercicio →
+              </button>
+            ) : (
+              <button onClick={() => onSubmit(resps)} disabled={!canNext || submitting}
+                className="px-6 py-3 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+                {submitting ? "Enviando..." : "✅ Enviar solicitud"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -722,13 +867,33 @@ function ExercisesScreen({ job, candidate, onSubmit, submitting }) {
 }
 
 function ConfirmationScreen({ candidate, onNext }) {
+  const firstName = (candidate?.name || "").split(" ")[0];
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-      <div className="bg-white rounded-2xl shadow-xl p-10 max-w-md w-full text-center">
-        <div className="text-5xl mb-4">🎉</div>
-        <h2 className="text-2xl font-black text-gray-900 mb-2">¡Solicitud enviada!</h2>
-        <p className="text-gray-500 mb-6">Hemos recibido tu candidatura. El equipo revisará tu perfil y recibirás respuesta en 48h.</p>
-        {onNext && <button onClick={onNext} className="w-full bg-gray-900 text-white py-3 rounded-xl font-bold hover:bg-gray-800">Ver evaluación →</button>}
+    <div className="min-h-screen bg-white flex items-center justify-center p-6">
+      <div className="max-w-md w-full">
+        <div className="bg-white rounded-3xl border border-gray-200 p-8 sm:p-10 text-center">
+          <div className="text-6xl mb-4">🎉</div>
+          <h1 className="text-3xl font-black text-gray-900 tracking-tight mb-3">
+            ¡Solicitud enviada{firstName ? `, ${firstName}` : ""}!
+          </h1>
+          <p className="text-gray-500 leading-relaxed mb-6">
+            Hemos recibido tu candidatura. El equipo revisará tu perfil y te responderemos en 48-72h con los siguientes pasos.
+          </p>
+
+          <div className="bg-gray-50 rounded-2xl p-5 text-left space-y-2 mb-6">
+            <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Qué pasa ahora</p>
+            <p className="text-sm text-gray-700">1. El equipo revisa tu aplicación y el vídeo de defensa</p>
+            <p className="text-sm text-gray-700">2. Recibirás confirmación por email</p>
+            <p className="text-sm text-gray-700">3. Si encajamos, agendamos una entrevista</p>
+          </div>
+
+          {onNext && (
+            <button onClick={onNext}
+              className="w-full py-3.5 bg-gray-900 text-white rounded-xl font-bold hover:bg-gray-800 transition-colors">
+              Ver evaluación →
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -1019,20 +1184,41 @@ function CandidatePublicScreen({ processId }) {
   };
 
   if (loading) return <LoadingScreen />;
-  if (error) return <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6"><div className="bg-white rounded-2xl shadow-sm p-10 max-w-md w-full text-center"><p className="text-4xl mb-4">⚠️</p><h2 className="font-bold text-gray-800 mb-2">Proceso no disponible</h2><p className="text-gray-500 text-sm">{error}</p></div></div>;
-  if (submitted) return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-      <div className="bg-white rounded-2xl shadow-xl p-10 max-w-md w-full text-center">
-        <div className="text-5xl mb-4">🎉</div>
-        <h2 className="text-2xl font-black text-gray-900 mb-2">¡Solicitud enviada!</h2>
-        <p className="text-gray-500 mb-4">Hemos recibido tu candidatura para <strong>{processData?.company?.name}</strong>.</p>
-        <div className="bg-gray-50 rounded-xl p-4 text-left text-sm text-gray-800 space-y-1">
-          <p>✅ Datos personales recibidos</p><p>✅ Ejercicios y vídeo de defensa enviados</p>
-          <p>📧 Recibirás confirmación en {candidate?.email}</p>
+  if (error) return (
+    <div className="min-h-screen bg-white flex items-center justify-center p-6">
+      <div className="max-w-md w-full text-center">
+        <div className="bg-white rounded-3xl border border-gray-200 p-8 sm:p-10">
+          <div className="text-5xl mb-4">⚠️</div>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Proceso no disponible</h1>
+          <p className="text-gray-500 text-sm leading-relaxed">{error}</p>
         </div>
       </div>
     </div>
   );
+  if (submitted) {
+    const firstName = (candidate?.name || "").split(" ")[0];
+    return (
+      <div className="min-h-screen bg-white flex items-center justify-center p-6">
+        <div className="max-w-md w-full">
+          <div className="bg-white rounded-3xl border border-gray-200 p-8 sm:p-10 text-center">
+            <div className="text-6xl mb-4">🎉</div>
+            <h1 className="text-3xl font-black text-gray-900 tracking-tight mb-3">
+              ¡Solicitud enviada{firstName ? `, ${firstName}` : ""}!
+            </h1>
+            <p className="text-gray-500 leading-relaxed mb-6">
+              Hemos recibido tu candidatura para <strong>{processData?.company?.name}</strong>. El equipo te responderá en 48-72h con los siguientes pasos.
+            </p>
+            <div className="bg-gray-50 rounded-2xl p-5 text-left space-y-2">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Lo que ya está hecho</p>
+              <p className="text-sm text-gray-700">✅ Datos personales recibidos</p>
+              <p className="text-sm text-gray-700">✅ Ejercicios y vídeo de defensa enviados</p>
+              <p className="text-sm text-gray-700">📧 Recibirás confirmación en <strong>{candidate?.email}</strong></p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (phase === "preview") return <JobPreviewScreen job={processData} onApply={() => setPhase("apply")} onBack={null} />;
   if (phase === "apply") return <CandidateApplyScreen job={processData} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />;
   if (phase === "exercises") return <ExercisesScreen job={processData} candidate={candidate} onSubmit={handleSubmit} submitting={submitting} />;
