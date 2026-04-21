@@ -3241,26 +3241,19 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
 }
 
 // ─── Rumbo Eficiente attribution ─────────────────────────────────────────────
-// Small isotype SVG (ambar diamond with concentric circles) + wordmark link.
-// Used as "RecruitAI por Rumbo Eficiente" in LoginScreen, Dashboard and email.
-function RumboMark({ className = "" }) {
-  return (
-    <svg viewBox="0 0 32 32" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <rect x="6" y="6" width="20" height="20" rx="2.5" transform="rotate(45 16 16)" fill="#D48006" />
-      <circle cx="16" cy="16" r="3.5" fill="#fff" />
-      <circle cx="16" cy="16" r="1.5" fill="#D48006" />
-    </svg>
-  );
-}
+// Footer signature used on LoginScreen and Dashboard. variant="light" targets
+// white/gray backgrounds (uses the dark logo), variant="dark" targets dark
+// backgrounds (uses the light logo).
 function BrandFooter({ variant = "light" }) {
-  const txt = variant === "dark" ? "text-gray-400 hover:text-white" : "text-gray-400 hover:text-gray-700";
+  const src = variant === "dark" ? "/rumbo-on-dark.png" : "/rumbo-on-light.png";
+  const opacity = variant === "dark" ? "opacity-70 hover:opacity-100" : "opacity-60 hover:opacity-100";
   return (
-    <div className="flex items-center justify-center gap-2 py-6 text-xs">
-      <span className={`${txt} transition-colors`}>RecruitAI por</span>
+    <div className="flex flex-col items-center justify-center gap-1.5 py-6">
+      <span className={`text-xs ${variant === "dark" ? "text-gray-400" : "text-gray-400"}`}>RecruitAI por</span>
       <a href="https://rumboeficiente.com" target="_blank" rel="noreferrer"
-         className={`flex items-center gap-1.5 font-semibold ${txt} transition-colors`}>
-        <RumboMark className="w-4 h-4" />
-        <span>Rumbo Eficiente</span>
+         className={`transition-opacity ${opacity}`}
+         title="Rumbo Eficiente">
+        <img src={src} alt="Rumbo Eficiente" className="h-5 sm:h-6 block" />
       </a>
     </div>
   );
@@ -3547,13 +3540,13 @@ export default function App() {
   const handleLogout = async () => { await signOut(auth); setProcesses([]); setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setShowOnboarding(false); setPhase("dashboard"); };
   const goToDashboard = () => { setPhase("dashboard"); setActiveJob(null); setCandidate(null); setEvaluation(null); setInterview(null); };
   const handlePublish = (jobData) => {
-    // After creating a process, drop the recruiter into the process detail
-    // screen (where they can generate the public link, see candidates, etc.)
-    // — NOT into the candidate-facing preview, which was disorienting.
+    // After creating a process, return to the dashboard. The new process shows
+    // up at the top of the list. From there the recruiter clicks the card to
+    // enter ProcessDetailScreen and generate the public link when ready.
     const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] };
     setProcesses(ps => [np, ...ps]);
-    setActiveJob(np);
-    setPhase("process_detail");
+    setActiveJob(null);
+    setPhase("dashboard");
   };
   const handleToggle = (id) => setProcesses(ps => ps.map(p => p.id === id ? { ...p, status: p.status === "active" ? "paused" : "active" } : p));
   const handleViewProcess = (process) => { setActiveJob(process); setPhase("process_detail"); };
