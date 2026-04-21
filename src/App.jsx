@@ -60,7 +60,7 @@ function ProgressStepper({ current }) {
       {steps.map((s, i) => (
         <div key={s.id} className="flex items-center">
           <div className="flex flex-col items-center">
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all ${i < idx ? "bg-green-500 text-white" : i === idx ? "bg-orange-600 text-white shadow-md scale-110" : "bg-gray-100 text-gray-400"}`}>{i < idx ? "✓" : s.icon}</div>
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm transition-all ${i < idx ? "bg-green-500 text-white" : i === idx ? "bg-gray-900 text-white shadow-md scale-110" : "bg-gray-100 text-gray-400"}`}>{i < idx ? "✓" : s.icon}</div>
             <span className="text-xs mt-1 hidden sm:block" style={{ color: i <= idx ? "#374151" : "#9CA3AF" }}>{s.label}</span>
           </div>
           {i < steps.length - 1 && <div className={`w-6 sm:w-10 h-0.5 mx-1 ${i < idx ? "bg-green-400" : "bg-gray-200"}`} />}
@@ -70,7 +70,7 @@ function ProgressStepper({ current }) {
   );
 }
 
-const inp = "w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-400 bg-white";
+const inp = "w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400 bg-white";
 const lbl = "block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1";
 
 const MOCK_PROCESSES = [
@@ -111,20 +111,20 @@ function SalaryWidget({ positionType, contract, onApplyRanges }) {
   const fmt = (v) => `€${Math.round(v / 1000)}K`;
   const tiers = [{ label: "Junior", key: "junior", exp: "0–2 años" }, { label: "Mid", key: "mid", exp: "2–5 años" }, { label: "Senior", key: "senior", exp: "5+ años" }];
   return (
-    <div className="rounded-xl border-2 border-orange-100 bg-gradient-to-br from-orange-50 to-indigo-50 p-4 mt-3">
+    <div className="rounded-xl border-2 border-gray-100 bg-gradient-to-br from-gray-50 to-indigo-50 p-4 mt-3">
       <div className="flex items-start gap-2 mb-3">
         <span className="text-lg leading-none">💡</span>
-        <div className="flex-1"><p className="text-sm font-bold text-orange-800 leading-none">Referencia salarial de mercado</p><p className="text-xs text-orange-500 mt-0.5">{data.label} · España 2026</p></div>
+        <div className="flex-1"><p className="text-sm font-bold text-gray-700 leading-none">Referencia salarial de mercado</p><p className="text-xs text-gray-900 mt-0.5">{data.label} · España 2026</p></div>
       </div>
       <div className="grid grid-cols-3 gap-2 mb-3">
         {tiers.map(t => {
           const [lo, hi] = data[t.key].map(v => Math.round(v * adj));
           return (
-            <div key={t.key} className="bg-white rounded-lg p-2.5 text-center border border-orange-100 shadow-sm">
+            <div key={t.key} className="bg-white rounded-lg p-2.5 text-center border border-gray-100 shadow-sm">
               <p className="text-xs font-bold text-gray-500 mb-0.5">{t.label}</p>
               <p className="text-sm font-black text-gray-800">{fmt(lo)}–{fmt(hi)}</p>
               <p className="text-xs text-gray-400 mb-1.5">{t.exp}</p>
-              <button type="button" onClick={() => onApplyRanges(lo, hi)} className="w-full text-xs bg-orange-50 hover:bg-orange-100 text-orange-600 font-semibold py-1 rounded-md transition-colors">Usar este rango</button>
+              <button type="button" onClick={() => onApplyRanges(lo, hi)} className="w-full text-xs bg-gray-50 hover:bg-gray-100 text-gray-900 font-semibold py-1 rounded-md transition-colors">Usar este rango</button>
             </div>
           );
         })}
@@ -171,12 +171,12 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
         <div className="max-w-3xl mx-auto px-6 py-4 flex items-center gap-3">
           <button onClick={onBack} className="text-gray-400 hover:text-gray-600 text-sm">← Volver al panel</button>
           <div className="w-px h-4 bg-gray-200" />
-          <span className="text-2xl font-black text-orange-600">RecruitAI</span>
+          <span className="text-2xl font-black text-gray-900">RecruitAI</span>
         </div>
       </div>
       <div className="max-w-3xl mx-auto p-6">
         <div className="flex gap-2 mb-6">
-          {tabs.map((t, i) => <button key={t} onClick={() => i < step && setStep(i)} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${i === step ? "bg-orange-600 text-white shadow" : i < step ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}`}>{i < step ? "✓ " : ""}{t}</button>)}
+          {tabs.map((t, i) => <button key={t} onClick={() => i < step && setStep(i)} className={`flex-1 py-2 rounded-lg text-sm font-semibold transition-all ${i === step ? "bg-gray-900 text-white shadow" : i < step ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-400"}`}>{i < step ? "✓ " : ""}{t}</button>)}
         </div>
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
           {step === 0 && (
@@ -199,14 +199,14 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                 <div className="grid grid-cols-3 gap-2 mt-1">
                   {POSITIONS.map(pos => (
                     <button key={pos.id} type="button" onClick={() => { upP("positionType", pos.id); upP("specialty", ""); }}
-                      className={`p-3 rounded-xl border-2 text-left transition-all ${data.position.positionType === pos.id ? "border-orange-500 bg-orange-50" : "border-gray-200 hover:border-orange-300"}`}>
+                      className={`p-3 rounded-xl border-2 text-left transition-all ${data.position.positionType === pos.id ? "border-gray-900 bg-gray-50" : "border-gray-200 hover:border-gray-300"}`}>
                       <div className="text-xl mb-1">{pos.icon}</div>
-                      <p className={`text-xs font-semibold leading-tight ${data.position.positionType === pos.id ? "text-orange-700" : "text-gray-700"}`}>{pos.label}</p>
+                      <p className={`text-xs font-semibold leading-tight ${data.position.positionType === pos.id ? "text-gray-800" : "text-gray-700"}`}>{pos.label}</p>
                     </button>
                   ))}
                 </div>
               </div>
-              {(() => { const pos = POSITIONS.find(p => p.id === data.position.positionType); return pos && pos.specialties.length > 0 ? (<div><label className={lbl}>Especialidad</label><div className="flex flex-wrap gap-2 mt-1">{pos.specialties.map(sp => (<button key={sp} type="button" onClick={() => upP("specialty", data.position.specialty === sp ? "" : sp)} className={`px-3 py-1.5 rounded-lg text-sm font-medium border-2 transition-all ${data.position.specialty === sp ? "border-orange-500 bg-orange-50 text-orange-700" : "border-gray-200 text-gray-600 hover:border-orange-300"}`}>{sp}</button>))}</div></div>) : null; })()}
+              {(() => { const pos = POSITIONS.find(p => p.id === data.position.positionType); return pos && pos.specialties.length > 0 ? (<div><label className={lbl}>Especialidad</label><div className="flex flex-wrap gap-2 mt-1">{pos.specialties.map(sp => (<button key={sp} type="button" onClick={() => upP("specialty", data.position.specialty === sp ? "" : sp)} className={`px-3 py-1.5 rounded-lg text-sm font-medium border-2 transition-all ${data.position.specialty === sp ? "border-gray-900 bg-gray-50 text-gray-800" : "border-gray-200 text-gray-600 hover:border-gray-300"}`}>{sp}</button>))}</div></div>) : null; })()}
               {data.position.positionType === "otro" && (<div><label className={lbl}>Nombre personalizado *</label><input className={inp} value={data.position.customTitle || ""} onChange={e => upP("customTitle", e.target.value)} placeholder="ej. Growth Hacker..." /></div>)}
               <div><label className={lbl}>Responsabilidades</label><textarea className={inp} rows={3} value={data.position.responsibilities} onChange={e => upP("responsibilities", e.target.value)} /></div>
               <div><label className={lbl}>Habilidades requeridas</label><textarea className={inp} rows={2} value={data.position.skills} onChange={e => upP("skills", e.target.value)} /></div>
@@ -216,7 +216,7 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                   <label className={lbl}>Tipo de relación contractual *</label>
                   <div className="flex gap-3 mt-1">
                     {[["Freelance", "🤝 Freelance"], ["Contrato directo", "📄 Contrato directo"]].map(([val, label]) => (
-                      <button key={val} type="button" onClick={() => upP("contract", val)} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border-2 transition-all ${data.position.contract === val ? "border-orange-500 bg-orange-50 text-orange-700" : "border-gray-200 text-gray-500 hover:border-orange-200"}`}>{label}</button>
+                      <button key={val} type="button" onClick={() => upP("contract", val)} className={`flex-1 py-2.5 rounded-xl text-sm font-semibold border-2 transition-all ${data.position.contract === val ? "border-gray-900 bg-gray-50 text-gray-800" : "border-gray-200 text-gray-500 hover:border-gray-200"}`}>{label}</button>
                     ))}
                   </div>
                 </div>
@@ -229,13 +229,13 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div><label className={lbl}>Horas semanales (máx. 40h)</label><input className={inp} type="number" min={1} max={40} value={data.position.hoursPerWeek} onChange={e => upP("hoursPerWeek", Math.min(40, parseInt(e.target.value) || 0).toString())} /></div>
-                  <div><label className={lbl}>Horario</label><div className="flex flex-col gap-1.5 mt-1">{[["Mañanas", "🌅"], ["Tardes", "🌆"], ["Flexible", "🕐"]].map(([h, icon]) => (<button key={h} type="button" onClick={() => upP("schedule", h)} className={`py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${data.position.schedule === h ? "border-orange-500 bg-orange-50 text-orange-700" : "border-gray-200 text-gray-500"}`}>{icon} {h}</button>))}</div></div>
+                  <div><label className={lbl}>Horario</label><div className="flex flex-col gap-1.5 mt-1">{[["Mañanas", "🌅"], ["Tardes", "🌆"], ["Flexible", "🕐"]].map(([h, icon]) => (<button key={h} type="button" onClick={() => upP("schedule", h)} className={`py-1.5 rounded-lg text-xs font-semibold border-2 transition-all ${data.position.schedule === h ? "border-gray-900 bg-gray-50 text-gray-800" : "border-gray-200 text-gray-500"}`}>{icon} {h}</button>))}</div></div>
                 </div>
                 <div><label className={lbl}>Años de experiencia</label><input className={inp} type="number" min={0} max={20} value={data.position.experience} onChange={e => upP("experience", e.target.value)} /></div>
                 <div><label className={lbl}>Otros beneficios</label><textarea className={inp} rows={2} value={data.position.benefits} onChange={e => upP("benefits", e.target.value)} /></div>
               </div>
-              <div className="border border-orange-100 rounded-xl p-4 space-y-3 bg-orange-50">
-                <p className="text-xs font-bold text-orange-700 uppercase tracking-wide">🗓 Agenda para este proceso</p>
+              <div className="border border-gray-100 rounded-xl p-4 space-y-3 bg-gray-50">
+                <p className="text-xs font-bold text-gray-800 uppercase tracking-wide">🗓 Agenda para este proceso</p>
                 <div>
                   <label className={lbl}>Link de agendamiento (opcional)</label>
                   <input
@@ -254,7 +254,7 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
             <div>
               <div className="flex justify-between items-center mb-2">
                 <h2 className="font-bold text-gray-800">Ejercicios prácticos</h2>
-                <button onClick={addEx} className="text-sm bg-orange-50 text-orange-600 px-4 py-1.5 rounded-lg font-medium hover:bg-orange-100">+ Añadir ejercicio</button>
+                <button onClick={addEx} className="text-sm bg-gray-50 text-gray-900 px-4 py-1.5 rounded-lg font-medium hover:bg-gray-100">+ Añadir ejercicio</button>
               </div>
               <p className="text-xs text-gray-400 mb-4">Cada ejercicio requiere respuesta escrita + vídeo de defensa en Loom.</p>
               {data.exercises.map(ex => (
@@ -266,10 +266,10 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                   <div className="mb-4">
                     <label className={lbl}>Enunciado del ejercicio</label>
                     <textarea className={inp + " bg-white"} rows={4} value={ex.description} onChange={e => upEx(ex.id, "description", e.target.value)} placeholder="Describe el reto que el candidato deberá resolver..." />
-                    <p className="text-xs text-orange-500 mt-1.5 flex items-center gap-1.5"><span>💡</span>Cuanto más detallado sea el enunciado, mejores respuestas recibirás.</p>
+                    <p className="text-xs text-gray-900 mt-1.5 flex items-center gap-1.5"><span>💡</span>Cuanto más detallado sea el enunciado, mejores respuestas recibirás.</p>
                   </div>
                   <div>
-                    <div className="flex justify-between items-center mb-2"><label className={lbl}>Criterios de evaluación</label><button onClick={() => addCr(ex.id)} className="text-xs text-orange-500 hover:underline">+ Criterio</button></div>
+                    <div className="flex justify-between items-center mb-2"><label className={lbl}>Criterios de evaluación</label><button onClick={() => addCr(ex.id)} className="text-xs text-gray-900 hover:underline">+ Criterio</button></div>
                     {ex.criteria.map((cr, ci) => (
                       <div key={ci} className="flex gap-2 items-start bg-white rounded-lg p-3 mb-2 border border-gray-100">
                         <div className="flex-1 space-y-2">
@@ -290,7 +290,7 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
           )}
           <div className="flex justify-between mt-6 pt-4 border-t border-gray-100">
             {step > 0 ? <button onClick={() => setStep(s => s - 1)} className="px-5 py-2.5 border border-gray-200 rounded-xl text-sm font-medium text-gray-600 hover:bg-gray-50">← Anterior</button> : <div />}
-            {step < 2 ? <button onClick={() => setStep(s => s + 1)} className="px-6 py-2.5 bg-orange-600 text-white rounded-xl text-sm font-semibold hover:bg-orange-700">Siguiente →</button> : <button onClick={() => onPublish(data)} className="px-6 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700">🚀 Publicar oferta</button>}
+            {step < 2 ? <button onClick={() => setStep(s => s + 1)} className="px-6 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-semibold hover:bg-gray-800">Siguiente →</button> : <button onClick={() => onPublish(data)} className="px-6 py-2.5 bg-green-600 text-white rounded-xl text-sm font-semibold hover:bg-green-700">🚀 Publicar oferta</button>}
           </div>
         </div>
       </div>
@@ -305,31 +305,31 @@ function JobPreviewScreen({ job, onApply, onBack }) {
         <div className="bg-white shadow-xl rounded-b-2xl">
           <div className="p-6 border-b border-gray-100">
             <div className="flex items-start gap-4">
-              <div className="w-16 h-16 bg-orange-600 rounded-xl flex items-center justify-center text-white text-2xl font-black flex-shrink-0">{job.company?.name?.[0] || "R"}</div>
+              <div className="w-16 h-16 bg-gray-900 rounded-xl flex items-center justify-center text-white text-2xl font-black flex-shrink-0">{job.company?.name?.[0] || "R"}</div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">{job.position?.title || getPositionTitle(job.position)}</h1>
-                <p className="text-orange-600 font-semibold">{job.company?.name}</p>
+                <p className="text-gray-900 font-semibold">{job.company?.name}</p>
                 <p className="text-gray-500 text-sm">{job.company?.location} · {job.company?.modality} · {job.position?.contract}</p>
                 <div className="flex flex-wrap gap-2 mt-2">
-                  <span className="text-xs bg-orange-50 text-orange-700 px-2.5 py-1 rounded-full font-medium">{job.company?.sector}</span>
+                  <span className="text-xs bg-gray-50 text-gray-800 px-2.5 py-1 rounded-full font-medium">{job.company?.sector}</span>
                   {job.company?.salaryMin && <span className="text-xs bg-green-50 text-green-700 px-2.5 py-1 rounded-full font-medium">{Number(job.company.salaryMin).toLocaleString()} – {Number(job.company.salaryMax).toLocaleString()} {job.company.currency}/año</span>}
                   <span className="text-xs bg-gray-100 text-gray-600 px-2.5 py-1 rounded-full">+{job.position?.experience} años exp.</span>
                 </div>
               </div>
             </div>
-            <button onClick={onApply} className="mt-4 w-full bg-orange-600 text-white py-2.5 rounded-full font-bold hover:bg-orange-700 text-sm">Solicitar empleo</button>
+            <button onClick={onApply} className="mt-4 w-full bg-gray-900 text-white py-2.5 rounded-full font-bold hover:bg-gray-800 text-sm">Solicitar empleo</button>
           </div>
           <div className="p-6 space-y-5 text-sm text-gray-700">
             {job.company?.description && <section><h3 className="font-bold text-gray-900 mb-2">Sobre {job.company.name}</h3><p>{job.company.description}</p></section>}
             {job.position?.responsibilities && <section><h3 className="font-bold text-gray-900 mb-2">Responsabilidades</h3><p className="whitespace-pre-wrap">{job.position.responsibilities}</p></section>}
             {job.position?.skills && <section><h3 className="font-bold text-gray-900 mb-2">Habilidades</h3><div className="flex flex-wrap gap-2">{job.position.skills.split(",").map((s) => <span key={s} className="bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-xs">{s.trim()}</span>)}</div></section>}
-            <div className="bg-orange-50 border border-orange-100 rounded-xl p-4">
-              <p className="font-semibold text-orange-800 mb-1">📋 Proceso 100% digital</p>
-              <p className="text-xs text-orange-600">Este proceso incluye {job.exercises?.length || 1} ejercicio(s) práctico(s). Cada uno requiere una respuesta escrita y un vídeo de defensa en Loom.</p>
+            <div className="bg-gray-50 border border-gray-100 rounded-xl p-4">
+              <p className="font-semibold text-gray-700 mb-1">📋 Proceso 100% digital</p>
+              <p className="text-xs text-gray-900">Este proceso incluye {job.exercises?.length || 1} ejercicio(s) práctico(s). Cada uno requiere una respuesta escrita y un vídeo de defensa en Loom.</p>
             </div>
           </div>
           <div className="p-6 pt-0">
-            <button onClick={onApply} className="w-full bg-orange-600 text-white py-3 rounded-full font-bold hover:bg-orange-700">Solicitar empleo</button>
+            <button onClick={onApply} className="w-full bg-gray-900 text-white py-3 rounded-full font-bold hover:bg-gray-800">Solicitar empleo</button>
             {onBack && <button onClick={onBack} className="w-full mt-2 text-sm text-gray-400 hover:text-gray-600 py-2">← Volver</button>}
           </div>
         </div>
@@ -380,16 +380,16 @@ function ExercisesScreen({ job, candidate, onSubmit, submitting }) {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-white border-b border-gray-100 px-4 py-3 flex items-center gap-3">
-        <span className="text-xl font-black text-orange-600">RecruitAI</span>
+        <span className="text-xl font-black text-gray-900">RecruitAI</span>
         <span className="text-xs text-gray-400">· Ejercicio {idx + 1} de {job.exercises.length}</span>
       </div>
       <div className="max-w-2xl mx-auto p-4">
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-4">
           <h2 className="font-bold text-gray-900 mb-1">{ex.title}</h2>
           <p className="text-gray-600 text-sm mb-4 whitespace-pre-wrap">{ex.description}</p>
-          <div className="bg-orange-50 border border-orange-100 rounded-xl p-3 mb-4">
-            <p className="text-xs text-orange-700 font-semibold">📋 Criterios de evaluación</p>
-            {ex.criteria.map((c, i) => <p key={i} className="text-xs text-orange-600 mt-1">· {c.area}: {c.indicators}</p>)}
+          <div className="bg-gray-50 border border-gray-100 rounded-xl p-3 mb-4">
+            <p className="text-xs text-gray-800 font-semibold">📋 Criterios de evaluación</p>
+            {ex.criteria.map((c, i) => <p key={i} className="text-xs text-gray-900 mt-1">· {c.area}: {c.indicators}</p>)}
           </div>
           <div className="space-y-4">
             <div>
@@ -400,14 +400,14 @@ function ExercisesScreen({ job, candidate, onSubmit, submitting }) {
             <div>
               <label className={lbl}>Enlace de Loom — Vídeo de defensa *</label>
               <input className={inp} value={resp?.loomUrl || ""} onChange={e => upR("loomUrl", e.target.value)} placeholder="https://www.loom.com/share/..." />
-              <p className="text-xs text-orange-500 mt-1.5 flex items-center gap-1">🎥 Graba un vídeo en Loom defendiendo tu propuesta (máx. 5 min) y pega el enlace aquí.</p>
+              <p className="text-xs text-gray-900 mt-1.5 flex items-center gap-1">🎥 Graba un vídeo en Loom defendiendo tu propuesta (máx. 5 min) y pega el enlace aquí.</p>
             </div>
           </div>
         </div>
         <div className="flex gap-3">
           {idx > 0 && <button onClick={() => setIdx(i => i - 1)} className="px-5 py-3 border border-gray-200 rounded-xl text-sm font-medium text-gray-600">← Anterior</button>}
           {!isLast
-            ? <button onClick={() => setIdx(i => i + 1)} disabled={!canNext} className="flex-1 bg-orange-600 text-white py-3 rounded-xl font-bold hover:bg-orange-700 disabled:opacity-40">Siguiente ejercicio →</button>
+            ? <button onClick={() => setIdx(i => i + 1)} disabled={!canNext} className="flex-1 bg-gray-900 text-white py-3 rounded-xl font-bold hover:bg-gray-800 disabled:opacity-40">Siguiente ejercicio →</button>
             : <button onClick={() => onSubmit(resps)} disabled={!canNext || submitting} className="flex-1 bg-green-600 text-white py-3 rounded-xl font-bold hover:bg-green-700 disabled:opacity-40">{submitting ? "Enviando..." : "✅ Enviar solicitud"}</button>
           }
         </div>
@@ -423,7 +423,7 @@ function ConfirmationScreen({ candidate, onNext }) {
         <div className="text-5xl mb-4">🎉</div>
         <h2 className="text-2xl font-black text-gray-900 mb-2">¡Solicitud enviada!</h2>
         <p className="text-gray-500 mb-6">Hemos recibido tu candidatura. El equipo revisará tu perfil y recibirás respuesta en 48h.</p>
-        {onNext && <button onClick={onNext} className="w-full bg-orange-600 text-white py-3 rounded-xl font-bold hover:bg-orange-700">Ver evaluación →</button>}
+        {onNext && <button onClick={onNext} className="w-full bg-gray-900 text-white py-3 rounded-xl font-bold hover:bg-gray-800">Ver evaluación →</button>}
       </div>
     </div>
   );
@@ -454,7 +454,7 @@ function InterviewInviteScreen({ job, candidate, onSchedule }) {
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
       <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
         <h2 className="font-black text-xl text-gray-900 mb-4">🗓 Agendar entrevista</h2>
-        {slots.map(s => <button key={s} onClick={() => onSchedule(s)} className="w-full mb-2 py-3 border-2 border-gray-200 rounded-xl text-sm font-semibold text-gray-700 hover:border-orange-400 hover:bg-orange-50">{s}</button>)}
+        {slots.map(s => <button key={s} onClick={() => onSchedule(s)} className="w-full mb-2 py-3 border-2 border-gray-200 rounded-xl text-sm font-semibold text-gray-700 hover:border-gray-400 hover:bg-gray-50">{s}</button>)}
       </div>
     </div>
   );
@@ -493,7 +493,7 @@ function LoadingScreen() {
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center">
       <div className="text-center">
-        <div className="w-16 h-16 bg-orange-600 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-4 animate-pulse">🤖</div>
+        <div className="w-16 h-16 bg-gray-900 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-4 animate-pulse">🤖</div>
         <p className="text-gray-500 text-sm">Cargando RecruitAI...</p>
       </div>
     </div>
@@ -502,13 +502,13 @@ function LoadingScreen() {
 
 function LoginScreen({ onLogin, loading }) {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white flex items-center justify-center p-6">
+    <div className="min-h-screen bg-white flex items-center justify-center p-6">
       <div className="bg-white rounded-3xl shadow-xl border border-gray-100 p-10 max-w-md w-full text-center">
-        <div className="w-16 h-16 bg-orange-600 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-6">🤖</div>
+        <div className="w-16 h-16 bg-gray-900 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-6">🤖</div>
         <h1 className="text-4xl font-black text-gray-900 mb-3 tracking-tight">RecruitAI</h1>
         <p className="text-gray-500 mb-8 leading-relaxed">Automatización de selección de personal para agencias digitales</p>
         <button onClick={onLogin} disabled={loading}
-          className="w-full flex items-center justify-center gap-3 py-3.5 px-6 border-2 border-gray-200 rounded-xl font-semibold text-gray-700 hover:border-orange-400 hover:bg-orange-50 transition-all disabled:opacity-50">
+          className="w-full flex items-center justify-center gap-3 py-3.5 px-6 border-2 border-gray-200 rounded-xl font-semibold text-gray-700 hover:border-gray-400 hover:bg-gray-50 transition-all disabled:opacity-50">
           {loading ? <span className="text-sm">Iniciando sesión...</span> : (
             <><svg className="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg><span>Continuar con Google</span></>
           )}
@@ -604,7 +604,7 @@ function CandidatePublicScreen({ processId }) {
         <div className="text-5xl mb-4">🎉</div>
         <h2 className="text-2xl font-black text-gray-900 mb-2">¡Solicitud enviada!</h2>
         <p className="text-gray-500 mb-4">Hemos recibido tu candidatura para <strong>{processData?.company?.name}</strong>.</p>
-        <div className="bg-orange-50 rounded-xl p-4 text-left text-sm text-orange-700 space-y-1">
+        <div className="bg-gray-50 rounded-xl p-4 text-left text-sm text-gray-800 space-y-1">
           <p>✅ Datos personales recibidos</p><p>✅ Ejercicios y vídeo de defensa enviados</p>
           <p>📧 Recibirás confirmación en {candidate?.email}</p>
         </div>
@@ -663,8 +663,8 @@ function EmailSetupWizard({ emailConfig, onChange }) {
       <div className="space-y-2">
         {PROVIDERS.map(({ id, icon, title, sub, badge }) => (
           <div key={id} onClick={() => { setProvider(id); emit({ provider: id }); }}
-            className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${provider === id ? "border-orange-500 bg-orange-50" : "border-gray-200 hover:border-gray-300 bg-white"}`}>
-            <div className={`w-5 h-5 rounded-full border-2 mt-0.5 flex items-center justify-center shrink-0 ${provider === id ? "border-orange-500 bg-orange-500" : "border-gray-300"}`}>
+            className={`flex items-start gap-3 p-4 rounded-xl border-2 cursor-pointer transition-all ${provider === id ? "border-gray-900 bg-gray-50" : "border-gray-200 hover:border-gray-300 bg-white"}`}>
+            <div className={`w-5 h-5 rounded-full border-2 mt-0.5 flex items-center justify-center shrink-0 ${provider === id ? "border-gray-900 bg-gray-900" : "border-gray-300"}`}>
               {provider === id && <div className="w-2 h-2 bg-white rounded-full" />}
             </div>
             <div className="flex-1 min-w-0">
@@ -709,7 +709,7 @@ function EmailSetupWizard({ emailConfig, onChange }) {
                 <div className="w-6 h-6 rounded-full bg-purple-200 text-purple-800 text-xs font-bold flex items-center justify-center shrink-0">{n}</div>
                 <div>
                   <p className="text-xs text-purple-900">{text}</p>
-                  {link && <a href={link} target="_blank" rel="noreferrer" className="text-xs text-orange-600 underline">{linkLabel}</a>}
+                  {link && <a href={link} target="_blank" rel="noreferrer" className="text-xs text-gray-900 underline">{linkLabel}</a>}
                 </div>
               </div>
             ))}
@@ -823,7 +823,7 @@ function SkipWarningModal({ warningKey, onConfirm, onCancel }) {
           </div>
         </div>
         <div className="px-6 pb-6 flex gap-3">
-          <button onClick={onCancel} className="flex-1 py-2.5 bg-orange-600 text-white rounded-xl text-sm font-bold hover:bg-orange-700">
+          <button onClick={onCancel} className="flex-1 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
             ← Volver a configurar
           </button>
           <button onClick={onConfirm} className="flex-1 py-2.5 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50">
@@ -906,20 +906,20 @@ function OnboardingScreen({ user, onComplete }) {
   const cancelSkip = () => setSkipWarning(null);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white flex items-center justify-center p-4">
+    <div className="min-h-screen bg-white flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl">
         {/* Header */}
         <div className="px-8 pt-8 pb-4">
           <div className="flex justify-between items-center mb-6">
-            <div className="text-2xl font-black text-orange-700">RecruitAI</div>
+            <div className="text-2xl font-black text-gray-800">RecruitAI</div>
             <button onClick={() => trySkip("all")} className="text-xs text-gray-400 hover:text-gray-600 underline">Omitir configuración →</button>
           </div>
           {/* Progress bar */}
           <div className="flex gap-1.5 mb-2">
             {STEPS.map((s, i) => (
               <div key={i} className="flex-1 flex flex-col items-center gap-1">
-                <div className={`h-1.5 w-full rounded-full transition-all duration-300 ${i <= step ? "bg-orange-600" : "bg-gray-200"}`} />
-                <span className={`text-xs font-medium truncate w-full text-center ${i === step ? "text-orange-600" : "text-gray-400"}`}>{s}</span>
+                <div className={`h-1.5 w-full rounded-full transition-all duration-300 ${i <= step ? "bg-gray-900" : "bg-gray-200"}`} />
+                <span className={`text-xs font-medium truncate w-full text-center ${i === step ? "text-gray-900" : "text-gray-400"}`}>{s}</span>
               </div>
             ))}
           </div>
@@ -968,8 +968,8 @@ function OnboardingScreen({ user, onComplete }) {
               {brandTab === "upload" && (
                 <div>
                   <div onClick={() => fileRef.current?.click()}
-                    className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-orange-300 hover:bg-orange-50 transition-all">
-                    {uploading ? <p className="text-sm text-orange-600">Extrayendo texto...</p> : (
+                    className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-gray-300 hover:bg-gray-50 transition-all">
+                    {uploading ? <p className="text-sm text-gray-900">Extrayendo texto...</p> : (
                       <><p className="text-3xl mb-2">📁</p><p className="text-sm font-medium text-gray-700">Haz clic para seleccionar</p><p className="text-xs text-gray-400 mt-1">.txt, .docx, .pdf</p></>
                     )}
                   </div>
@@ -1007,11 +1007,11 @@ function OnboardingScreen({ user, onComplete }) {
               <div className="text-6xl">🎉</div>
               <h2 className="text-2xl font-black text-gray-900">¡Todo listo!</h2>
               <p className="text-gray-500 text-sm leading-relaxed">Tu cuenta está configurada. Ahora puedes crear tu primer proceso de selección y empezar a recibir candidatos.</p>
-              <div className="bg-orange-50 rounded-xl p-4 text-left space-y-2">
-                <p className="text-sm font-semibold text-orange-800">Resumen de configuración:</p>
-                <p className="text-xs text-orange-700">{brandManual ? "✅ Manual de marca configurado" : "⚪ Manual de marca — configúralo después en ⚙️"}</p>
-                <p className="text-xs text-orange-700">{emailConfig.provider === "app" ? "✅ Email activado (RecruitAI Mail)" : emailConfig.provider === "resend_domain" ? "✅ Email configurado (dominio propio)" : "⚪ Email — configúralo después en ⚙️"}</p>
-                <p className="text-xs text-orange-700">{slackConfig.webhookUrl ? "✅ Slack conectado" : "⚪ Slack — configúralo después en ⚙️"}</p>
+              <div className="bg-gray-50 rounded-xl p-4 text-left space-y-2">
+                <p className="text-sm font-semibold text-gray-700">Resumen de configuración:</p>
+                <p className="text-xs text-gray-800">{brandManual ? "✅ Manual de marca configurado" : "⚪ Manual de marca — configúralo después en ⚙️"}</p>
+                <p className="text-xs text-gray-800">{emailConfig.provider === "app" ? "✅ Email activado (RecruitAI Mail)" : emailConfig.provider === "resend_domain" ? "✅ Email configurado (dominio propio)" : "⚪ Email — configúralo después en ⚙️"}</p>
+                <p className="text-xs text-gray-800">{slackConfig.webhookUrl ? "✅ Slack conectado" : "⚪ Slack — configúralo después en ⚙️"}</p>
               </div>
             </div>
           )}
@@ -1024,20 +1024,20 @@ function OnboardingScreen({ user, onComplete }) {
               <button onClick={back} className="px-6 py-3 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">← Atrás</button>
             )}
             {step === 0 && (
-              <button onClick={next} className="flex-1 py-3 bg-orange-600 text-white rounded-xl text-sm font-bold hover:bg-orange-700">Empezar configuración →</button>
+              <button onClick={next} className="flex-1 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">Empezar configuración →</button>
             )}
             {step === 1 && (
-              <button onClick={brandManual ? next : () => trySkip("brand")} className="flex-1 py-3 bg-orange-600 text-white rounded-xl text-sm font-bold hover:bg-orange-700">
+              <button onClick={brandManual ? next : () => trySkip("brand")} className="flex-1 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
                 {brandManual ? "Continuar →" : "Continuar →"}
               </button>
             )}
             {step === 2 && (
-              <button onClick={next} className="flex-1 py-3 bg-orange-600 text-white rounded-xl text-sm font-bold hover:bg-orange-700">
+              <button onClick={next} className="flex-1 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
                 Continuar →
               </button>
             )}
             {step === 3 && (
-              <button onClick={slackConfig.webhookUrl ? next : () => trySkip("slack")} className="flex-1 py-3 bg-orange-600 text-white rounded-xl text-sm font-bold hover:bg-orange-700">
+              <button onClick={slackConfig.webhookUrl ? next : () => trySkip("slack")} className="flex-1 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
                 {slackConfig.webhookUrl ? "Continuar →" : "Continuar →"}
               </button>
             )}
@@ -1172,7 +1172,7 @@ function SlackSetupWizard({ slackConfig, onChange }) {
                   { val: "both", icon: "✨", text: "Ambas" },
                 ].map(({ val, icon, text }) => (
                   <button key={val} onClick={() => setNotif(key, val)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${notifications[key] === val ? "bg-orange-600 text-white border-orange-600" : "bg-white text-gray-600 border-gray-200 hover:border-orange-300"}`}>
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all ${notifications[key] === val ? "bg-gray-900 text-white border-gray-900" : "bg-white text-gray-600 border-gray-200 hover:border-gray-300"}`}>
                     {icon} {text}
                   </button>
                 ))}
@@ -1186,7 +1186,7 @@ function SlackSetupWizard({ slackConfig, onChange }) {
                 <p className="text-xs text-gray-500">Estado general de todos los procesos activos, enviado al abrir la app cada día</p>
               </div>
               <button onClick={() => setNotif("dailyDigest", !notifications.dailyDigest)}
-                className={`w-12 h-6 rounded-full transition-all relative ${notifications.dailyDigest ? "bg-orange-600" : "bg-gray-300"}`}>
+                className={`w-12 h-6 rounded-full transition-all relative ${notifications.dailyDigest ? "bg-gray-900" : "bg-gray-300"}`}>
                 <div className={`w-5 h-5 bg-white rounded-full shadow absolute top-0.5 transition-all ${notifications.dailyDigest ? "left-6" : "left-0.5"}`} />
               </button>
             </div>
@@ -1223,7 +1223,7 @@ function SlackSetupWizard({ slackConfig, onChange }) {
           <div className="mt-3 space-y-3">
             <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 text-xs text-gray-600 space-y-1.5">
               <p className="font-semibold text-gray-700">Para obtener la Webhook URL manualmente:</p>
-              <p>1. Ve a <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="text-orange-600 underline">api.slack.com/apps</a> → Create New App → From scratch</p>
+              <p>1. Ve a <a href="https://api.slack.com/apps" target="_blank" rel="noreferrer" className="text-gray-900 underline">api.slack.com/apps</a> → Create New App → From scratch</p>
               <p>2. Activa "Incoming Webhooks" en el menú lateral</p>
               <p>3. Clic en "Add New Webhook to Workspace" → elige el canal</p>
               <p>4. Copia la URL que empieza por hooks.slack.com...</p>
@@ -1285,7 +1285,7 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
         <div className="flex border-b border-gray-100 shrink-0">
           {[["marca", "🎨 Marca"], ["email", "📧 Email"], ["slack", "🔔 Slack"]].map(([id, label]) => (
             <button key={id} onClick={() => setSection(id)}
-              className={`flex-1 py-3 text-sm font-semibold transition-colors ${section === id ? "border-b-2 border-orange-600 text-orange-600" : "text-gray-400 hover:text-gray-600"}`}>
+              className={`flex-1 py-3 text-sm font-semibold transition-colors ${section === id ? "border-b-2 border-gray-900 text-gray-900" : "text-gray-400 hover:text-gray-600"}`}>
               {label}
             </button>
           ))}
@@ -1317,8 +1317,8 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
               {brandTab === "upload" && (
                 <div>
                   <div onClick={() => fileRef.current?.click()}
-                    className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-orange-300 hover:bg-orange-50 transition-all">
-                    {uploading ? <p className="text-sm text-orange-600 font-medium">Extrayendo texto...</p> : (
+                    className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-gray-300 hover:bg-gray-50 transition-all">
+                    {uploading ? <p className="text-sm text-gray-900 font-medium">Extrayendo texto...</p> : (
                       <><p className="text-3xl mb-2">📁</p>
                         <p className="text-sm font-medium text-gray-700">Haz clic para seleccionar archivo</p>
                         <p className="text-xs text-gray-400 mt-1">Formatos: .txt, .docx, .pdf</p></>
@@ -1345,7 +1345,7 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
         {/* Footer */}
         <div className="px-6 py-4 border-t border-gray-100 flex gap-3 shrink-0">
           <button onClick={onClose} className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50">Cancelar</button>
-          <button onClick={handleSave} className="flex-1 py-2.5 bg-orange-600 text-white rounded-xl text-sm font-bold hover:bg-orange-700">Guardar</button>
+          <button onClick={handleSave} className="flex-1 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">Guardar</button>
         </div>
       </div>
     </div>
@@ -1356,7 +1356,7 @@ function AgencySettingsModal({ settings, onSave, onClose }) {
 const REC_COLORS = {
   AVANZAR: "bg-green-100 text-green-800", REVISAR: "bg-yellow-100 text-yellow-800",
   DESCARTAR: "bg-red-100 text-red-700", CONTRATAR: "bg-emerald-100 text-emerald-800",
-  SEGUNDA_ENTREVISTA: "bg-orange-100 text-orange-800", EN_CARTERA: "bg-yellow-100 text-yellow-800",
+  SEGUNDA_ENTREVISTA: "bg-gray-100 text-gray-700", EN_CARTERA: "bg-yellow-100 text-yellow-800",
 };
 const REC_LABELS = {
   AVANZAR: "✅ Avanzar", REVISAR: "⚠️ Revisar", DESCARTAR: "❌ Descartar",
@@ -1491,7 +1491,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
         {/* Tabs */}
         <div className="flex border-b border-gray-100 shrink-0">
           {[["exercise", "🎯 Ejercicio"], ["interview", "🎤 Entrevista"], ["decision", "✅ Decisión"]].map(([id, label]) => (
-            <button key={id} onClick={() => setTab(id)} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${tab === id ? "border-b-2 border-orange-600 text-orange-600" : "text-gray-400 hover:text-gray-600"}`}>{label}</button>
+            <button key={id} onClick={() => setTab(id)} className={`flex-1 py-2.5 text-sm font-semibold transition-colors ${tab === id ? "border-b-2 border-gray-900 text-gray-900" : "text-gray-400 hover:text-gray-600"}`}>{label}</button>
           ))}
         </div>
 
@@ -1511,7 +1511,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                       <div key={i} className="border border-gray-100 rounded-xl p-4 bg-gray-50">
                         <p className="font-semibold text-gray-800 text-sm mb-2">{ex.title || `Ejercicio ${i + 1}`}</p>
                         <p className="text-xs text-gray-500 mb-3 whitespace-pre-wrap line-clamp-3">{r.response}</p>
-                        {r.loomUrl && <a href={r.loomUrl} target="_blank" rel="noreferrer" className="text-xs text-orange-500 hover:underline flex items-center gap-1">🎥 Ver vídeo de defensa en Loom →</a>}
+                        {r.loomUrl && <a href={r.loomUrl} target="_blank" rel="noreferrer" className="text-xs text-gray-900 hover:underline flex items-center gap-1">🎥 Ver vídeo de defensa en Loom →</a>}
                       </div>
                     );
                   })}
@@ -1538,7 +1538,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                     ))}
                   </div>
                   {exerciseEval.strengths?.length > 0 && <div className="bg-green-50 rounded-xl p-3"><p className="text-xs font-bold text-green-700 mb-1">✅ Puntos fuertes</p>{exerciseEval.strengths.map((s, i) => <p key={i} className="text-xs text-green-600">· {s}</p>)}</div>}
-                  {exerciseEval.gaps?.length > 0 && <div className="bg-orange-50 rounded-xl p-3"><p className="text-xs font-bold text-orange-700 mb-1">⚠️ Áreas de mejora</p>{exerciseEval.gaps.map((s, i) => <p key={i} className="text-xs text-orange-600">· {s}</p>)}</div>}
+                  {exerciseEval.gaps?.length > 0 && <div className="bg-gray-50 rounded-xl p-3"><p className="text-xs font-bold text-gray-800 mb-1">⚠️ Áreas de mejora</p>{exerciseEval.gaps.map((s, i) => <p key={i} className="text-xs text-gray-900">· {s}</p>)}</div>}
                   <button onClick={() => onUpdateCandidate({ ...candidate, exerciseEvaluation: null })} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Reevaluar</button>
                 </div>
               )}
@@ -1593,7 +1593,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                       <div className="flex items-center justify-between mb-2"><p className="font-bold text-slate-700 text-sm">Análisis del entrevistador</p><span className="text-lg font-black text-slate-600">{interviewEval.interviewer.overall_score}<span className="text-xs text-slate-400">/100</span></span></div>
                       <p className="text-xs text-slate-500 mb-2">{interviewEval.interviewer.summary}</p>
                       {(interviewEval.interviewer.strengths || []).length > 0 && <div className="mb-2">{interviewEval.interviewer.strengths.map((s, i) => <p key={i} className="text-xs text-green-600">✓ {s}</p>)}</div>}
-                      {(interviewEval.interviewer.improvements || []).length > 0 && <div>{interviewEval.interviewer.improvements.map((s, i) => <p key={i} className="text-xs text-orange-600">→ {s}</p>)}</div>}
+                      {(interviewEval.interviewer.improvements || []).length > 0 && <div>{interviewEval.interviewer.improvements.map((s, i) => <p key={i} className="text-xs text-gray-900">→ {s}</p>)}</div>}
                     </div>
                   )}
                   <button onClick={() => { onUpdateCandidate({ ...candidate, interviewEvaluation: null, interviewTranscript: "" }); setInterviewTranscript(""); }} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Reevaluar entrevista</button>
@@ -1621,7 +1621,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
               <div>
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Tu decisión final</p>
                 <div className="grid grid-cols-2 gap-2">
-                  {[["Contratado", "🎉 Contratar", "bg-green-600 hover:bg-green-700 text-white"], ["Segunda entrevista", "🔄 Segunda entrevista", "bg-orange-600 hover:bg-orange-700 text-white"], ["En cartera", "📁 En cartera", "bg-yellow-500 hover:bg-yellow-600 text-white"], ["Descartado", "❌ Descartar", "bg-red-500 hover:bg-red-600 text-white"]].map(([val, label, cls]) => (
+                  {[["Contratado", "🎉 Contratar", "bg-green-600 hover:bg-green-700 text-white"], ["Segunda entrevista", "🔄 Segunda entrevista", "bg-gray-900 hover:bg-gray-800 text-white"], ["En cartera", "📁 En cartera", "bg-yellow-500 hover:bg-yellow-600 text-white"], ["Descartado", "❌ Descartar", "bg-red-500 hover:bg-red-600 text-white"]].map(([val, label, cls]) => (
                     <button key={val} onClick={() => setFinalDecision(val)} className={`py-3 rounded-xl font-bold text-sm transition-colors ${cls} ${candidate.estado === val ? "ring-4 ring-offset-2 ring-gray-300" : ""}`}>{label}</button>
                   ))}
                 </div>
@@ -1638,8 +1638,8 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
 // ─── PIPELINE CONSTANTS ───────────────────────────────────────────────────────
 const ESTADO_OPTIONS = ["Pendiente", "Primera entrevista", "Segunda entrevista", "En cartera", "Descartado", "Contratado"];
 const PROGRESO_OPTIONS = ["Ingreso", "Prueba técnica", "Entrevista", "Onboarding", "Descalificado", "En cartera", "Desiste", "Validación prueba técnica", "Entrevista RRHH"];
-const ESTADO_COLORS = { "Pendiente": "bg-gray-100 text-gray-700", "Primera entrevista": "bg-orange-100 text-orange-700", "Segunda entrevista": "bg-indigo-100 text-indigo-700", "En cartera": "bg-yellow-100 text-yellow-700", "Descartado": "bg-red-100 text-red-700", "Contratado": "bg-green-100 text-green-700" };
-const PROGRESO_COLORS = { "Ingreso": "bg-purple-100 text-purple-700", "Prueba técnica": "bg-orange-100 text-orange-700", "Entrevista": "bg-indigo-100 text-indigo-700", "Onboarding": "bg-teal-100 text-teal-700", "Descalificado": "bg-red-100 text-red-700", "En cartera": "bg-yellow-100 text-yellow-700", "Desiste": "bg-orange-100 text-orange-700", "Validación prueba técnica": "bg-cyan-100 text-cyan-700", "Entrevista RRHH": "bg-violet-100 text-violet-700" };
+const ESTADO_COLORS = { "Pendiente": "bg-gray-100 text-gray-700", "Primera entrevista": "bg-gray-100 text-gray-800", "Segunda entrevista": "bg-indigo-100 text-indigo-700", "En cartera": "bg-yellow-100 text-yellow-700", "Descartado": "bg-red-100 text-red-700", "Contratado": "bg-green-100 text-green-700" };
+const PROGRESO_COLORS = { "Ingreso": "bg-purple-100 text-purple-700", "Prueba técnica": "bg-gray-100 text-gray-800", "Entrevista": "bg-indigo-100 text-indigo-700", "Onboarding": "bg-teal-100 text-teal-700", "Descalificado": "bg-red-100 text-red-700", "En cartera": "bg-yellow-100 text-yellow-700", "Desiste": "bg-gray-100 text-gray-800", "Validación prueba técnica": "bg-cyan-100 text-cyan-700", "Entrevista RRHH": "bg-violet-100 text-violet-700" };
 
 // ─── PROCESS DETAIL SCREEN ───────────────────────────────────────────────────
 function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, agencySettings }) {
@@ -1711,7 +1711,7 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
   };
 
   const statsByEstado = ESTADO_OPTIONS.map(e => ({ label: e, count: candidates.filter(c => (c.estado || "Pendiente") === e).length }));
-  const statColors = ["bg-gray-50 text-gray-700", "bg-orange-50 text-orange-700", "bg-indigo-50 text-indigo-700", "bg-yellow-50 text-yellow-700", "bg-red-50 text-red-600", "bg-green-50 text-green-700"];
+  const statColors = ["bg-gray-50 text-gray-700", "bg-gray-50 text-gray-800", "bg-indigo-50 text-indigo-700", "bg-yellow-50 text-yellow-700", "bg-red-50 text-red-600", "bg-green-50 text-green-700"];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1720,7 +1720,7 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center gap-3">
           <button onClick={onBack} className="text-gray-400 hover:text-gray-700 text-sm shrink-0">← Panel</button>
           <div className="w-px h-4 bg-gray-200 shrink-0" />
-          <span className="text-xl font-black text-orange-600 shrink-0">RecruitAI</span>
+          <span className="text-xl font-black text-gray-900 shrink-0">RecruitAI</span>
           <div className="w-px h-4 bg-gray-200 shrink-0" />
           <div className="flex-1 min-w-0"><span className="font-bold text-gray-900 text-sm truncate block">{getPositionTitle(process.position)}</span><span className="text-xs text-gray-400">{process.company?.name}</span></div>
           <button onClick={onStartDemo} className="shrink-0 px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg text-xs font-medium hover:bg-gray-50">Ver oferta →</button>
@@ -1741,7 +1741,7 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><p className="font-bold text-gray-800 text-sm">🔗 Link público para candidatos</p><p className="text-xs text-gray-400 mt-0.5">Genera un link único que los candidatos abren para aplicar.</p></div>
             <div className="flex gap-2 flex-wrap">
-              {publicLink && <button onClick={importApplications} disabled={importing} className="px-3 py-2 border border-orange-200 text-orange-600 rounded-lg text-xs font-semibold hover:bg-orange-50 disabled:opacity-50">{importing ? "Importando..." : "⬇ Importar candidatos"}</button>}
+              {publicLink && <button onClick={importApplications} disabled={importing} className="px-3 py-2 border border-gray-200 text-gray-900 rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-50">{importing ? "Importando..." : "⬇ Importar candidatos"}</button>}
               <button onClick={generatePublicLink} disabled={publishing} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 disabled:opacity-50">{publishing ? "Publicando..." : publicLink ? "🔄 Regenerar link" : "🚀 Generar link público"}</button>
             </div>
           </div>
@@ -1753,17 +1753,17 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
             <h2 className="font-bold text-gray-800">Candidatos <span className="text-gray-400 font-normal text-sm">({candidates.length})</span></h2>
-            <button onClick={() => setShowAddForm(v => !v)} className="px-4 py-2 bg-orange-600 text-white rounded-xl text-xs font-bold hover:bg-orange-700">+ Añadir candidato</button>
+            <button onClick={() => setShowAddForm(v => !v)} className="px-4 py-2 bg-gray-900 text-white rounded-xl text-xs font-bold hover:bg-gray-800">+ Añadir candidato</button>
           </div>
           {showAddForm && (
-            <div className="px-5 py-4 bg-orange-50 border-b border-orange-100 flex flex-wrap items-end gap-3">
+            <div className="px-5 py-4 bg-gray-50 border-b border-gray-100 flex flex-wrap items-end gap-3">
               <div><label className={lbl}>Nombre *</label><input className={inp} style={{ width: "180px" }} value={newName} onChange={e => setNewName(e.target.value)} autoFocus onKeyDown={e => e.key === "Enter" && addCandidate()} /></div>
               <div><label className={lbl}>Email</label><input className={inp} style={{ width: "220px" }} value={newEmail} onChange={e => setNewEmail(e.target.value)} type="email" /></div>
-              <div className="flex gap-2"><button onClick={addCandidate} className="px-4 py-2.5 bg-orange-600 text-white rounded-lg text-sm font-semibold hover:bg-orange-700">Añadir</button><button onClick={() => { setShowAddForm(false); setNewName(""); setNewEmail(""); }} className="px-4 py-2.5 border border-gray-200 bg-white text-gray-500 rounded-lg text-sm">Cancelar</button></div>
+              <div className="flex gap-2"><button onClick={addCandidate} className="px-4 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-gray-800">Añadir</button><button onClick={() => { setShowAddForm(false); setNewName(""); setNewEmail(""); }} className="px-4 py-2.5 border border-gray-200 bg-white text-gray-500 rounded-lg text-sm">Cancelar</button></div>
             </div>
           )}
           {candidates.length === 0 ? (
-            <div className="text-center py-14"><p className="text-4xl mb-3">👥</p><p className="text-gray-400 text-sm font-medium">No hay candidatos en este proceso.</p><button onClick={() => setShowAddForm(true)} className="mt-3 text-orange-500 text-sm hover:underline">+ Añadir el primero</button></div>
+            <div className="text-center py-14"><p className="text-4xl mb-3">👥</p><p className="text-gray-400 text-sm font-medium">No hay candidatos en este proceso.</p><button onClick={() => setShowAddForm(true)} className="mt-3 text-gray-900 text-sm hover:underline">+ Añadir el primero</button></div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -1778,12 +1778,12 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
                 </tr></thead>
                 <tbody>
                   {candidates.map((c, i) => (
-                    <tr key={c.id} className={`border-b border-gray-50 hover:bg-orange-50/20 transition-colors ${i % 2 === 1 ? "bg-gray-50/30" : ""}`}>
+                    <tr key={c.id} className={`border-b border-gray-50 hover:bg-gray-50/20 transition-colors ${i % 2 === 1 ? "bg-gray-50/30" : ""}`}>
                       <td className="px-4 py-3"><p className="font-semibold text-gray-800 leading-tight">{c.name}</p>{c.email && <p className="text-xs text-gray-400 mt-0.5">{c.email}</p>}</td>
-                      <td className="px-4 py-3"><select value={c.estado || "Pendiente"} onChange={e => updateCandidate(c.id, "estado", e.target.value)} className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-orange-300 ${ESTADO_COLORS[c.estado || "Pendiente"] || "bg-gray-100 text-gray-700"}`} style={{ maxWidth: "155px" }}>{ESTADO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
-                      <td className="px-4 py-3"><select value={c.progreso || "Ingreso"} onChange={e => updateCandidate(c.id, "progreso", e.target.value)} className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-orange-300 ${PROGRESO_COLORS[c.progreso || "Ingreso"] || "bg-gray-100 text-gray-700"}`} style={{ maxWidth: "185px" }}>{PROGRESO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
-                      <td className="px-4 py-3"><input type="text" value={c.entrevistador || ""} onChange={e => updateCandidate(c.id, "entrevistador", e.target.value)} placeholder="Asignar..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-orange-300 bg-transparent" /></td>
-                      <td className="px-4 py-3"><input type="text" value={c.notas || ""} onChange={e => updateCandidate(c.id, "notas", e.target.value)} placeholder="Añadir nota..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-orange-300 bg-transparent" /></td>
+                      <td className="px-4 py-3"><select value={c.estado || "Pendiente"} onChange={e => updateCandidate(c.id, "estado", e.target.value)} className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300 ${ESTADO_COLORS[c.estado || "Pendiente"] || "bg-gray-100 text-gray-700"}`} style={{ maxWidth: "155px" }}>{ESTADO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
+                      <td className="px-4 py-3"><select value={c.progreso || "Ingreso"} onChange={e => updateCandidate(c.id, "progreso", e.target.value)} className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300 ${PROGRESO_COLORS[c.progreso || "Ingreso"] || "bg-gray-100 text-gray-700"}`} style={{ maxWidth: "185px" }}>{PROGRESO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
+                      <td className="px-4 py-3"><input type="text" value={c.entrevistador || ""} onChange={e => updateCandidate(c.id, "entrevistador", e.target.value)} placeholder="Asignar..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-300 bg-transparent" /></td>
+                      <td className="px-4 py-3"><input type="text" value={c.notas || ""} onChange={e => updateCandidate(c.id, "notas", e.target.value)} placeholder="Añadir nota..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-300 bg-transparent" /></td>
                       <td className="px-4 py-3 text-center">
                         <button onClick={() => setEvalCandidate(c)} className={`text-xs font-semibold px-2 py-1 rounded-lg transition-colors ${c.exerciseEvaluation || c.interviewEvaluation ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>
                           {c.exerciseEvaluation && c.interviewEvaluation ? "✅ Ver" : c.exerciseEvaluation ? "🎤 Entrev." : "🤖 Evaluar"}
@@ -1820,10 +1820,10 @@ function ProcessCard({ process, onView, onToggle }) {
           <h3 className="font-bold text-gray-900 leading-tight">{getPositionTitle(process.position)}</h3>
           <p className="text-xs text-gray-400 mt-0.5">{process.company?.name} · {process.company?.location}</p>
         </div>
-        <button onClick={() => onToggle(process.id)} className={`ml-3 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${isActive ? "border-orange-200 text-orange-600 hover:bg-orange-50" : "border-green-200 text-green-600 hover:bg-green-50"}`}>{isActive ? "⏸ Pausar" : "▶ Activar"}</button>
+        <button onClick={() => onToggle(process.id)} className={`ml-3 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${isActive ? "border-gray-200 text-gray-900 hover:bg-gray-50" : "border-green-200 text-green-600 hover:bg-green-50"}`}>{isActive ? "⏸ Pausar" : "▶ Activar"}</button>
       </div>
       <div className="grid grid-cols-6 gap-1 mb-4">
-        {byEstado.map((s, i) => <div key={s.label} className={`rounded-lg p-1.5 text-center ${["bg-gray-50", "bg-orange-50", "bg-indigo-50", "bg-yellow-50", "bg-red-50", "bg-green-50"][i]}`}><p className="text-base font-black leading-none text-gray-800">{s.val}</p><p className="text-xs text-gray-400 mt-0.5 leading-tight hidden sm:block" style={{ fontSize: "9px" }}>{s.label}</p></div>)}
+        {byEstado.map((s, i) => <div key={s.label} className={`rounded-lg p-1.5 text-center ${["bg-gray-50", "bg-gray-50", "bg-indigo-50", "bg-yellow-50", "bg-red-50", "bg-green-50"][i]}`}><p className="text-base font-black leading-none text-gray-800">{s.val}</p><p className="text-xs text-gray-400 mt-0.5 leading-tight hidden sm:block" style={{ fontSize: "9px" }}>{s.label}</p></div>)}
       </div>
       <div className="flex items-center justify-between">
         <div className="flex gap-1.5 flex-wrap">
@@ -1831,7 +1831,7 @@ function ProcessCard({ process, onView, onToggle }) {
           <span className="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full">{process.position?.hoursPerWeek}h/sem</span>
           {process.company?.salaryMin && <span className="text-xs bg-green-50 text-green-600 px-2 py-0.5 rounded-full">{Number(process.company.salaryMin).toLocaleString()}–{Number(process.company.salaryMax).toLocaleString()} {process.company.currency}</span>}
         </div>
-        <button onClick={() => onView(process)} className="px-4 py-2 bg-orange-600 text-white rounded-xl text-xs font-bold hover:bg-orange-700">Ver proceso →</button>
+        <button onClick={() => onView(process)} className="px-4 py-2 bg-gray-900 text-white rounded-xl text-xs font-bold hover:bg-gray-800">Ver proceso →</button>
       </div>
     </div>
   );
@@ -1846,21 +1846,21 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
       <div className="bg-white border-b border-gray-100 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <span className="text-2xl font-black text-orange-600">RecruitAI</span>
-            <span className="text-xs bg-orange-100 text-orange-600 px-2 py-0.5 rounded-full font-semibold">Panel de reclutador</span>
+            <span className="text-2xl font-black text-gray-900">RecruitAI</span>
+            <span className="text-xs bg-gray-100 text-gray-900 px-2 py-0.5 rounded-full font-semibold">Panel de reclutador</span>
           </div>
           <div className="flex items-center gap-2">
             {user?.photoURL && <img src={user.photoURL} alt={user.displayName} className="w-8 h-8 rounded-full border-2 border-gray-200" />}
             <span className="text-sm text-gray-600 hidden sm:block">{user?.displayName?.split(" ")[0]}</span>
             <button onClick={onOpenSettings} className="px-3 py-2 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Configuración de agencia">⚙️</button>
-            <button onClick={onNew} className="px-5 py-2.5 bg-orange-600 text-white rounded-xl text-sm font-bold hover:bg-orange-700">+ Nuevo proceso</button>
+            <button onClick={onNew} className="px-5 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">+ Nuevo proceso</button>
             <button onClick={onLogout} className="px-3 py-2.5 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Cerrar sesión">↩</button>
           </div>
         </div>
       </div>
       <div className="max-w-4xl mx-auto p-6">
         <div className="grid grid-cols-3 gap-4 mb-8">
-          {[{ icon: "📋", label: "Procesos activos", val: active, color: "text-orange-600" }, { icon: "👥", label: "Candidatos totales", val: totalCandidates, color: "text-gray-800" }, { icon: "🎉", label: "Contratados", val: hired, color: "text-green-600" }].map(s => (
+          {[{ icon: "📋", label: "Procesos activos", val: active, color: "text-gray-900" }, { icon: "👥", label: "Candidatos totales", val: totalCandidates, color: "text-gray-800" }, { icon: "🎉", label: "Contratados", val: hired, color: "text-green-600" }].map(s => (
             <div key={s.label} className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5"><p className="text-2xl mb-1">{s.icon}</p><p className={`text-3xl font-black ${s.color}`}>{s.val}</p><p className="text-sm text-gray-400 mt-1">{s.label}</p></div>
           ))}
         </div>
@@ -1872,7 +1872,7 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
           <div className="bg-white rounded-2xl border border-dashed border-gray-200 p-12 text-center">
             <p className="text-4xl mb-3">🚀</p><h3 className="font-bold text-gray-700 mb-1">Sin procesos activos</h3>
             <p className="text-gray-400 text-sm mb-4">Crea tu primer proceso de selección para empezar.</p>
-            <button onClick={onNew} className="px-6 py-2.5 bg-orange-600 text-white rounded-xl text-sm font-bold hover:bg-orange-700">+ Crear proceso</button>
+            <button onClick={onNew} className="px-6 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">+ Crear proceso</button>
           </div>
         ) : (
           <div className="space-y-4">{processes.map(p => <ProcessCard key={p.id} process={p} onView={onView} onToggle={onToggle} />)}</div>
