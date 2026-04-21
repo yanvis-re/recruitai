@@ -1174,12 +1174,24 @@ function CandidatePublicScreen({ processId }) {
   const handleSubmit = async (responses) => {
     setSubmitting(true);
     try {
-      await addDoc(collection(db, "publicProcesses", processId, "applications"), {
+      const appRef = await addDoc(collection(db, "publicProcesses", processId, "applications"), {
         name: candidate?.name || "", email: candidate?.email || "", phone: candidate?.phone || "",
         linkedin: candidate?.linkedin || "", presentation: candidate?.presentation || "",
         responses, submittedAt: new Date().toISOString(),
         estado: "Pendiente", progreso: "Ingreso", entrevistador: "", notas: "", phase: "applied",
       });
+
+      // Fire-and-forget auto-evaluation. The IA runs server-side against the
+      // recruiter's custom criteria + brand manual, and writes the result back
+      // onto the application doc. Takes 20-60s depending on exercise count;
+      // the candidate does NOT wait for it — they see "submitted" immediately.
+      // When the recruiter later imports candidates, the evaluation is already
+      // populated.
+      fetch("/api/autoEvaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ processId, applicationId: appRef.id }),
+      }).catch(e => console.error("Auto-evaluate trigger error:", e));
 
       // Send confirmation email to candidate
       const emailData = {
@@ -2410,31 +2422,74 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
   const evaluateExercise = async () => {
     setEvaluatingEx(true); setError(null);
     try {
-      const firstResponse = responses[0] || {};
-      const exercise = process.exercises?.[0] || {};
-      const res = await fetch("/api/evaluate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "exercise",
-          data: {
-            exerciseTitle: exercise.title || "Ejercicio",
-            exerciseDescription: exercise.description || "",
-            writtenResponse: firstResponse.response || "",
-            loomUrl: firstResponse.loomUrl || "",
-            position,
-            brandManual: agencySettings?.brandManual || "",
-            companyName: process.company?.name || "",
-          },
-        }),
-      });
-      const json = await res.json();
-      if (json.error) throw new Error(json.error);
-      onUpdateCandidate({ ...candidate, exerciseEvaluation: json.evaluation });
-      // Slack notification
+      const exercises = process.exercises || [];
+      if (exercises.length === 0) throw new Error("Este proceso no tiene ejercicios definidos.");
+
+      // Evaluate each exercise individually with its own criteria. Running
+      // sequentially keeps the Claude API rate comfortable and the UX
+      // predictable (one fail doesn't corrupt the whole set).
+      const perExercise = [];
+      for (const exercise of exercises) {
+        const response = responses.find(r => r.exerciseId === exercise.id) || {};
+        const res = await fetch("/api/evaluate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "exercise",
+            data: {
+              exerciseTitle: exercise.title || "Ejercicio",
+              exerciseDescription: exercise.description || "",
+              criteria: exercise.criteria || [],
+              writtenResponse: response.response || "",
+              loomUrl: response.loomUrl || "",
+              position,
+              brandManual: agencySettings?.brandManual || "",
+              companyName: process.company?.name || "",
+            },
+          }),
+        });
+        const json = await res.json();
+        if (json.error) throw new Error(json.error);
+        perExercise.push({
+          exerciseId: exercise.id,
+          exerciseTitle: exercise.title,
+          loomTranscriptFetched: !!json.loomTranscriptFetched,
+          ...json.evaluation,
+        });
+      }
+
+      // Aggregate: single summary object for the overview panel + detailed
+      // per-exercise list for the expandable breakdown.
+      const validEvals = perExercise.filter(e => e && typeof e.overall === "number");
+      const aggOverall = validEvals.length > 0
+        ? Math.round(validEvals.reduce((s, e) => s + (e.overall || 0), 0) / validEvals.length)
+        : 0;
+      // Pick the WORST recommendation across exercises (conservative).
+      const recWeight = { AVANZAR: 2, REVISAR: 1, DESCARTAR: 0 };
+      const worstRec = validEvals
+        .map(e => e.recommendation)
+        .filter(r => r in recWeight)
+        .sort((a, b) => recWeight[a] - recWeight[b])[0] || "REVISAR";
+      const allStrengths = [...new Set(perExercise.flatMap(e => e.strengths || []))].slice(0, 6);
+      const allGaps = [...new Set(perExercise.flatMap(e => e.gaps || []))].slice(0, 6);
+      const aggSummary = perExercise
+        .map(e => `${e.exerciseTitle}: ${e.summary || "—"}`)
+        .join(" · ");
+
+      const aggregate = {
+        overall: aggOverall,
+        recommendation: worstRec,
+        strengths: allStrengths,
+        gaps: allGaps,
+        summary: aggSummary,
+        // Expose the per-exercise breakdown so the panel can render details.
+        exercises: perExercise,
+      };
+
+      onUpdateCandidate({ ...candidate, exerciseEvaluation: aggregate });
       sendSlackNotification(agencySettings?.slackConfig, "ai_evaluation", {
         candidateName: candidate.name, positionTitle: position,
-        evaluationType: "exercise", recommendation: json.evaluation?.overall?.recommendation,
+        evaluationType: "exercise", recommendation: aggregate.recommendation,
       });
     } catch (e) { setError("Error al evaluar: " + e.message); }
     setEvaluatingEx(false);
@@ -2562,18 +2617,66 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
 
               {exerciseEval && (
                 <div className="space-y-3">
+                  {/* Overall aggregate across all exercises */}
                   <div className="flex items-center justify-between bg-indigo-50 rounded-xl p-4">
-                    <div><p className="font-bold text-indigo-800">Resultado del ejercicio</p><p className="text-xs text-indigo-500 mt-0.5">{exerciseEval.summary}</p></div>
-                    <div className="text-right"><p className="text-3xl font-black text-indigo-700">{exerciseEval.overall}<span className="text-sm font-medium text-indigo-400">/100</span></p><span className={`text-xs font-bold px-2 py-0.5 rounded-full ${REC_COLORS[exerciseEval.recommendation] || "bg-gray-100 text-gray-700"}`}>{REC_LABELS[exerciseEval.recommendation] || exerciseEval.recommendation}</span></div>
+                    <div className="min-w-0 flex-1 pr-3">
+                      <p className="font-bold text-indigo-800">Resultado global</p>
+                      <p className="text-xs text-indigo-500 mt-0.5 line-clamp-3">{exerciseEval.summary}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-3xl font-black text-indigo-700">{exerciseEval.overall}<span className="text-sm font-medium text-indigo-400">/100</span></p>
+                      <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${REC_COLORS[exerciseEval.recommendation] || "bg-gray-100 text-gray-700"}`}>{REC_LABELS[exerciseEval.recommendation] || exerciseEval.recommendation}</span>
+                    </div>
                   </div>
-                  <div className="space-y-2">
-                    {(exerciseEval.criteria || []).map((c, i) => (
-                      <div key={i} className="flex items-start gap-3 bg-white border border-gray-100 rounded-xl p-3">
-                        <div className="shrink-0 w-10 h-10 bg-gray-50 rounded-lg flex items-center justify-center font-black text-gray-700">{c.score}<span className="text-xs text-gray-400">/10</span></div>
-                        <div className="flex-1 min-w-0"><p className="text-xs font-bold text-gray-700">{c.name}</p><p className="text-xs text-gray-500 mt-0.5">{c.feedback}</p></div>
-                      </div>
-                    ))}
-                  </div>
+
+                  {/* Per-exercise breakdown (new multi-exercise format) */}
+                  {exerciseEval.exercises && exerciseEval.exercises.length > 0 ? (
+                    <div className="space-y-3">
+                      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Desglose por ejercicio</p>
+                      {exerciseEval.exercises.map((ex, idx) => (
+                        <div key={ex.exerciseId || idx} className="bg-white border border-gray-100 rounded-xl p-3">
+                          <div className="flex items-start justify-between gap-2 mb-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-bold text-gray-400">#{idx + 1}</p>
+                              <p className="text-sm font-bold text-gray-800">{ex.exerciseTitle}</p>
+                            </div>
+                            <div className="text-right shrink-0">
+                              <p className="text-lg font-black text-indigo-700">{ex.overall}<span className="text-xs font-medium text-gray-400">/100</span></p>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${REC_COLORS[ex.recommendation] || "bg-gray-100 text-gray-700"}`}>{REC_LABELS[ex.recommendation] || ex.recommendation}</span>
+                            </div>
+                          </div>
+                          <p className="text-xs text-gray-500 mb-2 leading-relaxed">{ex.summary}</p>
+                          <div className="space-y-1.5">
+                            {(ex.criteria || []).map((c, i) => (
+                              <div key={i} className="flex items-start gap-2 bg-gray-50 rounded-lg p-2">
+                                <div className="shrink-0 w-9 rounded text-center font-black text-gray-700 text-xs py-1">
+                                  {c.score}<span className="text-[9px] text-gray-400">/{c.maxScore || 5}</span>
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-[11px] font-bold text-gray-700">{c.name}</p>
+                                  <p className="text-[11px] text-gray-500 mt-0.5 leading-snug">{c.feedback}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          {ex.loomTranscriptFetched && (
+                            <p className="text-[10px] text-gray-400 mt-2 flex items-center gap-1"><span>🎥</span> Transcripción de Loom incluida</p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    /* Legacy single-exercise format (backward compat) */
+                    <div className="space-y-2">
+                      {(exerciseEval.criteria || []).map((c, i) => (
+                        <div key={i} className="flex items-start gap-3 bg-white border border-gray-100 rounded-xl p-3">
+                          <div className="shrink-0 w-10 h-10 bg-gray-50 rounded-lg flex items-center justify-center font-black text-gray-700">{c.score}<span className="text-xs text-gray-400">/{c.maxScore || 10}</span></div>
+                          <div className="flex-1 min-w-0"><p className="text-xs font-bold text-gray-700">{c.name}</p><p className="text-xs text-gray-500 mt-0.5">{c.feedback}</p></div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {exerciseEval.strengths?.length > 0 && <div className="bg-green-50 rounded-xl p-3"><p className="text-xs font-bold text-green-700 mb-1">✅ Puntos fuertes</p>{exerciseEval.strengths.map((s, i) => <p key={i} className="text-xs text-green-600">· {s}</p>)}</div>}
                   {exerciseEval.gaps?.length > 0 && <div className="bg-gray-50 rounded-xl p-3"><p className="text-xs font-bold text-gray-800 mb-1">⚠️ Áreas de mejora</p>{exerciseEval.gaps.map((s, i) => <p key={i} className="text-xs text-gray-900">· {s}</p>)}</div>}
                   <button onClick={() => onUpdateCandidate({ ...candidate, exerciseEvaluation: null })} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Reevaluar</button>

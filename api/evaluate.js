@@ -26,7 +26,22 @@ async function fetchLoomTranscript(loomUrl) {
 }
 
 // ─── Build exercise evaluation prompt ────────────────────────────────────────
-function buildExercisePrompt({ exerciseTitle, exerciseDescription, writtenResponse, videoTranscript, position, brandManual, companyName }) {
+// Criteria list comes from the process's exercise definition — each recruiter
+// defines their own {area, indicators, maxScore} list when designing the
+// process. The IA now evaluates against THOSE, not the old hardcoded six.
+function buildExercisePrompt({ exerciseTitle, exerciseDescription, writtenResponse, videoTranscript, position, brandManual, companyName, criteria }) {
+  const rubric = Array.isArray(criteria) && criteria.length > 0
+    ? criteria.map((c, i) => `${i + 1}. **${c.area || `Criterio ${i + 1}`}** (máx. ${c.maxScore || 5} puntos) — ${c.indicators || "Sin indicadores definidos."}`).join("\n")
+    : `1. **Claridad y estructura** (máx. 5) — La respuesta está bien organizada y es fácil de seguir.
+2. **Calidad del contenido** (máx. 5) — Las ideas expuestas son sólidas y aportan valor.
+3. **Profundidad** (máx. 5) — El candidato justifica sus decisiones y aporta detalle suficiente.`;
+
+  const jsonSkeleton = Array.isArray(criteria) && criteria.length > 0
+    ? criteria.map(c => `    {"name": "${(c.area || "Criterio").replace(/"/g, "\\\"")}", "score": 0, "maxScore": ${c.maxScore || 5}, "feedback": "..."}`).join(",\n")
+    : `    {"name": "Claridad y estructura", "score": 0, "maxScore": 5, "feedback": "..."},
+    {"name": "Calidad del contenido", "score": 0, "maxScore": 5, "feedback": "..."},
+    {"name": "Profundidad", "score": 0, "maxScore": 5, "feedback": "..."}`;
+
   return `Eres un auditor externo riguroso evaluando a un candidato para el puesto de ${position} en ${companyName || "la agencia"}.
 
 MANUAL DE MARCA / VALORES DE LA AGENCIA:
@@ -50,23 +65,13 @@ Actúa con mentalidad de auditor externo. Principios:
 - Nada de adular: reconocer brevemente lo bueno, enfocar en lo que puede mejorar
 - Ten en cuenta tanto la respuesta escrita como la defensa oral del candidato
 
-Evalúa con base en 6 criterios (puntuación 0-10 cada uno):
-1. Diagnóstico estratégico
-2. Funnel y planificación táctica
-3. Estimaciones y métricas
-4. Propuesta operativa y responsabilidades
-5. Identificación de riesgos
-6. Justificación estratégica y comunicación con cliente
+CRITERIOS DE EVALUACIÓN (los definió el reclutador al crear este proceso — úsalos exactamente):
+${rubric}
 
-Devuelve ÚNICAMENTE el siguiente JSON (sin texto adicional, sin markdown):
+Devuelve ÚNICAMENTE el siguiente JSON (sin texto adicional, sin markdown). Usa los mismos nombres de criterio que arriba, y respeta el maxScore:
 {
   "criteria": [
-    {"name": "Diagnóstico estratégico", "score": 0, "feedback": "..."},
-    {"name": "Funnel y planificación táctica", "score": 0, "feedback": "..."},
-    {"name": "Estimaciones y métricas", "score": 0, "feedback": "..."},
-    {"name": "Propuesta operativa y responsabilidades", "score": 0, "feedback": "..."},
-    {"name": "Identificación de riesgos", "score": 0, "feedback": "..."},
-    {"name": "Justificación estratégica y comunicación con cliente", "score": 0, "feedback": "..."}
+${jsonSkeleton}
   ],
   "overall": 0,
   "strengths": ["...", "..."],
@@ -74,7 +79,12 @@ Devuelve ÚNICAMENTE el siguiente JSON (sin texto adicional, sin markdown):
   "recommendation": "AVANZAR",
   "summary": "..."
 }
-Valores válidos para recommendation: AVANZAR, REVISAR, DESCARTAR`;
+
+Instrucciones sobre los campos:
+- "overall" es la puntuación global sobre 100 (normaliza: suma de scores / suma de maxScores * 100).
+- "recommendation" solo admite: AVANZAR, REVISAR, DESCARTAR.
+- "strengths" y "gaps": 2-4 bullets concretos cada uno.
+- "summary": 2-3 frases con el veredicto narrativo.`;
 }
 
 // ─── Build interview evaluation prompt ───────────────────────────────────────
