@@ -178,6 +178,22 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
   const [step, setStep] = useState(0);
   const [data, setData] = useState(defaultJob);
   const [salaryApplied, setSalaryApplied] = useState(false);
+  const [showExitConfirm, setShowExitConfirm] = useState(false);
+
+  // Has the user touched anything beyond the defaults? If yes, confirm on exit.
+  const hasProgress = () => {
+    if (step > 0) return true;
+    const c = data.company, p = data.position;
+    return !!(c.name || c.description || c.sector || c.location || c.salaryMin || c.salaryMax
+      || p.responsibilities || p.skills || p.customTitle || p.benefits
+      || (data.schedulingUrl && data.schedulingUrl.trim())
+      || (data.exercises.length > 1)
+      || (data.exercises[0]?.description && data.exercises[0].description.trim()));
+  };
+  const attemptExit = () => {
+    if (hasProgress()) setShowExitConfirm(true);
+    else onBack();
+  };
   const upC = (f, v) => setData(d => ({ ...d, company: { ...d.company, [f]: v } }));
   const upP = (f, v) => setData(d => ({ ...d, position: { ...d.position, [f]: v } }));
   const upTop = (f, v) => setData(d => ({ ...d, [f]: v }));
@@ -557,12 +573,35 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
       {/* Top bar */}
       <div className="px-6 py-5 flex justify-between items-center max-w-2xl mx-auto w-full">
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="text-sm text-gray-400 hover:text-gray-900 font-medium">← Panel</button>
+          <button onClick={attemptExit} className="text-sm text-gray-500 hover:text-gray-900 font-medium">← Volver al dashboard</button>
           <div className="w-px h-4 bg-gray-200" />
           <span className="text-xl font-black text-gray-900 tracking-tight">RecruitAI</span>
         </div>
         {counterText && <span className="text-xs text-gray-400 font-medium">{counterText}</span>}
       </div>
+
+      {/* Exit confirmation modal */}
+      {showExitConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-xl max-w-md w-full p-6">
+            <div className="text-center mb-5">
+              <div className="text-4xl mb-2">⚠️</div>
+              <h3 className="font-bold text-gray-900 text-lg mb-1">¿Salir sin guardar?</h3>
+              <p className="text-sm text-gray-500 leading-relaxed">Perderás el progreso de este proceso. Si quieres conservarlo, completa la creación.</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setShowExitConfirm(false)}
+                className="flex-1 py-3 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50">
+                Seguir creando
+              </button>
+              <button onClick={() => { setShowExitConfirm(false); onBack(); }}
+                className="flex-1 py-3 bg-red-500 text-white rounded-xl text-sm font-bold hover:bg-red-600">
+                Salir sin guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Main content */}
       <div className="flex-1 flex items-start sm:items-center justify-center px-6 pb-8">
@@ -1101,6 +1140,7 @@ function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, 
 
         <p className="text-xs text-gray-400 mt-6 text-center">Tus datos se guardan de forma segura en Firebase</p>
       </div>
+      <BrandFooter />
     </div>
   );
 }
@@ -3195,6 +3235,33 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
           </>
         )}
       </div>
+      <BrandFooter />
+    </div>
+  );
+}
+
+// ─── Rumbo Eficiente attribution ─────────────────────────────────────────────
+// Small isotype SVG (ambar diamond with concentric circles) + wordmark link.
+// Used as "RecruitAI por Rumbo Eficiente" in LoginScreen, Dashboard and email.
+function RumboMark({ className = "" }) {
+  return (
+    <svg viewBox="0 0 32 32" className={className} xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect x="6" y="6" width="20" height="20" rx="2.5" transform="rotate(45 16 16)" fill="#D48006" />
+      <circle cx="16" cy="16" r="3.5" fill="#fff" />
+      <circle cx="16" cy="16" r="1.5" fill="#D48006" />
+    </svg>
+  );
+}
+function BrandFooter({ variant = "light" }) {
+  const txt = variant === "dark" ? "text-gray-400 hover:text-white" : "text-gray-400 hover:text-gray-700";
+  return (
+    <div className="flex items-center justify-center gap-2 py-6 text-xs">
+      <span className={`${txt} transition-colors`}>RecruitAI por</span>
+      <a href="https://rumboeficiente.com" target="_blank" rel="noreferrer"
+         className={`flex items-center gap-1.5 font-semibold ${txt} transition-colors`}>
+        <RumboMark className="w-4 h-4" />
+        <span>Rumbo Eficiente</span>
+      </a>
     </div>
   );
 }
@@ -3479,7 +3546,15 @@ export default function App() {
   const clearAuthState = () => { setEmailError(""); setResetSent(false); };
   const handleLogout = async () => { await signOut(auth); setProcesses([]); setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setShowOnboarding(false); setPhase("dashboard"); };
   const goToDashboard = () => { setPhase("dashboard"); setActiveJob(null); setCandidate(null); setEvaluation(null); setInterview(null); };
-  const handlePublish = (jobData) => { const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] }; setProcesses(ps => [np, ...ps]); setActiveJob(jobData); setPhase("preview"); };
+  const handlePublish = (jobData) => {
+    // After creating a process, drop the recruiter into the process detail
+    // screen (where they can generate the public link, see candidates, etc.)
+    // — NOT into the candidate-facing preview, which was disorienting.
+    const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] };
+    setProcesses(ps => [np, ...ps]);
+    setActiveJob(np);
+    setPhase("process_detail");
+  };
   const handleToggle = (id) => setProcesses(ps => ps.map(p => p.id === id ? { ...p, status: p.status === "active" ? "paused" : "active" } : p));
   const handleViewProcess = (process) => { setActiveJob(process); setPhase("process_detail"); };
   const handleStartDemo = (process) => { setActiveJob(process); setPhase("preview"); };

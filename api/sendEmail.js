@@ -136,6 +136,7 @@ function templateWelcome({ userName, appUrl }) {
         </ul>
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0"/>
         <p style="font-size:13px;color:#6b7280;line-height:1.5">¿Dudas? Responde a este email y te echo una mano.</p>
+        <p style="font-size:12px;color:#9ca3af;text-align:center;margin-top:24px;padding-top:16px;border-top:1px solid #e5e7eb"><strong style="color:#6b7280">RecruitAI</strong> por <a href="https://rumboeficiente.com" style="color:#D48006;text-decoration:none;font-weight:600">◆ Rumbo Eficiente</a></p>
       </div></div>`,
   };
 }
