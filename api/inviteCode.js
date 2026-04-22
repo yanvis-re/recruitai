@@ -112,10 +112,99 @@ async function consume(req, res) {
   }
 }
 
+// action: "acceptAgency" (requires Bearer ID token)
+//
+// Joins a user into the agency referenced by an agencyInvites/{token} doc.
+// This MUST run server-side because the invitee is not yet a member of the
+// target agency, and the agencies/{id} read/update rules require membership
+// — a chicken-and-egg client-side can't solve. The admin SDK bypasses rules
+// here, so we revalidate the invite ourselves (not expired, not used, agency
+// exists) inside a Firestore transaction and then atomically:
+//   - append {uid, email, displayName, role, joinedAt} to agency.members
+//   - append uid to agency.memberUids
+//   - stamp invite.{acceptedBy, acceptedAt, acceptedEmail}
+//   - set recruiters/{uid}.{agencyId, status=active, statusUpdatedAt}
+// Idempotent: if the user is already a member, we just mark the invite
+// consumed without duplicating their membership entry.
+async function acceptAgency(req, res) {
+  if (!admin.apps.length) return res.status(500).json({ error: "service_unavailable" });
+
+  const header = req.headers.authorization || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+  if (!token) return res.status(401).json({ error: "Missing token" });
+
+  let decoded;
+  try { decoded = await admin.auth().verifyIdToken(token); }
+  catch { return res.status(401).json({ error: "Invalid token" }); }
+
+  const inviteToken = (req.body?.inviteToken || "").toString().trim();
+  if (!inviteToken) return res.status(400).json({ error: "Missing inviteToken" });
+
+  try {
+    const db = admin.firestore();
+    const inviteRef = db.collection("agencyInvites").doc(inviteToken);
+
+    const result = await db.runTransaction(async (tx) => {
+      const inviteSnap = await tx.get(inviteRef);
+      if (!inviteSnap.exists) return { ok: false, reason: "not_found" };
+      const invite = inviteSnap.data();
+      if (invite.acceptedBy) return { ok: false, reason: "already_used" };
+      if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) {
+        return { ok: false, reason: "expired" };
+      }
+
+      const agencyRef = db.collection("agencies").doc(invite.agencyId);
+      const agencySnap = await tx.get(agencyRef);
+      if (!agencySnap.exists) return { ok: false, reason: "agency_missing" };
+      const agency = agencySnap.data();
+
+      const now = new Date().toISOString();
+      const alreadyMember = (agency.memberUids || []).includes(decoded.uid);
+
+      if (!alreadyMember) {
+        const newMember = {
+          uid: decoded.uid,
+          email: decoded.email || "",
+          displayName: decoded.name || "",
+          role: invite.role || "member",
+          joinedAt: now,
+        };
+        tx.update(agencyRef, {
+          members: [...(agency.members || []), newMember],
+          memberUids: [...(agency.memberUids || []), decoded.uid],
+        });
+      }
+
+      tx.update(inviteRef, {
+        acceptedBy: decoded.uid,
+        acceptedAt: now,
+        acceptedEmail: decoded.email || "",
+      });
+
+      if (!alreadyMember) {
+        tx.set(db.collection("recruiters").doc(decoded.uid), {
+          agencyId: invite.agencyId,
+          status: "active",
+          statusUpdatedAt: now,
+        }, { merge: true });
+      }
+
+      return { ok: true, agencyId: invite.agencyId, alreadyMember, agencyName: agency.name };
+    });
+
+    if (!result.ok) return res.status(200).json({ success: false, reason: result.reason });
+    return res.status(200).json({ success: true, agencyId: result.agencyId, alreadyMember: result.alreadyMember, agencyName: result.agencyName });
+  } catch (err) {
+    console.error("inviteCode/acceptAgency error:", err);
+    return res.status(500).json({ error: err.message });
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
   const action = req.body?.action || "";
   if (action === "validate") return validate(req, res);
   if (action === "consume") return consume(req, res);
-  return res.status(400).json({ error: `Unknown action: ${action}. Use "validate" | "consume".` });
+  if (action === "acceptAgency") return acceptAgency(req, res);
+  return res.status(400).json({ error: `Unknown action: ${action}. Use "validate" | "consume" | "acceptAgency".` });
 }

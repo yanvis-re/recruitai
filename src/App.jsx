@@ -2122,67 +2122,29 @@ async function loadAgencyInvite(token) {
   }
 }
 
-// Accept an invite transactionally: adds the user to the agency's members,
-// stamps acceptedBy on the invite, points recruiters/{uid}.agencyId to the
-// new agency. If the user is already a member, just marks the invite used.
+// Accept an agency invite. Dispatches to the server-side endpoint
+// /api/inviteCode with action=acceptAgency because the invitee is NOT yet
+// a member of the target agency, and the Firestore rules on agencies/{id}
+// require membership to read OR write. The server uses firebase-admin
+// (which bypasses rules) to re-validate the invite, add the user to the
+// agency, stamp the invite, and update recruiters/{uid} — all in a single
+// transaction. Returns { ok, reason? } mirroring the server response.
 async function acceptAgencyInvite(token, user) {
-  const inviteRef = doc(db, "agencyInvites", token);
-  return await runTransaction(db, async (tx) => {
-    const inviteSnap = await tx.get(inviteRef);
-    if (!inviteSnap.exists()) return { ok: false, reason: "not_found" };
-    const invite = inviteSnap.data();
-    if (invite.acceptedBy) return { ok: false, reason: "already_used" };
-    if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) {
-      return { ok: false, reason: "expired" };
-    }
-
-    const agencyRef = doc(db, "agencies", invite.agencyId);
-    const agencySnap = await tx.get(agencyRef);
-    if (!agencySnap.exists()) return { ok: false, reason: "agency_missing" };
-    const agency = agencySnap.data();
-
-    const now = new Date().toISOString();
-    const alreadyMember = (agency.memberUids || []).includes(user.uid);
-
-    if (!alreadyMember) {
-      const newMember = {
-        uid: user.uid,
-        email: user.email || "",
-        displayName: user.displayName || "",
-        role: invite.role || "member",
-        joinedAt: now,
-      };
-      tx.update(agencyRef, {
-        members: [...(agency.members || []), newMember],
-        memberUids: [...(agency.memberUids || []), user.uid],
-      });
-    }
-
-    // Mark the invite as used (even if the user was already a member, so we
-    // don't let the same token accept twice).
-    tx.update(inviteRef, {
-      acceptedBy: user.uid,
-      acceptedAt: now,
-      acceptedEmail: user.email || "",
+  try {
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/inviteCode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${idToken}` },
+      body: JSON.stringify({ action: "acceptAgency", inviteToken: token }),
     });
-
-    // Point the recruiter at this agency + activate their platform status.
-    // The agency invite itself IS the trust grant: an existing agency member
-    // is vouching for them, so we don't also require a platform-level invite
-    // code. A pending user accepting an agency invite becomes active
-    // instantly. A suspended user won't reach this code path (the gate in
-    // App.jsx blocks suspended before pendingAgencyInvite). Already-active
-    // users keep their active status (merge is additive).
-    if (!alreadyMember) {
-      tx.set(doc(db, "recruiters", user.uid), {
-        agencyId: invite.agencyId,
-        status: "active",
-        statusUpdatedAt: now,
-      }, { merge: true });
-    }
-
-    return { ok: true, agencyId: invite.agencyId, alreadyMember, agencyName: agency.name };
-  });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, reason: json.reason || "error" };
+    if (!json.success) return { ok: false, reason: json.reason || "error" };
+    return { ok: true, agencyId: json.agencyId, alreadyMember: json.alreadyMember, agencyName: json.agencyName };
+  } catch (e) {
+    console.error("acceptAgencyInvite fetch error:", e);
+    return { ok: false, reason: "error" };
+  }
 }
 
 // Change a single member's role. Only owners can promote to admin or demote
