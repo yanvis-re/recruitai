@@ -1496,7 +1496,13 @@ function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, 
 
   return (
     <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 gap-4">
-      <div className="bg-white rounded-3xl shadow-xl border border-gray-100 p-8 sm:p-10 max-w-md w-full">
+      <div className={`w-full flex flex-col lg:flex-row gap-6 items-start justify-center ${mode === "signup" ? "max-w-5xl" : "max-w-md"}`}>
+      {mode === "signup" && (
+        <div className="w-full lg:w-1/2 order-2 lg:order-1">
+          <RoadmapPreview />
+        </div>
+      )}
+      <div className="bg-white rounded-3xl shadow-xl border border-gray-100 p-8 sm:p-10 max-w-md w-full mx-auto lg:mx-0 order-1 lg:order-2">
         {/* Header */}
         <div className="text-center mb-7">
           <div className="w-16 h-16 bg-gray-900 rounded-2xl flex items-center justify-center mx-auto mb-5">
@@ -1607,6 +1613,7 @@ function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, 
         )}
 
         <p className="text-xs text-gray-400 mt-6 text-center">Tus datos se guardan de forma segura en Firebase</p>
+      </div>
       </div>
       <BrandFooter />
     </div>
@@ -4117,6 +4124,55 @@ function Roadmap({ user, agencySettings, processes, onNavigate }) {
                   {step.action.label} →
                 </button>
               )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Static preview of the roadmap shown to users BEFORE they have an account.
+// Renders the 7 steps as a non-interactive 'here's what's ahead' card so the
+// signup moment feels intentional — you're not just creating a login, you're
+// starting a journey with a clear end goal.
+function RoadmapPreview() {
+  const steps = [
+    { n: 1, icon: "🔑", label: "Crear tu cuenta",        detail: "Email o Google. Solo tú accedes a tus datos." },
+    { n: 2, icon: "🎨", label: "Manual de marca",        detail: "La IA evaluará a los candidatos según los valores de tu agencia." },
+    { n: 3, icon: "📧", label: "Email automático",       detail: "Confirmaciones al aplicar, decisiones finales, oferta..." },
+    { n: 4, icon: "🔔", label: "Slack",                  detail: "Avisos instantáneos al equipo cuando llega un candidato.", optional: true },
+    { n: 5, icon: "📝", label: "Crear tu primer proceso", detail: "Empresa, puesto, ejercicios. Sube documentos y la IA los estructura." },
+    { n: 6, icon: "🎯", label: "Definir ejercicios",     detail: "Con los criterios personalizados que use la IA para evaluar." },
+    { n: "🚀", icon: null, label: "Publicar el link público", detail: "Tu primer proceso en la calle. Aquí empieza todo.", milestone: true },
+  ];
+  return (
+    <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 sm:p-7 w-full">
+      <div className="mb-4">
+        <h2 className="text-lg font-bold text-gray-900 tracking-tight flex items-center gap-2">
+          <span>🗺</span><span>Esto es lo que te espera</span>
+        </h2>
+        <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+          De la creación de tu cuenta al primer proceso en la calle. En ~10 minutos puedes tenerlo todo funcionando.
+        </p>
+      </div>
+      <div className="bg-gray-100 rounded-full h-2 mb-5" />
+      <div className="space-y-1">
+        {steps.map((s, i) => (
+          <div key={i}
+            className={`flex items-start gap-3 py-2.5 border-b last:border-0 border-gray-50 ${s.milestone ? "bg-yellow-50 -mx-3 px-3 rounded-xl border-yellow-100" : ""}`}>
+            <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-black ${
+              s.milestone ? "bg-yellow-400 text-gray-900" : "bg-gray-100 text-gray-500"
+            }`}>
+              {s.n}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className="font-bold text-sm text-gray-900">{s.icon ? `${s.icon} ` : ""}{s.label}</p>
+                {s.optional && <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium">OPCIONAL</span>}
+                {s.milestone && <span className="text-[10px] bg-yellow-400 text-gray-900 px-1.5 py-0.5 rounded font-black">🎯 HITO FINAL</span>}
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5 leading-snug">{s.detail}</p>
             </div>
           </div>
         ))}
