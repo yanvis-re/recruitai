@@ -1,73 +1,155 @@
 // Firestore Security Rules for RecruitAI.
 // Deploy with:  firebase deploy --only firestore:rules
 //
-// Model:
-//   recruiters/{uid}              → private recruiter data (processes, settings). Owner-only.
-//   users/{uid}                   → legacy/secondary doc (slackConfig). Owner-only.
-//   publicProcesses/{id}          → published job offers. Public READ, owner-only WRITE.
-//   publicProcesses/{id}/applications/{appId} → candidate submissions. Public CREATE, owner-only READ.
+// Model (post multi-tenancy rewrite):
+//   recruiters/{uid}              → per-user private doc. Owner-only. Holds
+//                                    the user's agencyId pointer, status,
+//                                    AI-evaluation usage counter, etc.
+//   users/{uid}                   → legacy slackConfig doc. Owner-only.
+//   agencies/{agencyId}           → shared workspace. Contains processes +
+//                                    settings + members list. Any member can
+//                                    read/write; only the owner can transfer
+//                                    ownership or delete the workspace.
+//   publicProcesses/{id}          → published job offer. Public READ. Writes
+//                                    allowed to any member of the owning
+//                                    agency (new path) OR to the original
+//                                    recruiterUid (legacy pre-migration docs).
+//   publicProcesses/{id}/applications/{appId}
+//                                → candidate submissions. Public CREATE.
+//                                    READ/DELETE allowed to any member of the
+//                                    owning agency (plus legacy owner path).
 
 rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── Recruiter private workspace ──────────────────────────────────────────
-    // Each recruiter owns exactly one doc matching their auth uid.
+    // ── Helpers ─────────────────────────────────────────────────────────────
+    function isAuthed() {
+      return request.auth != null;
+    }
+
+    function isAgencyMember(agencyId) {
+      return isAuthed()
+        && request.auth.uid in get(/databases/$(database)/documents/agencies/$(agencyId)).data.memberUids;
+    }
+
+    // Hard cap on processes stored inside an agency doc. Keep in sync with
+    // FREE_PROCESSES_PER_AGENCY on the server side. Enforcement is primary
+    // here; client-side UX (disabled "+ Nuevo proceso" button) is the
+    // friendly layer.
+    function agencyProcessCap() { return 50; }
+
+    // ── Recruiter private workspace ─────────────────────────────────────────
+    // Each user has exactly one recruiters/{uid} doc. Holds status, agencyId,
+    // usage counters — strictly owner-only.
     match /recruiters/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if isAuthed() && request.auth.uid == uid;
     }
 
-    // ── Legacy/secondary user doc (slackConfig persisted separately) ─────────
+    // ── Legacy users doc (slackConfig persisted separately on some paths) ──
     match /users/{uid} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, write: if isAuthed() && request.auth.uid == uid;
     }
 
-    // ── Published job processes (candidate-facing) ───────────────────────────
+    // ── Agencies (workspaces) ───────────────────────────────────────────────
+    match /agencies/{agencyId} {
+      // Read: any member.
+      allow read: if isAuthed() && request.auth.uid in resource.data.memberUids;
+
+      // Create: caller must be owner + sole member at creation time, and the
+      // initial processes array must respect the cap (usually [] on auto-
+      // migration; could carry legacy processes over on first migration).
+      allow create: if isAuthed()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.memberUids.hasOnly([request.auth.uid])
+        && request.resource.data.processes.size() <= agencyProcessCap();
+
+      // Update: any member can write to the doc (CRUD processes, edit
+      // settings, manage memberships). Two guardrails:
+      //   1. processes array stays under the cap.
+      //   2. ownerUid is either unchanged OR transferred by the CURRENT
+      //      owner to another existing member. This enforces a single owner,
+      //      prevents members from self-promoting, and guarantees the new
+      //      owner actually belongs to the agency.
+      allow update: if isAuthed()
+        && request.auth.uid in resource.data.memberUids
+        && request.resource.data.processes.size() <= agencyProcessCap()
+        && (
+          request.resource.data.ownerUid == resource.data.ownerUid
+          || (resource.data.ownerUid == request.auth.uid
+              && request.resource.data.ownerUid in request.resource.data.memberUids)
+        );
+
+      // Delete: only the owner can nuke the agency.
+      allow delete: if isAuthed() && resource.data.ownerUid == request.auth.uid;
+    }
+
+    // ── Published job processes (candidate-facing) ──────────────────────────
     match /publicProcesses/{processId} {
 
-      // Anyone can READ a published process — that's the whole point of the
-      // public link. Secrets (API keys, webhooks) are stripped client-side
-      // in generatePublicLink before writing here.
+      // Anyone can READ — this is the candidate-facing link.
       allow read: if true;
 
-      // Only authenticated users can publish, and only as themselves.
-      // The document MUST carry recruiterUid == auth.uid.
-      allow create: if request.auth != null
-        && request.resource.data.recruiterUid == request.auth.uid;
+      // Create: caller must stamp recruiterUid = self AND an agencyId where
+      // they're a member. New docs always carry agencyId going forward.
+      allow create: if isAuthed()
+        && request.resource.data.recruiterUid == request.auth.uid
+        && 'agencyId' in request.resource.data
+        && isAgencyMember(request.resource.data.agencyId);
 
-      // Updates: the owner can change contents, but can't change recruiterUid
-      // (prevents a recruiter from hijacking someone else's process).
-      allow update: if request.auth != null
-        && resource.data.recruiterUid == request.auth.uid
-        && request.resource.data.recruiterUid == request.auth.uid;
+      // Update: any member of the owning agency (multi-tenant path) OR the
+      // original recruiterUid owner (legacy path for docs created before
+      // migration stamps agencyId on them). recruiterUid itself is immutable
+      // — prevents hijacking a process to a different owner.
+      allow update: if isAuthed()
+        && request.resource.data.recruiterUid == resource.data.recruiterUid
+        && (
+          resource.data.recruiterUid == request.auth.uid
+          || ('agencyId' in resource.data && isAgencyMember(resource.data.agencyId))
+        );
 
-      allow delete: if request.auth != null
-        && resource.data.recruiterUid == request.auth.uid;
+      // Delete: same dual path as update. Used by the "🗑 Borrar" button AND
+      // (implicitly) by the archive toggle when we deleteDoc on reopen.
+      allow delete: if isAuthed()
+        && (
+          resource.data.recruiterUid == request.auth.uid
+          || ('agencyId' in resource.data && isAgencyMember(resource.data.agencyId))
+        );
 
-      // ── Candidate applications (subcollection) ─────────────────────────────
+      // ── Candidate applications (subcollection) ────────────────────────────
       match /applications/{appId} {
 
-        // Anyone (including anonymous) can submit an application.
-        // This is the candidate apply flow — no auth required.
+        // Anonymous candidates submit applications — no auth required.
         allow create: if true;
 
-        // Only the process owner can read applications.
-        allow read: if request.auth != null
-          && get(/databases/$(database)/documents/publicProcesses/$(processId)).data.recruiterUid == request.auth.uid;
+        // Read: legacy owner OR any member of the agency. Two get() hops
+        // (first for the parent process to find its agencyId, then for the
+        // agency itself). Cost one extra read per rule eval — fine for the
+        // volumes we're at.
+        allow read: if isAuthed()
+          && (
+            get(/databases/$(database)/documents/publicProcesses/$(processId)).data.recruiterUid == request.auth.uid
+            || ('agencyId' in get(/databases/$(database)/documents/publicProcesses/$(processId)).data
+                && isAgencyMember(get(/databases/$(database)/documents/publicProcesses/$(processId)).data.agencyId))
+          );
 
-        // Applications are immutable from the client — recruiter edits status
-        // in their own recruiters doc, not here.
+        // Applications are immutable from the client.
         allow update: if false;
 
-        // Delete: only the owner of the parent publicProcess can delete an
-        // application, and only as part of deleting the full process (the UI
-        // runs a batch-delete across the subcollection when the recruiter
-        // removes the process). Symmetric with the read rule: same ownership
-        // check, different verb.
-        allow delete: if request.auth != null
-          && get(/databases/$(database)/documents/publicProcesses/$(processId)).data.recruiterUid == request.auth.uid;
+        // Delete: same dual path as read. Fires when the recruiter deletes
+        // the parent process and we batch-delete the applications.
+        allow delete: if isAuthed()
+          && (
+            get(/databases/$(database)/documents/publicProcesses/$(processId)).data.recruiterUid == request.auth.uid
+            || ('agencyId' in get(/databases/$(database)/documents/publicProcesses/$(processId)).data
+                && isAgencyMember(get(/databases/$(database)/documents/publicProcesses/$(processId)).data.agencyId))
+          );
       }
     }
+
+    // NOTE: agencyInvites/{token} rules land in Commit C (invite flow). Until
+    // then the collection is default-deny on the client, which is fine —
+    // no code touches it yet.
   }
 }
