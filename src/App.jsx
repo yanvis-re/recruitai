@@ -2517,6 +2517,10 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
   const [evaluatingInt, setEvaluatingInt] = useState(false);
   const [interviewTranscript, setInterviewTranscript] = useState(candidate.interviewTranscript || "");
   const [error, setError] = useState(null);
+  // Decision + reevaluation confirmations — prevent accidental destructive/
+  // external-effect actions (sending emails to candidates, wiping evaluations).
+  const [pendingDecision, setPendingDecision] = useState(null);
+  const [pendingReeval, setPendingReeval] = useState(null); // "exercise" | "interview"
 
   const exerciseEval = candidate.exerciseEvaluation;
   const interviewEval = candidate.interviewEvaluation;
@@ -2783,7 +2787,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
 
                   {exerciseEval.strengths?.length > 0 && <div className="bg-green-50 rounded-xl p-3"><p className="text-xs font-bold text-green-700 mb-1">✅ Puntos fuertes</p>{exerciseEval.strengths.map((s, i) => <p key={i} className="text-xs text-green-600">· {s}</p>)}</div>}
                   {exerciseEval.gaps?.length > 0 && <div className="bg-gray-50 rounded-xl p-3"><p className="text-xs font-bold text-gray-800 mb-1">⚠️ Áreas de mejora</p>{exerciseEval.gaps.map((s, i) => <p key={i} className="text-xs text-gray-900">· {s}</p>)}</div>}
-                  <button onClick={() => onUpdateCandidate({ ...candidate, exerciseEvaluation: null })} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Reevaluar</button>
+                  <button onClick={() => setPendingReeval("exercise")} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Reevaluar</button>
                 </div>
               )}
             </div>
@@ -2840,7 +2844,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                       {(interviewEval.interviewer.improvements || []).length > 0 && <div>{interviewEval.interviewer.improvements.map((s, i) => <p key={i} className="text-xs text-gray-900">→ {s}</p>)}</div>}
                     </div>
                   )}
-                  <button onClick={() => { onUpdateCandidate({ ...candidate, interviewEvaluation: null, interviewTranscript: "" }); setInterviewTranscript(""); }} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Reevaluar entrevista</button>
+                  <button onClick={() => setPendingReeval("interview")} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Reevaluar entrevista</button>
                 </div>
               )}
             </div>
@@ -2866,7 +2870,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Tu decisión final</p>
                 <div className="grid grid-cols-2 gap-2">
                   {[["Contratado", "🎉 Contratar", "bg-green-600 hover:bg-green-700 text-white"], ["Segunda entrevista", "🔄 Segunda entrevista", "bg-gray-900 hover:bg-gray-800 text-white"], ["En cartera", "📁 En cartera", "bg-yellow-500 hover:bg-yellow-600 text-white"], ["Descartado", "❌ Descartar", "bg-red-500 hover:bg-red-600 text-white"]].map(([val, label, cls]) => (
-                    <button key={val} onClick={() => setFinalDecision(val)} className={`py-3 rounded-xl font-bold text-sm transition-colors ${cls} ${candidate.estado === val ? "ring-4 ring-offset-2 ring-gray-300" : ""}`}>{label}</button>
+                    <button key={val} onClick={() => setPendingDecision(val)} className={`py-3 rounded-xl font-bold text-sm transition-colors ${cls} ${candidate.estado === val ? "ring-4 ring-offset-2 ring-gray-300" : ""}`}>{label}</button>
                   ))}
                 </div>
                 {candidate.finalDecision && <p className="text-xs text-center text-gray-400 mt-3">Decisión registrada: <strong>{candidate.finalDecision}</strong></p>}
@@ -2875,6 +2879,98 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
           )}
         </div>
       </div>
+
+      {/* ── Decision confirmation modal ─── */}
+      {(() => {
+        if (!pendingDecision) return null;
+        const DECISION_PREVIEW = {
+          "Contratado": {
+            icon: "🎉", title: "¿Confirmar oferta de trabajo?", subject: "¡Enhorabuena! Oferta de trabajo",
+            impact: "Le notificaremos al candidato por email que tiene una oferta. Este suele ser el paso previo a la firma.",
+            confirmLabel: "Sí, enviar oferta", confirmStyle: "bg-green-600 hover:bg-green-700",
+          },
+          "Segunda entrevista": {
+            icon: "🔄", title: "¿Invitar a segunda entrevista?", subject: "Siguiente paso en tu proceso",
+            impact: "El candidato recibirá un email invitándole a continuar con una segunda entrevista (con el link de agendamiento si lo tienes configurado).",
+            confirmLabel: "Sí, enviar invitación", confirmStyle: "bg-gray-900 hover:bg-gray-800",
+          },
+          "En cartera": {
+            icon: "📁", title: "¿Guardar en cartera?", subject: `Tu candidatura en ${process.company?.name || "la empresa"}`,
+            impact: "El candidato recibirá un email avisándole de que su perfil queda en base de talento para futuras oportunidades.",
+            confirmLabel: "Sí, guardar", confirmStyle: "bg-yellow-500 hover:bg-yellow-600",
+          },
+          "Descartado": {
+            icon: "❌", title: "¿Descartar al candidato?", subject: "Actualización sobre tu candidatura",
+            impact: "El candidato recibirá un email informándole de que el proceso continúa con otros perfiles. Este paso cierra el proceso para esta persona.",
+            confirmLabel: "Sí, descartar", confirmStyle: "bg-red-500 hover:bg-red-600",
+          },
+        };
+        const p = DECISION_PREVIEW[pendingDecision];
+        if (!p) return null;
+        const emailConfig = agencySettings?.emailConfig || { provider: "none" };
+        const emailWillBeSent = !!candidate.email && emailConfig.provider !== "none";
+        return (
+          <ConfirmModal
+            open={true}
+            onClose={() => setPendingDecision(null)}
+            onConfirm={() => { setFinalDecision(pendingDecision); setPendingDecision(null); }}
+            icon={p.icon}
+            title={p.title}
+            description={`Candidato: ${candidate.name}`}
+            confirmLabel={p.confirmLabel}
+            confirmStyle={p.confirmStyle}
+          >
+            <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 space-y-3 mt-3">
+              <div>
+                <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-1">Qué pasará</p>
+                <p className="text-sm text-gray-700 leading-relaxed">{p.impact}</p>
+              </div>
+              {emailWillBeSent ? (
+                <div className="flex items-start gap-2 pt-3 border-t border-gray-200">
+                  <span className="text-base shrink-0">📧</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-gray-500">Email automático a <strong className="text-gray-800">{candidate.email}</strong></p>
+                    <p className="text-xs text-gray-700 mt-0.5 italic truncate">"{p.subject} – {position}"</p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-start gap-2 pt-3 border-t border-gray-200">
+                  <span className="text-base shrink-0">ℹ️</span>
+                  <p className="text-xs text-gray-500">{!candidate.email ? "Sin email del candidato, no se enviará notificación." : "Email no configurado en tu agencia, no se enviará notificación."}</p>
+                </div>
+              )}
+              {candidate.estado && candidate.estado !== pendingDecision && (
+                <p className="text-xs text-gray-400 pt-2 border-t border-gray-200">
+                  Estado: <strong>{candidate.estado}</strong> → <strong>{pendingDecision}</strong>
+                </p>
+              )}
+            </div>
+          </ConfirmModal>
+        );
+      })()}
+
+      {/* ── Reevaluation confirmation ─── */}
+      <ConfirmModal
+        open={!!pendingReeval}
+        onClose={() => setPendingReeval(null)}
+        onConfirm={() => {
+          if (pendingReeval === "exercise") {
+            onUpdateCandidate({ ...candidate, exerciseEvaluation: null });
+          } else if (pendingReeval === "interview") {
+            onUpdateCandidate({ ...candidate, interviewEvaluation: null, interviewTranscript: "" });
+            setInterviewTranscript("");
+          }
+          setPendingReeval(null);
+        }}
+        icon="🔄"
+        title={pendingReeval === "exercise" ? "¿Volver a evaluar el ejercicio?" : "¿Volver a evaluar la entrevista?"}
+        description={
+          pendingReeval === "exercise"
+            ? "Se borrará la evaluación actual del ejercicio. Podrás generar una nueva llamada a la IA."
+            : "Se borrará la evaluación actual de la entrevista y su transcripción. Podrás pegar una nueva."
+        }
+        confirmLabel="Sí, empezar de nuevo"
+      />
     </div>
   );
 }
@@ -2924,7 +3020,14 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
   };
   const updateCandidateFull = (updated) => { const u = candidates.map(c => c.id === updated.id ? updated : c); setCandidates(u); onUpdate(process.id, u); if (evalCandidate?.id === updated.id) setEvalCandidate(updated); };
   const addCandidate = () => { if (!newName.trim()) return; const nc = { id: `c_${Date.now()}`, name: newName.trim(), email: newEmail.trim(), phase: "applied", estado: "Pendiente", progreso: "Ingreso", entrevistador: user?.displayName || "", notas: "" }; const u = [...candidates, nc]; setCandidates(u); onUpdate(process.id, u); setNewName(""); setNewEmail(""); setShowAddForm(false); };
-  const removeCandidate = (id) => { if (!window.confirm("¿Eliminar este candidato?")) return; const u = candidates.filter(c => c.id !== id); setCandidates(u); onUpdate(process.id, u); };
+  const [removeTarget, setRemoveTarget] = useState(null);
+  const requestRemoveCandidate = (c) => setRemoveTarget(c);
+  const confirmRemoveCandidate = () => {
+    if (!removeTarget) return;
+    const u = candidates.filter(c => c.id !== removeTarget.id);
+    setCandidates(u); onUpdate(process.id, u);
+    setRemoveTarget(null);
+  };
 
   const generatePublicLink = async () => {
     // Block public publication until minimum config is set.
@@ -3114,6 +3217,17 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
   return (
     <div className="min-h-screen bg-gray-50">
       {evalCandidate && <CandidateEvaluationPanel candidate={evalCandidate} process={process} agencySettings={agencySettings} onUpdateCandidate={updateCandidateFull} onClose={() => setEvalCandidate(null)} />}
+      <ConfirmModal
+        open={!!removeTarget}
+        onClose={() => setRemoveTarget(null)}
+        onConfirm={confirmRemoveCandidate}
+        icon="🗑️"
+        title={removeTarget ? `¿Eliminar a ${removeTarget.name || "este candidato"}?` : ""}
+        description="Se perderán sus datos, respuestas y evaluaciones. Esta acción no se puede deshacer."
+        confirmLabel="Sí, eliminar"
+        confirmStyle="bg-red-500 hover:bg-red-600"
+      />
+
       {showPublishModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setShowPublishModal(false)}>
           <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
@@ -3400,7 +3514,7 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
                           {c.exerciseEvaluation && c.interviewEvaluation ? "✅ Ver" : c.exerciseEvaluation ? "🎤 Entrev." : "🤖 Evaluar"}
                         </button>
                       </td>
-                      <td className="px-4 py-3 text-center"><button onClick={() => removeCandidate(c.id)} className="text-gray-300 hover:text-red-400 text-xl leading-none">×</button></td>
+                      <td className="px-4 py-3 text-center"><button onClick={() => requestRemoveCandidate(c)} className="text-gray-300 hover:text-red-400 text-xl leading-none" title={`Eliminar a ${c.name || "candidato"}`}>×</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -3651,6 +3765,44 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Reusable confirmation modal for destructive / external-effect actions ──
+// Usage: <ConfirmModal open={...} onClose={...} onConfirm={...} title="..." />
+// - onConfirm receives no args; pass a closure with whatever state you need.
+// - confirmStyle accepts the full bg/hover tailwind classes, so consumers
+//   can override the default black CTA with red/green/etc. for semantic cues.
+function ConfirmModal({
+  open, onClose, onConfirm,
+  icon = "⚠️", title, description,
+  confirmLabel = "Confirmar",
+  confirmStyle = "bg-gray-900 hover:bg-gray-800",
+  cancelLabel = "Cancelar",
+  children,
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+        <div className="text-center mb-4">
+          <div className="text-4xl mb-2">{icon}</div>
+          <h3 className="font-bold text-gray-900 text-lg mb-1">{title}</h3>
+          {description && <p className="text-sm text-gray-500 leading-relaxed">{description}</p>}
+        </div>
+        {children}
+        <div className="flex gap-2 mt-5">
+          <button onClick={onClose}
+            className="flex-1 py-3 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50">
+            {cancelLabel}
+          </button>
+          <button onClick={() => { onConfirm(); }}
+            className={`flex-1 py-3 ${confirmStyle} text-white rounded-xl text-sm font-bold transition-colors`}>
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
