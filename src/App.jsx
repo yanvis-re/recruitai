@@ -3336,7 +3336,7 @@ const ESTADO_COLORS = { "Pendiente": "bg-gray-100 text-gray-700", "Primera entre
 const PROGRESO_COLORS = { "Ingreso": "bg-purple-100 text-purple-700", "Prueba técnica": "bg-gray-100 text-gray-800", "Entrevista": "bg-indigo-100 text-indigo-700", "Onboarding": "bg-teal-100 text-teal-700", "Descalificado": "bg-red-100 text-red-700", "En cartera": "bg-yellow-100 text-yellow-700", "Desiste": "bg-gray-100 text-gray-800", "Validación prueba técnica": "bg-cyan-100 text-cyan-700", "Entrevista RRHH": "bg-violet-100 text-violet-700" };
 
 // ─── PROCESS DETAIL SCREEN ───────────────────────────────────────────────────
-function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, agencySettings, onOpenSettings }) {
+function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user, onStartDemo, agencySettings, onOpenSettings }) {
   // What's required before the user can generate a public link / receive candidates.
   // brandManual + emailConfig are blocking (IA needs context, candidates need confirmations).
   // Slack is considered a nice-to-have, not blocking.
@@ -3420,6 +3420,11 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
       setPublicLink(url);
       await navigator.clipboard.writeText(url);
       setLinkCopied(true); setTimeout(() => setLinkCopied(false), 3000);
+      // Stamp publishedAt on the process the first time the link is generated
+      // so the dashboard roadmap can mark the "🚀 Link público" milestone done.
+      if (!process.publishedAt && onUpdateProcess) {
+        onUpdateProcess({ id: process.id, publishedAt: new Date().toISOString() });
+      }
     } catch (e) { alert("Error al generar el link."); }
     setPublishing(false);
   };
@@ -3916,6 +3921,151 @@ function ProcessCard({ process, onView, onToggle }) {
   );
 }
 
+// ─── Onboarding roadmap — from signup to first published process ─────────────
+// Rendered at the top of the dashboard until the recruiter has completed
+// every required step. Celebrates the final milestone ('🚀 Link público
+// publicado') and then hides itself so the dashboard returns to its regular
+// look once the user is actively running their first process.
+function Roadmap({ user, agencySettings, processes, onNavigate }) {
+  const hasBrand = !!(agencySettings?.brandManual && agencySettings.brandManual.trim());
+  const hasEmail = agencySettings?.emailConfig?.provider && agencySettings.emailConfig.provider !== "none";
+  const hasSlack = !!(agencySettings?.slackConfig?.webhookUrl);
+  const hasProcess = processes.length > 0;
+  const hasExercisesDefined = processes.some(p => (p.exercises || []).some(ex => ex.description && ex.description.trim().length > 10));
+  const hasPublished = processes.some(p => p.publishedAt);
+  const firstProcess = processes[0];
+
+  const emailProviderLabel =
+    agencySettings?.emailConfig?.provider === "app" ? "RecruitAI Mail"
+    : agencySettings?.emailConfig?.provider === "resend_domain" ? "Dominio propio"
+    : null;
+
+  const brandWords = hasBrand ? agencySettings.brandManual.split(/\s+/).filter(Boolean).length : 0;
+
+  const steps = [
+    {
+      id: "account",
+      done: true,
+      label: "Cuenta creada",
+      detail: user?.email || "—",
+      action: null,
+    },
+    {
+      id: "brand",
+      done: hasBrand,
+      label: "Manual de marca",
+      detail: hasBrand ? `${brandWords.toLocaleString()} palabras · la IA usa esto para evaluar` : "Para que la IA evalúe la compatibilidad cultural",
+      action: { label: "Configurar marca", target: "settings" },
+    },
+    {
+      id: "email",
+      done: !!hasEmail,
+      label: "Email automático",
+      detail: hasEmail ? emailProviderLabel : "Confirmaciones al aplicar + emails de decisión",
+      action: { label: "Configurar email", target: "settings" },
+    },
+    {
+      id: "slack",
+      done: hasSlack,
+      optional: true,
+      label: "Slack",
+      detail: hasSlack ? "Conectado" : "Avisos instantáneos cuando llegue un candidato",
+      action: { label: "Conectar Slack", target: "settings" },
+    },
+    {
+      id: "process",
+      done: hasProcess,
+      label: "Primer proceso creado",
+      detail: hasProcess ? `${processes.length} proceso${processes.length > 1 ? "s" : ""} en el sistema` : "Empresa, puesto, ejercicios",
+      action: !hasProcess ? { label: "Crear proceso", target: "new" } : null,
+    },
+    {
+      id: "exercises",
+      done: hasExercisesDefined,
+      label: "Ejercicios con enunciado",
+      detail: hasExercisesDefined ? "Listos para que la IA evalúe" : "Respuesta escrita + vídeo Loom por ejercicio",
+      action: hasProcess && !hasExercisesDefined ? { label: "Completar ejercicios", target: "firstProcess" } : null,
+    },
+    {
+      id: "publish",
+      done: hasPublished,
+      milestone: true,
+      label: "🚀 Link público publicado",
+      detail: hasPublished
+        ? "¡Tu primer proceso está en la calle!"
+        : "El link que compartes con candidatos. Es el hito que cierra el setup.",
+      action: hasProcess && !hasPublished ? { label: "Ir al proceso y publicar", target: "firstProcess" } : null,
+    },
+  ];
+
+  const requiredSteps = steps.filter(s => !s.optional);
+  const doneRequired = requiredSteps.filter(s => s.done).length;
+  const pct = Math.round((doneRequired / requiredSteps.length) * 100);
+  // Hide the roadmap once every REQUIRED step is done (slack is optional).
+  if (doneRequired === requiredSteps.length) return null;
+
+  const handleAction = (target) => {
+    if (target === "settings") onNavigate("settings");
+    else if (target === "new") onNavigate("new");
+    else if (target === "firstProcess") onNavigate("firstProcess", firstProcess);
+  };
+
+  return (
+    <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-6 sm:p-7 mb-6">
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div className="min-w-0">
+          <h2 className="text-lg font-bold text-gray-900 tracking-tight flex items-center gap-2">
+            <span>🗺</span><span>Tu hoja de ruta</span>
+          </h2>
+          <p className="text-xs text-gray-500 mt-1 leading-relaxed">
+            De la creación de la cuenta a tu primer proceso publicado. {doneRequired} de {requiredSteps.length} pasos esenciales completados.
+          </p>
+        </div>
+        <div className="text-right shrink-0">
+          <p className="text-3xl font-black text-gray-900 leading-none">{pct}%</p>
+        </div>
+      </div>
+
+      {/* Progress bar */}
+      <div className="bg-gray-100 rounded-full h-2 overflow-hidden mb-6">
+        <div className="bg-gray-900 h-full rounded-full transition-all duration-500" style={{ width: `${pct}%` }} />
+      </div>
+
+      {/* Step list */}
+      <div className="space-y-1">
+        {steps.map((step, i) => (
+          <div key={step.id}
+            className={`flex items-start gap-3 py-3 border-b last:border-0 border-gray-50 ${step.milestone && !step.done ? "bg-yellow-50 -mx-3 px-3 rounded-xl border-yellow-100" : ""}`}>
+            <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-black transition-colors ${
+              step.done
+                ? "bg-gray-900 text-white"
+                : step.milestone
+                  ? "bg-yellow-400 text-gray-900"
+                  : "bg-gray-100 text-gray-500"
+            }`}>
+              {step.done ? "✓" : i + 1}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <p className={`font-bold text-sm ${step.done ? "text-gray-400 line-through" : "text-gray-900"}`}>{step.label}</p>
+                {step.optional && <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium">OPCIONAL</span>}
+                {step.milestone && !step.done && <span className="text-[10px] bg-yellow-400 text-gray-900 px-1.5 py-0.5 rounded font-black">🎯 HITO FINAL</span>}
+              </div>
+              <p className="text-xs text-gray-500 mt-0.5 leading-snug">{step.detail}</p>
+              {!step.done && step.action && (
+                <button onClick={() => handleAction(step.action.target)}
+                  className="mt-1.5 text-xs text-gray-900 hover:underline font-bold">
+                  {step.action.label} →
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout, onOpenSettings, agencySettings }) {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const active = processes.filter(p => p.status === "active").length;
@@ -3953,128 +4103,27 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
       </div>
 
       <div className="max-w-4xl mx-auto p-6">
+        {/* Roadmap: single source of truth for onboarding progress.
+            Hides itself automatically when all required steps are done, and
+            the dashboard resumes its 'working' look with just stats + list. */}
+        <Roadmap
+          user={user}
+          agencySettings={agencySettings}
+          processes={processes}
+          onNavigate={(target, payload) => {
+            if (target === "settings") onOpenSettings();
+            else if (target === "new") onNew();
+            else if (target === "firstProcess" && payload) onView(payload);
+          }}
+        />
+
         {isEmpty ? (
-          // ── Hero empty-state: onboarding tour for a first-time recruiter ──
-          <>
-            <div className="text-center mb-10 pt-6">
-              <div className="text-5xl mb-4">👋</div>
-              <h1 className="text-4xl font-black text-gray-900 tracking-tight mb-3">
-                Hola{firstName ? `, ${firstName}` : ""}. Bienvenido a RecruitAI.
-              </h1>
-              <p className="text-lg text-gray-500 leading-relaxed max-w-xl mx-auto">
-                Tu primer proceso de selección está a 5 minutos. La IA evalúa candidatos, envía emails automáticos y te avisa en Slack — tú solo decides.
-              </p>
-            </div>
-
-            {/* Cómo funciona — 3 pasos visuales */}
-            <div className="mb-8">
-              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-4 text-center">Cómo funciona un proceso</p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {[
-                  { n: "1", icon: "⚙️", title: "Configuras el proceso", text: "Empresa, puesto, ejercicios. Te guío paso a paso — 5 minutos." },
-                  { n: "2", icon: "🔗", title: "Publicas el link", text: "Compártelo en LinkedIn, email, Instagram. Cualquier candidato aplica sin cuenta." },
-                  { n: "3", icon: "🤖", title: "La IA hace el filtrado", text: "Puntúa respuestas + vídeo Loom, te deja solo los que valen la pena ver." },
-                ].map(s => (
-                  <div key={s.n} className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-gray-900 text-white text-xs font-black">{s.n}</span>
-                      <span className="text-2xl">{s.icon}</span>
-                    </div>
-                    <p className="font-bold text-gray-900 text-sm mb-1">{s.title}</p>
-                    <p className="text-xs text-gray-500 leading-relaxed">{s.text}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Primary CTA */}
-            <div className="bg-gray-900 rounded-3xl p-8 text-center mb-8">
-              <p className="text-white font-black text-xl mb-2">Empieza creando tu primer proceso</p>
-              <p className="text-gray-300 text-sm mb-5 max-w-md mx-auto">Puedes crear un proceso de prueba para familiarizarte con la herramienta, o uno real desde el primer momento.</p>
-              <button onClick={onNew}
-                className="px-8 py-3.5 bg-white text-gray-900 rounded-xl font-bold text-sm hover:bg-gray-100 transition-colors">
-                🚀 Crear mi primer proceso →
-              </button>
-            </div>
-
-            {/* Setup checklist — visually escalates when incomplete */}
-            {(() => {
-              const pending = [hasBrand, hasEmail, hasSlack].filter(x => !x).length;
-              const allDone = pending === 0;
-              return (
-                <div className={`rounded-2xl shadow-sm p-5 transition-colors ${
-                  allDone ? "bg-white border border-gray-100" : "bg-amber-50 border-2 border-amber-300"
-                }`}>
-                  <div className="flex items-start justify-between gap-3 mb-4">
-                    <div className="flex-1 min-w-0">
-                      {allDone ? (
-                        <p className="font-bold text-gray-900 text-sm">✅ Todo listo para recibir candidatos</p>
-                      ) : (
-                        <>
-                          <p className="font-bold text-amber-900 text-sm flex items-center gap-2">
-                            <span>⚠️</span>
-                            <span>Antes de recibir candidatos, completa la configuración de tu agencia</span>
-                          </p>
-                          <p className="text-xs text-amber-700 mt-1 ml-6">
-                            {pending} {pending === 1 ? "paso pendiente" : "pasos pendientes"} · La IA no podrá evaluar con precisión hasta que lo completes
-                          </p>
-                        </>
-                      )}
-                    </div>
-                    <button onClick={onOpenSettings}
-                      className={`shrink-0 text-xs font-bold rounded-lg transition-colors px-3 py-2 ${
-                        allDone
-                          ? "text-gray-500 hover:text-gray-900"
-                          : "bg-gray-900 text-white hover:bg-gray-800 px-4"
-                      }`}>
-                      {allDone ? "Abrir ⚙️" : "Completar configuración →"}
-                    </button>
-                  </div>
-                  <div className="space-y-2">
-                    {[
-                      { done: hasBrand, icon: "🎨", label: "Manual de marca configurado", hint: "La IA evalúa la compatibilidad cultural de cada candidato" },
-                      { done: hasEmail, icon: "📧", label: "Email configurado", hint: "Los candidatos reciben confirmación al aplicar y decisión final" },
-                      { done: hasSlack, icon: "🔔", label: "Slack conectado", hint: "Avisos instantáneos cuando llega un candidato o termina una evaluación" },
-                    ].map((r, i) => (
-                      <div key={i} className={`flex items-start gap-3 py-2 border-b last:border-0 ${
-                        allDone ? "border-gray-50" : "border-amber-200/60"
-                      }`}>
-                        <span className={`text-lg shrink-0 ${r.done ? "" : "opacity-50"}`}>{r.done ? "✅" : "⚪"}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-sm font-semibold ${r.done ? "text-gray-700" : allDone ? "text-gray-500" : "text-amber-900"}`}>
-                            {r.icon} {r.label}
-                          </p>
-                          <p className={`text-xs mt-0.5 ${allDone ? "text-gray-400" : "text-amber-700/80"}`}>{r.hint}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })()}
-          </>
+          // When there are no processes, the Roadmap is the whole hero.
+          // Nothing else needed — the roadmap guides them to create one.
+          null
         ) : (
-          // ── Normal dashboard with processes ──
+          // Processes exist: show stats + process list.
           <>
-            {/* Warning banner when minimum publish config is missing.
-                Only brand + email are required to publish; slack is optional. */}
-            {(!hasBrand || !hasEmail) && (
-              <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 mb-5 flex items-start justify-between gap-3">
-                <div className="flex items-start gap-2.5 flex-1 min-w-0">
-                  <span className="text-xl shrink-0">⚠️</span>
-                  <div>
-                    <p className="text-sm font-bold text-amber-900">Configuración de agencia incompleta</p>
-                    <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">
-                      No podrás publicar el link público de tus procesos hasta que completes {!hasBrand && !hasEmail ? "el manual de marca y el email" : !hasBrand ? "el manual de marca" : "la configuración de email"}.
-                    </p>
-                  </div>
-                </div>
-                <button onClick={onOpenSettings} className="shrink-0 bg-gray-900 text-white px-4 py-2 rounded-lg text-xs font-bold hover:bg-gray-800 transition-colors">
-                  Completar →
-                </button>
-              </div>
-            )}
-
             <div className="grid grid-cols-3 gap-4 mb-8">
               {[
                 { icon: "📋", label: "Procesos activos", val: active, color: "text-gray-900" },
@@ -4639,6 +4688,12 @@ export default function App() {
     setProcesses(ps => ps.map(p => p.id === processId ? { ...p, candidates: updatedCandidates } : p));
     setActiveJob(aj => aj?.id === processId ? { ...aj, candidates: updatedCandidates } : aj);
   };
+  // Top-level process mutation (used e.g. to stamp publishedAt when the link
+  // is generated — feeds the dashboard roadmap milestone).
+  const handleUpdateProcess = (updated) => {
+    setProcesses(ps => ps.map(p => p.id === updated.id ? { ...p, ...updated } : p));
+    setActiveJob(aj => aj?.id === updated.id ? { ...aj, ...updated } : aj);
+  };
   const handleSaveSettings = (newSettings) => { setAgencySettings(s => ({ ...s, ...newSettings })); };
 
   const handleCompleteOnboarding = (newSettings) => {
@@ -4660,7 +4715,7 @@ export default function App() {
       {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />}
       <FeedbackWidget user={user} />
       {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={() => setShowSettings(true)} agencySettings={agencySettings} />}
-      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={() => setShowSettings(true)} />; })()}
+      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={() => setShowSettings(true)} />; })()}
       {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onBack={goToDashboard} />}
       {phase === "preview" && <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />}
       {phase === "apply" && <CandidateApplyScreen job={activeJob} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />}
