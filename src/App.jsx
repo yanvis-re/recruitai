@@ -517,7 +517,13 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
               </div>
               <div>
                 <label className={lbl}>Descripción corta</label>
-                <textarea className={inp} rows={3} value={data.company.description} onChange={e => upC("description", e.target.value)} placeholder="Agencia de paid media especializada en infoproductos..." />
+                <MarkdownEditor
+                  value={data.company.description}
+                  onChange={v => upC("description", v)}
+                  rows={4}
+                  small
+                  allowHeadings={false}
+                  placeholder="Agencia de paid media especializada en infoproductos. Trabajamos con..." />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className={lbl}>Sector</label><input className={inp} value={data.company.sector} onChange={e => upC("sector", e.target.value)} placeholder="Marketing digital" /></div>
@@ -584,8 +590,12 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
             <div className="space-y-4">
               <div>
                 <label className={lbl}>Responsabilidades principales</label>
-                <textarea className={inp} rows={4} value={data.position.responsibilities} onChange={e => upP("responsibilities", e.target.value)}
-                  placeholder="Liderar la estrategia de paid media de 3-5 cuentas. Gestión de campañas en Meta, Google y TikTok. Optimización semanal de ROAS..." />
+                <MarkdownEditor
+                  value={data.position.responsibilities}
+                  onChange={v => upP("responsibilities", v)}
+                  rows={6}
+                  small
+                  placeholder={`## Día a día\n- Liderar la estrategia de paid media de 3-5 cuentas\n- Gestión de campañas en Meta, Google y TikTok\n- Optimización semanal de ROAS\n\n## Reporting\n- Informes quincenales al cliente`} />
               </div>
               <div>
                 <label className={lbl}>Habilidades requeridas</label>
@@ -652,8 +662,13 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
               </div>
               <div>
                 <label className={lbl}>Otros beneficios (opcional)</label>
-                <textarea className={inp} rows={2} value={data.position.benefits} onChange={e => upP("benefits", e.target.value)}
-                  placeholder="Formación continua, 25 días de vacaciones, material de oficina..." />
+                <MarkdownEditor
+                  value={data.position.benefits}
+                  onChange={v => upP("benefits", v)}
+                  rows={4}
+                  small
+                  allowHeadings={false}
+                  placeholder={`- Formación continua\n- 25 días de vacaciones\n- Material de oficina\n- Clases de inglés`} />
               </div>
             </div>
           </div>
@@ -752,36 +767,12 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                 </div>
                 <div className="mb-3">
                   <label className={lbl}>Enunciado *</label>
-                  <textarea className={inp + " bg-white font-mono text-xs"} rows={8} value={ex.description} onChange={e => upEx(ex.id, "description", e.target.value)}
-                    placeholder={`Describe el reto concreto. Puedes usar Markdown para darle formato:
-
-## Objetivo
-Explica qué debe conseguir el candidato.
-
-### Escenario
-- Contexto 1
-- Contexto 2
-
-### Qué debe incluir
-1. Diagnóstico
-2. Propuesta estratégica
-
-Usa **negrita**, listas con \`-\` o \`1.\`, y \`##\` / \`###\` para secciones.`} />
-                  <div className="flex items-center justify-between mt-2">
-                    <p className="text-xs text-gray-400">
-                      💡 Admite <strong>Markdown</strong> (headings, listas, negrita). El candidato lo verá formateado.
-                    </p>
-                    <button type="button" onClick={() => upEx(ex.id, "_showPreview", !ex._showPreview)}
-                      className="text-xs text-gray-500 hover:text-gray-900 font-medium">
-                      {ex._showPreview ? "Ocultar" : "👀 Ver"} preview
-                    </button>
-                  </div>
-                  {ex._showPreview && ex.description?.trim() && (
-                    <div className="mt-3 bg-gray-50 border border-gray-100 rounded-xl p-4">
-                      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Preview — así lo verá el candidato</p>
-                      <MarkdownContent>{ex.description}</MarkdownContent>
-                    </div>
-                  )}
+                  <MarkdownEditor
+                    value={ex.description}
+                    onChange={v => upEx(ex.id, "description", v)}
+                    rows={8}
+                    small
+                    placeholder={`## Objetivo\nQué debe conseguir el candidato.\n\n## Escenario\n**Cliente:** ...\n\n## Qué debe incluir\n1. Diagnóstico\n2. Propuesta estratégica\n\nUsa la barra de formato arriba para añadir **negritas**, listas y secciones.`} />
                 </div>
                 <div>
                   <div className="flex justify-between items-center mb-2 gap-2 flex-wrap">
@@ -954,13 +945,12 @@ Usa **negrita**, listas con \`-\` o \`1.\`, y \`##\` / \`###\` para secciones.`}
                       onChange={e => setExParsePreview(p => ({ ...p, title: e.target.value }))} />
                   </div>
                   <div>
-                    <label className={lbl}>Enunciado (Markdown)</label>
-                    <textarea className={inp + " font-mono text-xs"} rows={10}
+                    <label className={lbl}>Enunciado</label>
+                    <MarkdownEditor
                       value={exParsePreview.description}
-                      onChange={e => setExParsePreview(p => ({ ...p, description: e.target.value }))} />
-                    <p className="text-xs text-gray-400 mt-1">
-                      💡 Se admite Markdown: <code className="bg-gray-100 px-1 rounded">## Título</code>, <code className="bg-gray-100 px-1 rounded">**negrita**</code>, listas con <code className="bg-gray-100 px-1 rounded">-</code> o <code className="bg-gray-100 px-1 rounded">1.</code>. Mira el preview arriba al cerrar "Ajustar".
-                    </p>
+                      onChange={v => setExParsePreview(p => ({ ...p, description: v }))}
+                      rows={10}
+                      small />
                   </div>
                   <div>
                     <label className={lbl}>Criterios de evaluación</label>
@@ -1181,13 +1171,13 @@ function JobPreviewScreen({ job, onApply, onBack }) {
             {job.company?.description && (
               <section>
                 <h3 className="font-bold text-gray-500 mb-2 text-xs uppercase tracking-wide">Sobre {job.company.name}</h3>
-                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{job.company.description}</p>
+                <MarkdownContent>{job.company.description}</MarkdownContent>
               </section>
             )}
             {job.position?.responsibilities && (
               <section>
                 <h3 className="font-bold text-gray-500 mb-2 text-xs uppercase tracking-wide">Responsabilidades</h3>
-                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{job.position.responsibilities}</p>
+                <MarkdownContent>{job.position.responsibilities}</MarkdownContent>
               </section>
             )}
             {job.position?.skills && (
@@ -1203,7 +1193,7 @@ function JobPreviewScreen({ job, onApply, onBack }) {
             {job.position?.benefits && (
               <section>
                 <h3 className="font-bold text-gray-500 mb-2 text-xs uppercase tracking-wide">Otros beneficios</h3>
-                <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{job.position.benefits}</p>
+                <MarkdownContent>{job.position.benefits}</MarkdownContent>
               </section>
             )}
           </div>
@@ -4168,6 +4158,97 @@ function MarkdownContent({ children, className = "", tone = "default" }) {
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
         {children || ""}
       </ReactMarkdown>
+    </div>
+  );
+}
+
+// ─── Markdown-aware editor: textarea + formatting toolbar + optional preview ─
+// The recruiter types normally, clicks B/I/H/•/1. to insert markdown around
+// the current selection (or at the cursor). Live preview toggles below so
+// they see how the candidate will read it. No dependencies beyond what
+// MarkdownContent already uses.
+function MarkdownEditor({ value, onChange, rows = 6, placeholder, previewTone = "default", allowHeadings = true, small = false }) {
+  const ref = useRef(null);
+  const [showPreview, setShowPreview] = useState(false);
+
+  // Wrap current selection (or insert at cursor if no selection) with a pair
+  // of markers. If wrapping empties (no selection), we place the caret inside.
+  const wrapSelection = (marker) => {
+    const el = ref.current; if (!el) return;
+    const start = el.selectionStart ?? value.length;
+    const end = el.selectionEnd ?? value.length;
+    const selected = value.slice(start, end);
+    const inner = selected || "texto";
+    const before = value.slice(0, start);
+    const after = value.slice(end);
+    const next = `${before}${marker}${inner}${marker}${after}`;
+    onChange(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      const caretStart = start + marker.length;
+      const caretEnd = caretStart + inner.length;
+      el.setSelectionRange(caretStart, caretEnd);
+    });
+  };
+
+  // Prefix every line that intersects the current selection (or the current
+  // line if nothing selected) with the given marker. For numbered lists,
+  // increments 1. 2. 3. across the selected lines.
+  const prefixLines = (marker /* string or "number" */) => {
+    const el = ref.current; if (!el) return;
+    const start = el.selectionStart ?? value.length;
+    const end = el.selectionEnd ?? value.length;
+    const lineStart = value.lastIndexOf("\n", start - 1) + 1;
+    const lineEnd = value.indexOf("\n", end);
+    const stopAt = lineEnd === -1 ? value.length : lineEnd;
+    const block = value.slice(lineStart, stopAt);
+    const lines = block.split("\n");
+    const prefixed = lines.map((line, i) => {
+      if (marker === "number") return `${i + 1}. ${line.replace(/^(?:\d+\.\s*|-\s*|##\s*)/, "")}`;
+      // Strip other list/heading markers before applying the new one
+      const clean = line.replace(/^(?:\d+\.\s*|-\s*|##\s*)/, "");
+      return `${marker}${clean}`;
+    }).join("\n");
+    const next = value.slice(0, lineStart) + prefixed + value.slice(stopAt);
+    onChange(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(lineStart, lineStart + prefixed.length);
+    });
+  };
+
+  const btnBase = `px-2.5 py-1 text-xs rounded-md border transition-colors font-medium border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-400`;
+
+  return (
+    <div>
+      <div className="flex gap-1 mb-1.5 flex-wrap items-center">
+        <button type="button" onClick={() => wrapSelection("**")} title="Negrita" className={btnBase + " font-bold"}>B</button>
+        <button type="button" onClick={() => wrapSelection("_")} title="Cursiva" className={btnBase + " italic"}>I</button>
+        {allowHeadings && (
+          <button type="button" onClick={() => prefixLines("## ")} title="Título de sección" className={btnBase}>H</button>
+        )}
+        <button type="button" onClick={() => prefixLines("- ")} title="Lista con bullets" className={btnBase}>•</button>
+        <button type="button" onClick={() => prefixLines("number")} title="Lista numerada" className={btnBase}>1.</button>
+        <div className="flex-1" />
+        <button type="button" onClick={() => setShowPreview(v => !v)} title="Ver preview"
+          className={`px-2.5 py-1 text-xs rounded-md border transition-colors font-medium ${
+            showPreview ? "border-gray-900 bg-gray-900 text-white" : "border-gray-200 bg-white text-gray-700 hover:bg-gray-50 hover:border-gray-400"
+          }`}>
+          👀 Preview
+        </button>
+      </div>
+      <textarea ref={ref}
+        className={inp + (small ? " text-xs" : "") + " font-mono"}
+        rows={rows}
+        value={value || ""}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder} />
+      {showPreview && (value || "").trim() && (
+        <div className="mt-2 bg-gray-50 border border-gray-100 rounded-xl p-4">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Preview</p>
+          <MarkdownContent tone={previewTone}>{value}</MarkdownContent>
+        </div>
+      )}
     </div>
   );
 }

@@ -65,11 +65,11 @@ A) Campos FACTUALES — déjalos vacíos si no aparecen literalmente en el docum
    - company.modality (solo si se menciona Remoto/Presencial/Híbrido)
    - position.experience (años concretos), position.hoursPerWeek, position.contract, position.schedule
 
-B) Campos NARRATIVOS — PUEDES Y DEBES sintetizar a partir del contexto:
-   - company.description: si el documento no tiene una sección "sobre la empresa" pero describe el rol, redacta una descripción corta (1-3 frases) que sirva de contexto para el candidato. Ejemplo: si el documento es "Requerimientos para Media Buyer - empresa X que trabaja con infoproductos", la descripción puede ser "Empresa especializada en infoproductos que busca incorporar un Media Buyer..." — SÍ puedes inferir, SIN inventar datos que no están (no te inventes la facturación, año de fundación, etc.).
-   - position.responsibilities: si hay una lista de responsabilidades o bullets (aunque no esté etiquetada como tal), recopila el contenido como texto narrativo coherente. Si solo hay "objetivos del rol" o similar, úsalo como base.
-   - position.skills: recopila habilidades técnicas mencionadas, soft skills si aparecen, y herramientas concretas. Sepáralas por comas.
-   - position.benefits: recopila beneficios mencionados (remoto, formación, bonos, etc.).
+B) Campos NARRATIVOS — PUEDES Y DEBES sintetizar + DEVOLVER EN MARKDOWN cuando tenga estructura:
+   - company.description: 1-3 frases que sirvan de contexto al candidato. Texto plano o con **negrita** en datos clave. Si hay mucho contenido, puedes usar 2 párrafos (separa con \\n\\n). SÍ puedes inferir, SIN inventar datos que no están.
+   - position.responsibilities: **usa Markdown** si el documento tiene lista o secciones. Preserva headings (\`## Día a día\`, \`## Reporting\`), listas (\`- bullet\`) y negrita en cosas clave. Si es un solo párrafo, déjalo como prosa sin formato.
+   - position.skills: lista SEPARADA POR COMAS (no markdown, no bullets). Recopila skills técnicas + herramientas + soft skills en un solo string coma-separado.
+   - position.benefits: **usa Markdown** como lista con bullets (\`- beneficio 1\\n- beneficio 2\`) si hay varios. Si es un solo beneficio o prosa corta, texto plano.
 
 C) Ejercicios:
    - Si el documento describe MÚLTIPLES ejercicios, devuelve uno por cada uno.
