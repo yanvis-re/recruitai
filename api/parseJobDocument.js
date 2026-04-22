@@ -27,54 +27,61 @@ DOCUMENTO PROPORCIONADO POR EL RECLUTADOR:
 ${text.slice(0, 12000)}
 """
 
-TAREA: Extrae la información y devuelve ÚNICAMENTE un objeto JSON con la siguiente estructura. Si algún campo NO aparece en el documento, déjalo como cadena vacía "" — NO lo inventes.
+TAREA: Extrae la información y devuelve ÚNICAMENTE un objeto JSON con esta estructura:
 
 {
   "company": {
-    "name": "",
-    "description": "",
-    "sector": "",
-    "location": "",
-    "modality": "",       // uno de: "Remoto", "Presencial", "Híbrido" (o "" si no se menciona)
+    "name": "", "description": "", "sector": "", "location": "",
+    "modality": "",       // uno de: "Remoto", "Presencial", "Híbrido"
     "salaryMin": "",      // número en string, ej. "40000" (sin símbolos, sin puntos de miles)
-    "salaryMax": "",      // idem
-    "currency": ""        // uno de: "EUR", "USD", "GBP", "MXN" (o "" si no se menciona)
+    "salaryMax": "",
+    "currency": ""        // uno de: "EUR", "USD", "GBP", "MXN"
   },
   "position": {
     "positionType": "",   // uno de: ${POSITION_TYPES.join(", ")}. Usa "otro" si no encaja ninguno.
-    "specialty": "",      // opcional, depende del positionType
-    "customTitle": "",    // SOLO si positionType === "otro" — título literal del puesto
+    "specialty": "",
+    "customTitle": "",    // SOLO si positionType === "otro"
     "responsibilities": "",
     "skills": "",         // lista separada por comas
-    "experience": "",     // años, como string, ej. "3"
-    "contract": "",       // uno de: "Freelance", "Contrato directo" (o "" si no claro)
-    "hoursPerWeek": "",   // número como string, ej. "40"
-    "schedule": "",       // uno de: "Mañanas", "Tardes", "Flexible" (o "" si no se menciona)
+    "experience": "",
+    "contract": "",       // uno de: "Freelance", "Contrato directo"
+    "hoursPerWeek": "",
+    "schedule": "",       // uno de: "Mañanas", "Tardes", "Flexible"
     "benefits": ""
   },
   "exercises": [
     {
-      "title": "",        // título del ejercicio propuesto
-      "description": "",  // enunciado completo que verá el candidato
-      "criteria": [
-        {
-          "area": "",        // qué se evalúa (ej. "Claridad estratégica")
-          "indicators": "",  // indicadores concretos (ej. "Capacidad de identificar el problema y proponer soluciones")
-          "maxScore": 5      // puntuación máxima, habitualmente 5 o 10
-        }
-      ]
+      "title": "", "description": "",
+      "criteria": [{"area": "", "indicators": "", "maxScore": 5}]
     }
   ]
 }
 
-REGLAS IMPORTANTES:
-1. Si el documento describe MÚLTIPLES ejercicios, devuelve uno por cada uno en el array exercises[]. Si describe UNO, devuelve un único ejercicio. Si NO describe ninguno, devuelve array vacío [].
-2. Cada ejercicio debe tener al menos 1 criterio. Si el documento no desglosa criterios, infiere 2-4 razonables a partir del enunciado.
-3. Para "responsibilities" y "skills", prefiere un texto descriptivo natural (no bullets markdown).
-4. Para "positionType", elige el más cercano semánticamente. Si el puesto es claramente de marketing pero no encaja en media_buyer / copywriter / etc., usa "otro" con customTitle.
-5. NO añadas campos que no estén en el esquema. NO uses markdown. Solo JSON válido.
-6. Si los años de experiencia aparecen como rango (ej. "3-5 años"), usa el mínimo.
-7. Para moneda, si el documento usa el símbolo €, interpreta como "EUR"; $ como "USD", etc.
+REGLAS DE EXTRACCIÓN (importantes — léelas con atención):
+
+A) Campos FACTUALES — déjalos vacíos si no aparecen literalmente en el documento:
+   - company.name, company.location, company.sector
+   - company.salaryMin, company.salaryMax, company.currency
+   - company.modality (solo si se menciona Remoto/Presencial/Híbrido)
+   - position.experience (años concretos), position.hoursPerWeek, position.contract, position.schedule
+
+B) Campos NARRATIVOS — PUEDES Y DEBES sintetizar a partir del contexto:
+   - company.description: si el documento no tiene una sección "sobre la empresa" pero describe el rol, redacta una descripción corta (1-3 frases) que sirva de contexto para el candidato. Ejemplo: si el documento es "Requerimientos para Media Buyer - empresa X que trabaja con infoproductos", la descripción puede ser "Empresa especializada en infoproductos que busca incorporar un Media Buyer..." — SÍ puedes inferir, SIN inventar datos que no están (no te inventes la facturación, año de fundación, etc.).
+   - position.responsibilities: si hay una lista de responsabilidades o bullets (aunque no esté etiquetada como tal), recopila el contenido como texto narrativo coherente. Si solo hay "objetivos del rol" o similar, úsalo como base.
+   - position.skills: recopila habilidades técnicas mencionadas, soft skills si aparecen, y herramientas concretas. Sepáralas por comas.
+   - position.benefits: recopila beneficios mencionados (remoto, formación, bonos, etc.).
+
+C) Ejercicios:
+   - Si el documento describe MÚLTIPLES ejercicios, devuelve uno por cada uno.
+   - Si describe UNO, devuelve un único ejercicio.
+   - Si NO describe ninguno, devuelve array vacío [].
+   - Cada ejercicio debe tener ≥1 criterio. Si el documento no desglosa criterios, infiere 2-4 razonables a partir del enunciado.
+
+D) Formato:
+   - positionType: elige el más cercano semánticamente. Si no encaja ninguno, usa "otro" + customTitle.
+   - currency: "€" → "EUR", "$" → "USD", "£" → "GBP".
+   - Experiencia en rango (ej. "2-5 años") → usa el mínimo ("2").
+   - NO añadas campos fuera del esquema. NO uses markdown. Solo JSON válido.
 
 Devuelve ÚNICAMENTE el JSON.`;
 }

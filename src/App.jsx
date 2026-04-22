@@ -186,6 +186,81 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
   const [parsedFileName, setParsedFileName] = useState("");
   const parseFileRef = useRef(null);
 
+  // Per-exercise document parsing state (exercises step only)
+  const [exParseState, setExParseState] = useState("idle"); // "idle" | "parsing" | "preview" | "error"
+  const [exParsePreview, setExParsePreview] = useState(null);
+  const [exParseError, setExParseError] = useState("");
+  const [exParseFileName, setExParseFileName] = useState("");
+  const exFileRef = useRef(null);
+
+  const extractTextFromFile = async (file) => {
+    const ext = file.name.split(".").pop().toLowerCase();
+    if (ext === "txt") return await file.text();
+    if (ext === "docx") {
+      const mammoth = await import("mammoth");
+      const r = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+      return r.value;
+    }
+    if (ext === "pdf") {
+      const pdfjsLib = await import("pdfjs-dist");
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+      const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+      let t = "";
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const pg = await pdf.getPage(i);
+        const ct = await pg.getTextContent();
+        t += ct.items.map(x => x.str).join(" ") + "\n";
+      }
+      return t;
+    }
+    throw new Error("Formato no soportado. Usa .txt, .docx o .pdf.");
+  };
+
+  const handleExerciseFile = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    setExParseError(""); setExParsePreview(null); setExParseFileName(file.name); setExParseState("parsing");
+    try {
+      const text = await extractTextFromFile(file);
+      if (!text.trim() || text.trim().length < 50) throw new Error("El documento parece vacío o no tiene texto.");
+      const res = await fetch("/api/parseExerciseDocument", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      if (!json.exercise) throw new Error("La IA no devolvió un ejercicio válido.");
+      setExParsePreview(json.exercise);
+      setExParseState("preview");
+    } catch (err) {
+      setExParseError(err.message || "No se pudo analizar el documento.");
+      setExParseState("error");
+    }
+  };
+
+  const acceptParsedExercise = () => {
+    if (!exParsePreview) return;
+    const newExercise = {
+      id: Date.now(),
+      title: exParsePreview.title || `Ejercicio ${data.exercises.length + 1}`,
+      description: exParsePreview.description || "",
+      criteria: exParsePreview.criteria && exParsePreview.criteria.length > 0
+        ? exParsePreview.criteria
+        : [{ area: "", indicators: "", maxScore: 5 }],
+    };
+    // If the only existing exercise is the default empty one, replace it.
+    const onlyDefault = data.exercises.length === 1
+      && !data.exercises[0].description?.trim()
+      && data.exercises[0].title === "Ejercicio Práctico";
+    setData(d => ({
+      ...d,
+      exercises: onlyDefault ? [newExercise] : [...d.exercises, newExercise],
+    }));
+    setExParseState("idle");
+    setExParsePreview(null);
+    setExParseFileName("");
+  };
+
   const handleParseFile = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     setParseError(""); setParseMode("parsing"); setParsedFileName(file.name);
@@ -568,6 +643,96 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
             <p className="text-gray-500 mb-5 leading-relaxed">
               Cada candidato resuelve estos ejercicios con respuesta escrita + vídeo de defensa en Loom. La IA los evalúa con los criterios que definas.
             </p>
+
+            {/* Upload exercise from document */}
+            <div className="border-2 border-dashed border-gray-200 rounded-2xl p-4 mb-5 bg-gray-50">
+              {exParseState === "idle" && (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                    <span className="text-xl shrink-0">📄</span>
+                    <div>
+                      <p className="text-sm font-bold text-gray-900">¿Ya tienes el ejercicio en un documento?</p>
+                      <p className="text-xs text-gray-500 mt-0.5 leading-snug">Sube un PDF/DOCX con el enunciado y los criterios. La IA lo estructura y te pide confirmación antes de añadirlo.</p>
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => exFileRef.current?.click()}
+                    className="shrink-0 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-lg hover:bg-gray-800">
+                    Subir documento
+                  </button>
+                  <input ref={exFileRef} type="file" accept=".pdf,.docx,.txt" onChange={handleExerciseFile} className="hidden" />
+                </div>
+              )}
+              {exParseState === "parsing" && (
+                <div className="flex items-center justify-center gap-3 py-2">
+                  <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+                  <span className="text-sm text-gray-600">Analizando <strong>{exParseFileName}</strong> con IA...</span>
+                </div>
+              )}
+              {exParseState === "error" && (
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-2">
+                    <span className="text-base">⚠️</span>
+                    <p className="text-xs text-red-700 leading-relaxed">{exParseError}</p>
+                  </div>
+                  <button type="button" onClick={() => { setExParseState("idle"); setExParseError(""); }}
+                    className="shrink-0 text-xs text-gray-500 hover:text-gray-900 font-medium">Cerrar</button>
+                </div>
+              )}
+              {exParseState === "preview" && exParsePreview && (
+                <div className="space-y-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-bold text-gray-900">✨ Esto es lo que encontré</p>
+                      <p className="text-xs text-gray-500 mt-0.5">Revisa, edita si hace falta, y confirma para añadirlo.</p>
+                    </div>
+                    <button type="button" onClick={() => { setExParseState("idle"); setExParsePreview(null); setExParseError(""); }}
+                      className="shrink-0 text-xs text-gray-400 hover:text-gray-900">✕</button>
+                  </div>
+                  <div className="bg-white border border-gray-200 rounded-xl p-3 space-y-2">
+                    <div>
+                      <label className={lbl}>Título</label>
+                      <input className={inp}
+                        value={exParsePreview.title}
+                        onChange={e => setExParsePreview(p => ({ ...p, title: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className={lbl}>Enunciado</label>
+                      <textarea className={inp} rows={4}
+                        value={exParsePreview.description}
+                        onChange={e => setExParsePreview(p => ({ ...p, description: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className={lbl}>Criterios detectados ({exParsePreview.criteria.length})</label>
+                      <div className="space-y-1.5 mt-1">
+                        {exParsePreview.criteria.map((c, i) => (
+                          <div key={i} className="flex gap-2 items-start bg-gray-50 rounded-lg p-2">
+                            <div className="flex-1 min-w-0 space-y-1">
+                              <input className={inp + " text-xs"}
+                                value={c.area}
+                                onChange={e => setExParsePreview(p => ({ ...p, criteria: p.criteria.map((cc, j) => j === i ? { ...cc, area: e.target.value } : cc) }))}
+                                placeholder="Área" />
+                              <input className={inp + " text-xs"}
+                                value={c.indicators}
+                                onChange={e => setExParsePreview(p => ({ ...p, criteria: p.criteria.map((cc, j) => j === i ? { ...cc, indicators: e.target.value } : cc) }))}
+                                placeholder="Indicadores" />
+                            </div>
+                            <input type="number" min={1} max={10}
+                              className="w-12 border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-center"
+                              value={c.maxScore}
+                              onChange={e => setExParsePreview(p => ({ ...p, criteria: p.criteria.map((cc, j) => j === i ? { ...cc, maxScore: parseInt(e.target.value) || 5 } : cc) }))} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <button type="button" onClick={acceptParsedExercise}
+                    className="w-full py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
+                    ✅ Añadir este ejercicio al proceso
+                  </button>
+                </div>
+              )}
+            </div>
+
             {data.exercises.map((ex, idx) => (
               <div key={ex.id} className="border border-gray-200 rounded-2xl p-4 mb-4 bg-gray-50">
                 <div className="flex items-center gap-2 mb-3">
