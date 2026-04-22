@@ -8,6 +8,12 @@ import {
   createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile,
 } from "./firebase.js";
 
+// Admin identity — reads from Vite env at build time so changing the admin
+// account is a matter of updating VITE_ADMIN_EMAIL in Vercel + redeploy, no
+// code edit needed. Keep the backend ADMIN_EMAIL env var in sync (they
+// control different layers: frontend gate UI vs backend endpoint auth).
+const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || "yanvis@gmail.com";
+
 // Spanish-friendly translations for the most common Firebase Auth error codes.
 function translateAuthError(code) {
   const map = {
@@ -4263,7 +4269,7 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
           <div className="flex items-center gap-2">
             {user?.photoURL && <img src={user.photoURL} alt={user.displayName} className="w-8 h-8 rounded-full border-2 border-gray-200" />}
             <span className="text-sm text-gray-600 hidden sm:block">{firstName}</span>
-            {user?.email === "yanvis@gmail.com" && (
+            {user?.email === ADMIN_EMAIL && (
               <button onClick={() => { window.location.hash = "#admin"; }} className="px-3 py-2 border border-gray-900 bg-gray-900 text-white rounded-xl text-sm hover:bg-gray-800" title="Panel admin">🔐</button>
             )}
             <button onClick={onOpenSettings} className="px-3 py-2 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Configuración de agencia">⚙️</button>
@@ -5026,14 +5032,23 @@ export default function App() {
             }
             if (data.processes?.length > 0) setProcesses(data.processes);
             if (data.settings) setAgencySettings(data.settings);
+            // Onboarding trigger for returning users whose first login didn't
+            // complete the wizard (e.g. admin just activated a pending user —
+            // the doc existed during the pending state but settings don't
+            // carry onboardingCompleted yet).
+            if (!data.settings?.onboardingCompleted) setShowOnboarding(true);
           } else {
-            // First-time user: create doc with pending status + notify admin
-            // + send welcome email. They won't see the onboarding until the
-            // admin flips their status to 'active'.
-            setAccountStatus("pending");
+            // First-time user. Admin safeguard: if the signup email matches
+            // ADMIN_EMAIL, mint the account as 'active' directly so the
+            // admin is never locked out by their own gate (edge case: fresh
+            // Firebase project, admin's first login on a new database).
+            // No Slack alert or welcome email for the admin — they know.
+            const isAdminSignup = u.email === ADMIN_EMAIL;
+            const initialStatus = isAdminSignup ? "active" : "pending";
+            setAccountStatus(initialStatus);
             try {
               await setDoc(ref, {
-                status: "pending",
+                status: initialStatus,
                 statusUpdatedAt: new Date().toISOString(),
                 email: u.email || "",
                 displayName: u.displayName || "",
@@ -5041,19 +5056,21 @@ export default function App() {
               });
             } catch (e) { console.error("Signup doc create error:", e); }
 
-            // Notify admin about the new signup (fire-and-forget).
-            fetch("/api/notifySignup", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                email: u.email,
-                displayName: u.displayName,
-                uid: u.uid,
-                provider: u.providerData?.[0]?.providerId || "unknown",
-              }),
-            }).catch(e => console.error("Notify signup error:", e));
+            if (!isAdminSignup) {
+              // Notify admin about the new signup (fire-and-forget).
+              fetch("/api/notifySignup", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  email: u.email,
+                  displayName: u.displayName,
+                  uid: u.uid,
+                  provider: u.providerData?.[0]?.providerId || "unknown",
+                }),
+              }).catch(e => console.error("Notify signup error:", e));
+            }
 
-            if (u.email) {
+            if (u.email && !isAdminSignup) {
               fetch("/api/sendEmail", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -5064,6 +5081,11 @@ export default function App() {
                 }),
               }).catch(e => console.error("Welcome email error:", e));
             }
+
+            // Mark onboarding to show on first access. Pending users will hit
+            // the PendingApprovalScreen gate first; admin (active from birth)
+            // will go straight into the wizard.
+            setShowOnboarding(true);
           }
         } catch (e) { console.error("Error loading:", e); }
         setSettingsLoaded(true);
@@ -5212,7 +5234,7 @@ export default function App() {
   // Admin route: only the configured admin email can see this. Non-admins
   // get redirected back to the dashboard silently.
   if (adminRoute) {
-    if (user.email === "yanvis@gmail.com") return <AdminPanel adminUser={user} onExit={() => { window.location.hash = ""; setAdminRoute(false); }} onLogout={handleLogout} />;
+    if (user.email === ADMIN_EMAIL) return <AdminPanel adminUser={user} onExit={() => { window.location.hash = ""; setAdminRoute(false); }} onLogout={handleLogout} />;
     // Not admin — strip the hash and fall through to normal flow.
     if (typeof window !== "undefined") window.location.hash = "";
   }
