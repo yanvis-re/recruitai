@@ -4325,8 +4325,45 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                       : null;
                   })
                   .filter(Boolean);
+                // Count exercises that already have a manual transcript
+                // saved. When there's at least one, we surface it as a
+                // neutral info banner with a "retry Loom" escape hatch so
+                // the recruiter isn't locked into the manual paste forever
+                // (and so we can actually debug the auto-parser from the
+                // same panel).
+                const manualTranscriptEntries = Object.entries(candidate.manualTranscripts || {})
+                  .filter(([, v]) => typeof v === "string" && v.trim().length > 0)
+                  .map(([exerciseId]) => ({
+                    exerciseId,
+                    title: (exerciseEval.exercises || []).find(x => x.exerciseId === exerciseId)?.exerciseTitle
+                      || (process.exercises || []).find(x => x.id === exerciseId)?.title
+                      || "Ejercicio",
+                  }));
+                const clearManualAndRetry = async () => {
+                  if (!window.confirm("Se borrará la transcripción manual guardada y se volverá a intentar leer el Loom automáticamente. ¿Continuar?")) return;
+                  onUpdateCandidate({ ...candidate, manualTranscripts: {}, exerciseEvaluation: null });
+                  // Explicit empty override wins over candidate.manualTranscripts,
+                  // so the server fetchLoomTranscript path runs cleanly.
+                  await evaluateExercise({});
+                };
                 return (
                 <div className="space-y-3">
+                  {manualTranscriptEntries.length > 0 && (
+                    <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-3">
+                      <p className="text-xs font-bold text-indigo-900 mb-1">📝 Transcripción manual activa</p>
+                      <p className="text-xs text-indigo-800 leading-relaxed mb-2">
+                        La IA está usando la transcripción pegada manualmente{manualTranscriptEntries.length === 1 ? " para " : " para los ejercicios: "}
+                        <strong>{manualTranscriptEntries.map(e => e.title).join(", ")}</strong>. Mientras esté activa, no se vuelve a intentar leer el Loom.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={clearManualAndRetry}
+                        className="text-xs font-semibold text-indigo-900 bg-white hover:bg-indigo-100 border border-indigo-200 rounded-lg px-2.5 py-1.5 transition-colors"
+                      >
+                        ↻ Descartar manual y reintentar Loom automático
+                      </button>
+                    </div>
+                  )}
                   {loomWarnings.length > 0 && (
                     <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
                       <p className="text-xs font-bold text-yellow-900 mb-1">⚠️ La IA no pudo leer la transcripción del Loom</p>
