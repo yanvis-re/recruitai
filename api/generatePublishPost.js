@@ -71,11 +71,23 @@ REGLAS POR CANAL:
 - **Deja una línea para @empresa (mencionar la página corporativa en LinkedIn).** Si conoces el nombre exacto de la empresa, formatea como: "Estamos en @${c.name || "la empresa"}" donde el reclutador luego sustituirá @ por la mención real.
 
 ### instagram_story.text
-- Muy corto: 2-3 líneas máximo, ~200 caracteres.
-- Emoji-forward pero no exagerado (2-3 emojis).
-- Hook + qué puesto + CTA implícito (ej. "link en bio").
-- Sin hashtags (no caben bien en stories).
-- Línea final con el CTA corto: "👆 Desliza" o "🔗 Link en bio".
+- Stories es un canal de **impulso visual**: prioriza gancho y emoción sobre detalle. Tiene que parar el scroll.
+- 3-4 líneas con mucho punch. 200-280 caracteres.
+- Empieza con un HOOK FUERTE que llame la atención. Ejemplos válidos:
+  "🚨 Abrimos vacante"
+  "Esto NO es para cualquiera."
+  "¿Eres tú ese {puesto} que no encontramos?"
+  "Si sabes {habilidad concreta} — sigue leyendo."
+  "Dejar de buscar. Ya te tenemos."
+- Después menciona el puesto en 1 línea + 1 razón de peso por la que molaría (salario si es generoso, remoto, empresa interesante, tipo de proyectos, cultura — usa el manual de marca si está).
+- Emojis con peso: 🚨 🔥 ⚡️ 💥 🎯 📈 ✨ — 3-4 máximo, nada de saturar.
+- SIN hashtags.
+- CTA final OBLIGATORIO con sticker de link: usa una variante como:
+  "👆 Toca el sticker para aplicar"
+  "🔗 Sticker arriba con el link"
+  "☝️ Toca aquí para aplicar"
+- NO digas "link en bio" ni "desliza hacia arriba" — Instagram permite sticker de link directo en stories desde 2021.
+- NO incluyas el URL literal en el texto (el reclutador lo pega en el sticker de link).
 
 ### email_internal.subject
 - 40-60 caracteres.

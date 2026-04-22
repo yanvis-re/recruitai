@@ -176,7 +176,7 @@ const defaultJob = {
 };
 
 // ─── Conversational process-creation flow (same DNA as OnboardingScreen) ─────
-function RecruiterSetupScreen({ onPublish, onBack }) {
+function RecruiterSetupScreen({ onPublish, onPublishAndShare, onBack }) {
   const [step, setStep] = useState(0);
   const [data, setData] = useState(defaultJob);
   const [salaryApplied, setSalaryApplied] = useState(false);
@@ -1082,10 +1082,16 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
             ) : <span />}
 
             {isReview ? (
-              <button onClick={() => onPublish(data)}
-                className="px-6 py-3 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-colors">
-                🚀 Publicar oferta
-              </button>
+              <div className="flex gap-2 flex-wrap justify-end">
+                <button onClick={() => onPublish(data)}
+                  className="px-5 py-3 border-2 border-gray-200 bg-white text-gray-700 rounded-xl text-sm font-bold hover:bg-gray-50 hover:border-gray-400 transition-colors">
+                  💾 Guardar sin publicar
+                </button>
+                <button onClick={() => onPublishAndShare(data)}
+                  className="px-6 py-3 bg-green-600 text-white rounded-xl text-sm font-bold hover:bg-green-700 transition-colors">
+                  🚀 Publicar y compartir
+                </button>
+              </div>
             ) : (
               <button onClick={next} disabled={!canAdvance}
                 className="px-6 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
@@ -2743,8 +2749,8 @@ function SlackSetupWizard({ slackConfig, onChange }) {
 }
 
 // ─── AGENCY SETTINGS MODAL ───────────────────────────────────────────────────
-function AgencySettingsModal({ settings, onSave, onClose }) {
-  const [section, setSection] = useState("marca");
+function AgencySettingsModal({ settings, onSave, onClose, initialSection = "marca" }) {
+  const [section, setSection] = useState(initialSection);
   const [brandManual, setBrandManual] = useState(settings?.brandManual || "");
   const [brandTab, setBrandTab] = useState("text");
   const [uploading, setUploading] = useState(false);
@@ -3336,7 +3342,7 @@ const ESTADO_COLORS = { "Pendiente": "bg-gray-100 text-gray-700", "Primera entre
 const PROGRESO_COLORS = { "Ingreso": "bg-purple-100 text-purple-700", "Prueba técnica": "bg-gray-100 text-gray-800", "Entrevista": "bg-indigo-100 text-indigo-700", "Onboarding": "bg-teal-100 text-teal-700", "Descalificado": "bg-red-100 text-red-700", "En cartera": "bg-yellow-100 text-yellow-700", "Desiste": "bg-gray-100 text-gray-800", "Validación prueba técnica": "bg-cyan-100 text-cyan-700", "Entrevista RRHH": "bg-violet-100 text-violet-700" };
 
 // ─── PROCESS DETAIL SCREEN ───────────────────────────────────────────────────
-function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user, onStartDemo, agencySettings, onOpenSettings }) {
+function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare }) {
   // What's required before the user can generate a public link / receive candidates.
   // brandManual + emailConfig are blocking (IA needs context, candidates need confirmations).
   // Slack is considered a nice-to-have, not blocking.
@@ -3466,6 +3472,27 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user,
     setActivePostTab("linkedin");
     if (!publishPosts && !generatingPosts) generatePublishPosts();
   };
+
+  // When we arrive here via 'Publicar y compartir' from the setup flow,
+  // auto-run the publish + open the posts modal once the component mounts.
+  // Skips if the agency config is incomplete (generatePublicLink will show
+  // the missing-config modal instead).
+  useEffect(() => {
+    if (!autoShareOnEntry) return;
+    clearAutoShare?.();
+    (async () => {
+      await generatePublicLink();
+      // If publication actually happened (missing config modal wasn't opened
+      // as a result), open the posts modal. Check after the publish promise.
+      setTimeout(() => {
+        // publicLink state may not be set synchronously, so re-read from
+        // context via a small defer. showMissingConfigModal gate is enough:
+        // if it's open we don't want to cover it with the posts modal.
+        if (!showMissingConfigModal) openPublishModal();
+      }, 300);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoShareOnEntry]);
 
   const copyCurrentPost = async () => {
     if (!publishPosts) return;
@@ -3647,9 +3674,28 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user,
                       <textarea className={inp + " font-sans"} rows={5}
                         value={publishPosts.instagram_story?.text || ""}
                         onChange={e => updateCurrentPost(e.target.value)} />
-                      <p className="text-xs text-gray-500 mt-2 leading-relaxed">
-                        💡 <strong>Tip:</strong> Instagram no permite enlaces clicables en stories salvo que uses sticker de enlace. Recuerda añadir el sticker con el link público.
-                      </p>
+                      <div className="mt-3 bg-indigo-50 border border-indigo-100 rounded-xl p-3 space-y-2">
+                        <p className="text-xs text-indigo-900 font-bold leading-relaxed">
+                          📌 Al publicar en Instagram:
+                        </p>
+                        <ol className="text-xs text-indigo-800 space-y-1 pl-4 list-decimal">
+                          <li>Sube tu foto o vídeo a la story.</li>
+                          <li>Añade el <strong>sticker de "Enlace"</strong> (icono con la cadena 🔗).</li>
+                          <li>Pega el URL del link público:</li>
+                        </ol>
+                        {publicLink && (
+                          <div className="flex items-center gap-2 bg-white border border-indigo-200 rounded-lg px-2 py-1.5 mt-1">
+                            <span className="text-[11px] text-gray-600 font-mono truncate flex-1">{publicLink}</span>
+                            <button type="button" onClick={() => navigator.clipboard?.writeText(publicLink)}
+                              className="shrink-0 text-[11px] bg-indigo-600 text-white px-2 py-1 rounded font-bold hover:bg-indigo-700">
+                              Copiar URL
+                            </button>
+                          </div>
+                        )}
+                        <p className="text-xs text-indigo-700 leading-relaxed pt-1">
+                          💡 Cuando pegas el texto como pie/overlay en la story, menciona el sticker con una flecha 👆 para que los candidatos lo toquen y apliquen sin salir de Instagram.
+                        </p>
+                      </div>
                     </div>
                   )}
                   {activePostTab === "email_internal" && (
@@ -3955,14 +4001,14 @@ function Roadmap({ user, agencySettings, processes, onNavigate }) {
       done: hasBrand,
       label: "Manual de marca",
       detail: hasBrand ? `${brandWords.toLocaleString()} palabras · la IA usa esto para evaluar` : "Para que la IA evalúe la compatibilidad cultural",
-      action: { label: "Configurar marca", target: "settings" },
+      action: { label: "Configurar marca", target: "settings", section: "marca" },
     },
     {
       id: "email",
       done: !!hasEmail,
       label: "Email automático",
       detail: hasEmail ? emailProviderLabel : "Confirmaciones al aplicar + emails de decisión",
-      action: { label: "Configurar email", target: "settings" },
+      action: { label: "Configurar email", target: "settings", section: "email" },
     },
     {
       id: "slack",
@@ -3970,7 +4016,7 @@ function Roadmap({ user, agencySettings, processes, onNavigate }) {
       optional: true,
       label: "Slack",
       detail: hasSlack ? "Conectado" : "Avisos instantáneos cuando llegue un candidato",
-      action: { label: "Conectar Slack", target: "settings" },
+      action: { label: "Conectar Slack", target: "settings", section: "slack" },
     },
     {
       id: "process",
@@ -4004,10 +4050,10 @@ function Roadmap({ user, agencySettings, processes, onNavigate }) {
   // Hide the roadmap once every REQUIRED step is done (slack is optional).
   if (doneRequired === requiredSteps.length) return null;
 
-  const handleAction = (target) => {
-    if (target === "settings") onNavigate("settings");
-    else if (target === "new") onNavigate("new");
-    else if (target === "firstProcess") onNavigate("firstProcess", firstProcess);
+  const handleAction = (action) => {
+    if (action.target === "settings") onNavigate("settings", { section: action.section });
+    else if (action.target === "new") onNavigate("new");
+    else if (action.target === "firstProcess") onNavigate("firstProcess", firstProcess);
   };
 
   return (
@@ -4053,8 +4099,12 @@ function Roadmap({ user, agencySettings, processes, onNavigate }) {
               </div>
               <p className="text-xs text-gray-500 mt-0.5 leading-snug">{step.detail}</p>
               {!step.done && step.action && (
-                <button onClick={() => handleAction(step.action.target)}
-                  className="mt-1.5 text-xs text-gray-900 hover:underline font-bold">
+                <button onClick={() => handleAction(step.action)}
+                  className={`mt-2 inline-flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${
+                    step.milestone
+                      ? "bg-yellow-400 text-gray-900 hover:bg-yellow-500"
+                      : "bg-gray-900 text-white hover:bg-gray-800"
+                  }`}>
                   {step.action.label} →
                 </button>
               )}
@@ -4111,7 +4161,7 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
           agencySettings={agencySettings}
           processes={processes}
           onNavigate={(target, payload) => {
-            if (target === "settings") onOpenSettings();
+            if (target === "settings") onOpenSettings(payload?.section);
             else if (target === "new") onNew();
             else if (target === "firstProcess" && payload) onView(payload);
           }}
@@ -4543,6 +4593,11 @@ export default function App() {
   const [resetSent, setResetSent] = useState(false);
   const [agencySettings, setAgencySettings] = useState({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } }, onboardingCompleted: false });
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsInitialSection, setSettingsInitialSection] = useState("marca");
+  const openSettings = (section) => {
+    setSettingsInitialSection(section || "marca");
+    setShowSettings(true);
+  };
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   // Onboarding visibility is now decoupled from agencySettings.onboardingCompleted.
   // Shown only on the first-ever login (!snap.exists()); after that, the user
@@ -4673,13 +4728,26 @@ export default function App() {
   const handleLogout = async () => { await signOut(auth); setProcesses([]); setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setShowOnboarding(false); setPhase("dashboard"); };
   const goToDashboard = () => { setPhase("dashboard"); setActiveJob(null); setCandidate(null); setEvaluation(null); setInterview(null); };
   const handlePublish = (jobData) => {
-    // After creating a process, return to the dashboard. The new process shows
-    // up at the top of the list. From there the recruiter clicks the card to
-    // enter ProcessDetailScreen and generate the public link when ready.
+    // Save-only flow: create the process + return to the dashboard without
+    // generating the public link. The recruiter can come back later to
+    // publish it from the process detail screen.
     const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] };
     setProcesses(ps => [np, ...ps]);
     setActiveJob(null);
     setPhase("dashboard");
+  };
+
+  // Publish-and-share flow: create the process AND navigate to its detail
+  // screen with an autoShare flag. ProcessDetailScreen detects the flag,
+  // auto-generates the public link (with the same missing-config modal if
+  // the agency isn't set up), and opens the publish-posts modal on top.
+  const [autoShareOnEntry, setAutoShareOnEntry] = useState(false);
+  const handlePublishAndShare = (jobData) => {
+    const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] };
+    setProcesses(ps => [np, ...ps]);
+    setActiveJob(np);
+    setAutoShareOnEntry(true);
+    setPhase("process_detail");
   };
   const handleToggle = (id) => setProcesses(ps => ps.map(p => p.id === id ? { ...p, status: p.status === "active" ? "paused" : "active" } : p));
   const handleViewProcess = (process) => { setActiveJob(process); setPhase("process_detail"); };
@@ -4712,11 +4780,11 @@ export default function App() {
 
   return (
     <>
-      {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} />}
+      {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} initialSection={settingsInitialSection} />}
       <FeedbackWidget user={user} />
-      {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={() => setShowSettings(true)} agencySettings={agencySettings} />}
-      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={() => setShowSettings(true)} />; })()}
-      {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onBack={goToDashboard} />}
+      {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={openSettings} agencySettings={agencySettings} />}
+      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} />; })()}
+      {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onPublishAndShare={handlePublishAndShare} onBack={goToDashboard} />}
       {phase === "preview" && <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />}
       {phase === "apply" && <CandidateApplyScreen job={activeJob} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />}
       {phase === "exercises" && <ExercisesScreen job={activeJob} candidate={candidate} onSubmit={(resps) => { setEvaluation(generateAIEvaluation(resps, activeJob)); setPhase("confirmation"); }} />}
