@@ -24,6 +24,26 @@ const isAdminEmail = (email) => (email || "").toLowerCase().trim() === ADMIN_EMA
 // the source of truth for blocking, this is just UI.
 const AI_EVAL_LIMIT = parseInt(import.meta.env.VITE_AI_EVALUATION_LIMIT || "50", 10);
 
+// Process-count caps. Two axes: per user (who created the process) and per
+// agency (the whole workspace). Both are client-side UX — the primary
+// backstop is agencyProcessCap() inside firestore.rules. Keep both env vars
+// in sync with FREE_PROCESSES_PER_USER / FREE_PROCESSES_PER_AGENCY (server).
+const PROCESS_LIMIT_USER = parseInt(import.meta.env.VITE_PROCESS_LIMIT_USER || "10", 10);
+const PROCESS_LIMIT_AGENCY = parseInt(import.meta.env.VITE_PROCESS_LIMIT_AGENCY || "50", 10);
+
+function getProcessCounts(processes, userUid) {
+  const userCount = (processes || []).filter(p => p.createdBy === userUid).length;
+  const agencyCount = (processes || []).length;
+  return {
+    user: userCount,
+    agency: agencyCount,
+    userLimit: PROCESS_LIMIT_USER,
+    agencyLimit: PROCESS_LIMIT_AGENCY,
+    atUserLimit: userCount >= PROCESS_LIMIT_USER,
+    atAgencyLimit: agencyCount >= PROCESS_LIMIT_AGENCY,
+  };
+}
+
 function getCurrentUsagePeriod() {
   // UTC-aligned with the server's currentPeriod() in api/_quota.js so the
   // client reads the same slot the server is writing to.
@@ -2051,6 +2071,53 @@ function clearApplyDraft(processId) {
   try { localStorage.removeItem(applyDraftKey(processId)); } catch {}
 }
 
+// ─── Agency helpers (multi-tenancy) ──────────────────────────────────────────
+//
+// Every user belongs to exactly one agency. On first login (or the first
+// login after this code ships for legacy users) we create a solo agency
+// named "Agencia de <firstName>" with the user as its sole member + owner.
+// Their existing processes and settings from recruiters/{uid} (pre-migration)
+// are carried over into the agency doc on the way.
+//
+// Naming: agencyId = `ag_${uid}`. Deterministic so migrations are idempotent.
+async function ensureAgencyForUser(u, seed = {}) {
+  const agencyId = `ag_${u.uid}`;
+  const ref = doc(db, "agencies", agencyId);
+  const snap = await getDoc(ref);
+  if (snap.exists()) return agencyId;
+
+  const defaultSettings = {
+    brandManual: "",
+    emailConfig: { provider: "app" },
+    slackConfig: {
+      webhookUrl: "",
+      notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true },
+    },
+    onboardingCompleted: false,
+  };
+  const firstName = (u.displayName || u.email?.split("@")[0] || "mi").split(" ")[0];
+  const now = new Date().toISOString();
+
+  await setDoc(ref, {
+    id: agencyId,
+    name: seed.name || `Agencia de ${firstName}`,
+    ownerUid: u.uid,
+    createdAt: now,
+    settings: seed.settings || defaultSettings,
+    // Stamp createdBy on legacy processes so per-user process counts work.
+    processes: (seed.processes || []).map(p => ({ createdBy: u.uid, ...p })),
+    members: [{
+      uid: u.uid,
+      email: u.email || "",
+      displayName: u.displayName || "",
+      role: "owner",
+      joinedAt: now,
+    }],
+    memberUids: [u.uid],
+  });
+  return agencyId;
+}
+
 // ─── PUBLIC CANDIDATE SCREEN ──────────────────────────────────────────────────
 function CandidatePublicScreen({ processId }) {
   const [processData, setProcessData] = useState(null);
@@ -3920,7 +3987,7 @@ const ESTADO_COLORS = { "Pendiente": "bg-gray-100 text-gray-700", "Primera entre
 const PROGRESO_COLORS = { "Ingreso": "bg-purple-100 text-purple-700", "Prueba técnica": "bg-gray-100 text-gray-800", "Entrevista": "bg-indigo-100 text-indigo-700", "Onboarding": "bg-teal-100 text-teal-700", "Descalificado": "bg-red-100 text-red-700", "En cartera": "bg-yellow-100 text-yellow-700", "Desiste": "bg-gray-100 text-gray-800", "Validación prueba técnica": "bg-cyan-100 text-cyan-700", "Entrevista RRHH": "bg-violet-100 text-violet-700" };
 
 // ─── PROCESS DETAIL SCREEN ───────────────────────────────────────────────────
-function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDeleteProcess, onToggleStatus, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare, aiUsage, onEvalConsumed }) {
+function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDeleteProcess, onToggleStatus, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare, aiUsage, onEvalConsumed, agencyId }) {
   // Delete flow for the entire process — closes the public link, drops any
   // applications received, and removes the process from the recruiter's
   // workspace. Two-step (modal) confirmation because it's irreversible.
@@ -4070,6 +4137,10 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDel
       await setDoc(doc(db, "publicProcesses", process.id), {
         ...process,
         recruiterUid: user?.uid || "",
+        // agencyId lets any current-or-future agency member read + mutate
+        // applications on this process. Required by the new firestore rules
+        // for new docs (legacy docs fall back to recruiterUid match).
+        agencyId: agencyId || "",
         publishedAt: new Date().toISOString(),
         recruiterEmail: user?.email || "",
         recruiterName: user?.displayName || "Equipo de selección",
@@ -5066,6 +5137,16 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
   useEffect(() => { onRefreshUsage?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const usageSnapshot = getCurrentUsage(aiUsage);
+  // Process-cap enforcement. Disables the "+ Nuevo proceso" button with a
+  // clear tooltip when either axis is maxed — primary user-friendly layer;
+  // Firestore rules enforce the hard backstop.
+  const procCounts = getProcessCounts(processes, user?.uid);
+  const newProcessBlockedReason =
+    procCounts.atAgencyLimit
+      ? `La agencia ha alcanzado ${procCounts.agency}/${procCounts.agencyLimit} procesos. Alguien debe borrar uno antes de crear otro.`
+    : procCounts.atUserLimit
+      ? `Tú has creado ${procCounts.user}/${procCounts.userLimit} procesos. Borra alguno tuyo o pide más cuota.`
+    : null;
 
   // Checklist state for the empty-state hero — tracks what the user already has set up
   const hasBrand = !!(agencySettings?.brandManual && agencySettings.brandManual.trim());
@@ -5088,7 +5169,14 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
             )}
             <AiUsagePill snapshot={usageSnapshot} />
             <button onClick={onOpenSettings} className="px-3 py-2 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Configuración de agencia">⚙️</button>
-            <button onClick={onNew} className="px-5 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">+ Nuevo proceso</button>
+            <button
+              onClick={onNew}
+              disabled={!!newProcessBlockedReason}
+              title={newProcessBlockedReason || "Crear un nuevo proceso de selección"}
+              className="px-5 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              + Nuevo proceso
+            </button>
             <button onClick={() => setShowLogoutConfirm(true)}
               className="px-3 py-2.5 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50 hover:text-gray-900 transition-colors flex items-center gap-1.5"
               title="Cerrar sesión">
@@ -5136,7 +5224,9 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
             </div>
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-black text-gray-900">Procesos de selección</h2>
-              <span className="text-sm text-gray-400">{processes.length} en total</span>
+              <span className="text-sm text-gray-400" title={`${procCounts.user} creados por ti (máx. ${procCounts.userLimit}) · ${procCounts.agency} en la agencia (máx. ${procCounts.agencyLimit})`}>
+                {procCounts.agency}/{procCounts.agencyLimit} · tuyos {procCounts.user}/{procCounts.userLimit}
+              </span>
             </div>
             <div className="space-y-4">{processes.map(p => <ProcessCard key={p.id} process={p} onView={onView} onToggle={onToggle} />)}</div>
           </>
@@ -6133,6 +6223,11 @@ export default function App() {
   // manual eval succeeds, and refetched whenever the dashboard remounts to
   // pick up server-side bumps from auto-evaluate (candidate submissions).
   const [aiUsage, setAiUsage] = useState({});
+  // Active agency (workspace). Every user belongs to exactly one; resolved on
+  // login via ensureAgencyForUser. All process + settings reads/writes are
+  // scoped to this id. Null until auth + migration complete; the autosave
+  // effect is gated on this to avoid writing to the wrong collection.
+  const [agencyId, setAgencyId] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState("marca");
   const openSettings = (section) => {
@@ -6171,16 +6266,44 @@ export default function App() {
             if (!data.status) {
               try { await setDoc(ref, { status: "active" }, { merge: true }); } catch {}
             }
-            if (data.processes?.length > 0) setProcesses(data.processes);
-            if (data.settings) setAgencySettings(data.settings);
             // Usage counter lives at the root of the recruiter doc (not under
             // settings) because it's a runtime counter, not user config.
             if (data.usage) setAiUsage(data.usage);
-            // Onboarding trigger for returning users whose first login didn't
-            // complete the wizard (e.g. admin just activated a pending user —
-            // the doc existed during the pending state but settings don't
-            // carry onboardingCompleted yet).
-            if (!data.settings?.onboardingCompleted) setShowOnboarding(true);
+
+            // ── Multi-tenancy resolution ───────────────────────────────────
+            // If the recruiter already has an agencyId, load that agency's
+            // doc and use it as the source of truth. If not (legacy user),
+            // create a solo agency seeded with their existing processes +
+            // settings, stamp the agencyId on the recruiter doc, and then
+            // load the freshly created agency.
+            let resolvedAgencyId = data.agencyId;
+            if (!resolvedAgencyId) {
+              try {
+                resolvedAgencyId = await ensureAgencyForUser(u, {
+                  settings: data.settings,
+                  processes: data.processes,
+                });
+                await setDoc(ref, { agencyId: resolvedAgencyId }, { merge: true });
+              } catch (e) { console.error("Agency migration error:", e); }
+            }
+            if (resolvedAgencyId) {
+              setAgencyId(resolvedAgencyId);
+              try {
+                const agSnap = await getDoc(doc(db, "agencies", resolvedAgencyId));
+                if (agSnap.exists()) {
+                  const ag = agSnap.data();
+                  setProcesses(ag.processes || []);
+                  if (ag.settings) setAgencySettings(ag.settings);
+                  if (!ag.settings?.onboardingCompleted) setShowOnboarding(true);
+                }
+              } catch (e) { console.error("Agency load error:", e); }
+            } else {
+              // Fallback (shouldn't happen in practice): use legacy recruiter
+              // fields so the app isn't bricked if agency creation fails.
+              if (data.processes?.length > 0) setProcesses(data.processes);
+              if (data.settings) setAgencySettings(data.settings);
+              if (!data.settings?.onboardingCompleted) setShowOnboarding(true);
+            }
           } else {
             // First-time user. Three activation paths:
             //  1. Admin signup     → active (self-safeguard)
@@ -6253,6 +6376,17 @@ export default function App() {
               }).catch(e => console.error("Welcome email error:", e));
             }
 
+            // Create the user's solo agency immediately, regardless of their
+            // platform status. If they remain pending (admin approval needed)
+            // the agency just sits empty until they log in again as active;
+            // nothing references it before then. Stamp agencyId on the
+            // recruiter doc so the next login takes the fast path.
+            try {
+              const newAgencyId = await ensureAgencyForUser(u);
+              await setDoc(ref, { agencyId: newAgencyId }, { merge: true });
+              setAgencyId(newAgencyId);
+            } catch (e) { console.error("Initial agency create error:", e); }
+
             // Mark onboarding to show on first access. Pending users will hit
             // the PendingApprovalScreen gate first; admin (active from birth)
             // will go straight into the wizard.
@@ -6288,13 +6422,15 @@ export default function App() {
     // 400ms debounce: short enough that a refresh shortly after creating a
     // process still catches the write; long enough to avoid hammering
     // Firestore during rapid edits in the evaluation panel.
-    if (!user || !settingsLoaded) return;
+    // Added agencyId to the guard: writes go to agencies/{agencyId} now
+    // (shared workspace), so we wait until migration has resolved an id.
+    if (!user || !settingsLoaded || !agencyId) return;
     const t = setTimeout(async () => {
-      try { await setDoc(doc(db, "recruiters", user.uid), { processes, settings: agencySettings, updatedAt: new Date().toISOString() }, { merge: true }); }
+      try { await setDoc(doc(db, "agencies", agencyId), { processes, settings: agencySettings, updatedAt: new Date().toISOString() }, { merge: true }); }
       catch (e) { console.error("Error saving:", e); }
     }, 400);
     return () => clearTimeout(t);
-  }, [processes, agencySettings, user, settingsLoaded]);
+  }, [processes, agencySettings, user, settingsLoaded, agencyId]);
 
   // ── Slack OAuth callback: detect webhook URL returned from /api/slack/callback ──
   useEffect(() => {
@@ -6381,6 +6517,8 @@ export default function App() {
     await signOut(auth);
     setProcesses([]);
     setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false });
+    setAgencyId(null);
+    setAiUsage({});
     setShowOnboarding(false);
     setAccountStatus(null);
     setPhase("dashboard");
@@ -6389,8 +6527,10 @@ export default function App() {
   const handlePublish = (jobData) => {
     // Save-only flow: create the process + return to the dashboard without
     // generating the public link. The recruiter can come back later to
-    // publish it from the process detail screen.
-    const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] };
+    // publish it from the process detail screen. createdBy is stamped so
+    // per-user process counts (for the 10/50 caps) work correctly once
+    // multiple members share an agency.
+    const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], createdBy: user?.uid || "", ...jobData, candidates: [] };
     setProcesses(ps => [np, ...ps]);
     setActiveJob(null);
     setPhase("dashboard");
@@ -6402,7 +6542,7 @@ export default function App() {
   // the agency isn't set up), and opens the publish-posts modal on top.
   const [autoShareOnEntry, setAutoShareOnEntry] = useState(false);
   const handlePublishAndShare = (jobData) => {
-    const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], ...jobData, candidates: [] };
+    const np = { id: `p_${Date.now()}`, status: "active", createdAt: new Date().toISOString().split("T")[0], createdBy: user?.uid || "", ...jobData, candidates: [] };
     setProcesses(ps => [np, ...ps]);
     setActiveJob(np);
     setAutoShareOnEntry(true);
@@ -6500,7 +6640,7 @@ export default function App() {
       {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} initialSection={settingsInitialSection} />}
       <FeedbackWidget user={user} />
       {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={openSettings} agencySettings={agencySettings} aiUsage={aiUsage} onRefreshUsage={refreshAiUsage} />}
-      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} onDeleteProcess={handleDeleteProcess} onToggleStatus={handleToggle} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} aiUsage={aiUsage} onEvalConsumed={bumpAiUsage} />; })()}
+      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} onDeleteProcess={handleDeleteProcess} onToggleStatus={handleToggle} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} aiUsage={aiUsage} onEvalConsumed={bumpAiUsage} agencyId={agencyId} />; })()}
       {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onPublishAndShare={handlePublishAndShare} onBack={goToDashboard} />}
       {phase === "preview" && <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />}
       {phase === "apply" && <CandidateApplyScreen job={activeJob} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />}
