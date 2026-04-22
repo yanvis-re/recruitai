@@ -3312,12 +3312,20 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
       // Evaluate each exercise individually with its own criteria. Running
       // sequentially keeps the Claude API rate comfortable and the UX
       // predictable (one fail doesn't corrupt the whole set).
+      // Attach a fresh Firebase ID token so the server can charge this
+      // evaluation against the recruiter's monthly quota. If the user is
+      // somehow not authenticated (shouldn't happen from this panel), the
+      // header is simply omitted and the server fails open on quota.
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
       const perExercise = [];
       for (const exercise of exercises) {
         const response = responses.find(r => r.exerciseId === exercise.id) || {};
         const res = await fetch("/api/evaluate", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+          },
           body: JSON.stringify({
             type: "exercise",
             data: {
@@ -3333,6 +3341,9 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
           }),
         });
         const json = await res.json();
+        // 429 = monthly quota blown. Stop the whole loop, surface the
+        // friendly message from the server.
+        if (res.status === 429) throw new Error(json.message || "Has alcanzado el límite mensual de evaluaciones IA.");
         if (json.error) throw new Error(json.error);
         perExercise.push({
           exerciseId: exercise.id,
@@ -3383,15 +3394,20 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
     if (!interviewTranscript.trim()) return;
     setEvaluatingInt(true); setError(null);
     try {
+      const idToken = auth.currentUser ? await auth.currentUser.getIdToken() : null;
       const res = await fetch("/api/evaluate", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
         body: JSON.stringify({
           type: "interview",
           data: { transcript: interviewTranscript, position, brandManual: agencySettings?.brandManual || "", companyName: process.company?.name || "" },
         }),
       });
       const json = await res.json();
+      if (res.status === 429) throw new Error(json.message || "Has alcanzado el límite mensual de evaluaciones IA.");
       if (json.error) throw new Error(json.error);
       onUpdateCandidate({ ...candidate, interviewEvaluation: json.evaluation, interviewTranscript });
       // Slack notification

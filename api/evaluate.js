@@ -1,6 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk";
+import admin from "firebase-admin";
+import { reserveEvaluation } from "./_quota.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+// Admin SDK is used only to verify the recruiter's ID token and charge the
+// evaluation against their monthly quota. Safe to init lazily — the quota
+// helper does the same guard inside its own module.
+if (!admin.apps.length) {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+  if (raw) { try { admin.initializeApp({ credential: admin.credential.cert(JSON.parse(raw)) }); } catch (e) { console.error("firebase-admin init (evaluate):", e.message); } }
+}
 
 // ─── Fetch Loom transcript from URL ───────────────────────────────────────────
 async function fetchLoomTranscript(loomUrl) {
@@ -167,6 +177,32 @@ export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
   try {
+    // Identify the recruiter so the evaluation gets charged against their
+    // monthly quota. Bearer token is optional for backward compatibility —
+    // if missing we fail open (quota helper returns skipped:true). Once the
+    // frontend is fully auth'd we can harden this to require the token.
+    let recruiterUid = null;
+    const header = req.headers.authorization || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7) : null;
+    if (token && admin.apps.length) {
+      try { const decoded = await admin.auth().verifyIdToken(token); recruiterUid = decoded.uid; }
+      catch (e) { return res.status(401).json({ error: "Invalid token" }); }
+    }
+
+    // Reserve one unit of quota BEFORE calling Claude. If the recruiter is
+    // over the monthly cap we bail with 429 and a clear payload the UI can
+    // render ("te quedan 0/50 evaluaciones este mes, resetea el 1 de MM").
+    const quota = await reserveEvaluation(recruiterUid);
+    if (!quota.ok) {
+      return res.status(429).json({
+        error: "quota_exceeded",
+        used: quota.used,
+        limit: quota.limit,
+        period: quota.period,
+        message: `Has alcanzado el límite mensual de evaluaciones IA (${quota.used}/${quota.limit}). Se resetea el 1 del próximo mes.`,
+      });
+    }
+
     const { type, data } = req.body;
 
     let prompt;

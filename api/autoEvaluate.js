@@ -16,6 +16,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import admin from "firebase-admin";
+import { reserveEvaluation } from "./_quota.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -169,12 +170,30 @@ export default async function handler(req, res) {
     const application = appSnap.data();
     const responses = application.responses || [];
 
-    // 4. Evaluate each exercise sequentially
+    // 4. Evaluate each exercise sequentially, charging the recruiter's
+    //    monthly quota per call. If the quota runs out mid-batch we stop
+    //    and mark the remaining exercises as skipped so the recruiter can
+    //    re-evaluate manually after the next reset (or after the quota is
+    //    raised from env). Fail-open for legacy/non-admin contexts is the
+    //    default behavior of reserveEvaluation.
     const position = getPositionTitle(proc.position);
     const companyName = proc.company?.name || "";
     const perExercise = [];
+    let quotaExceeded = false;
 
     for (const exercise of exercises) {
+      const quota = await reserveEvaluation(proc.recruiterUid);
+      if (!quota.ok) {
+        quotaExceeded = true;
+        perExercise.push({
+          exerciseId: exercise.id,
+          exerciseTitle: exercise.title,
+          skipped: true,
+          skipReason: "quota_exceeded",
+        });
+        continue;
+      }
+
       const response = responses.find(r => r.exerciseId === exercise.id) || {};
       const loomTranscript = response.loomUrl ? await fetchLoomTranscript(response.loomUrl) : null;
 
@@ -215,6 +234,10 @@ export default async function handler(req, res) {
       gaps,
       summary,
       exercises: perExercise,
+      // Surface to the recruiter UI that some/all exercises were skipped
+      // because they ran out of monthly quota. When the recruiter opens the
+      // candidate evaluation panel we can show a "Re-evaluar" banner.
+      quotaExceeded,
     };
 
     // 6. Persist back onto the application document
@@ -223,7 +246,7 @@ export default async function handler(req, res) {
       autoEvaluatedAt: new Date().toISOString(),
     });
 
-    return res.status(200).json({ success: true, evaluatedCount: perExercise.length });
+    return res.status(200).json({ success: true, evaluatedCount: perExercise.filter(e => !e.skipped).length, quotaExceeded });
   } catch (err) {
     console.error("autoEvaluate error:", err);
     return res.status(500).json({ error: err.message || "Internal error" });
