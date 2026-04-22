@@ -184,6 +184,106 @@ const defaultJob = {
   schedulingUrl: "",
 };
 
+// Country list used by the phone-input component (+ any future geo UI).
+// Compact on purpose: we prioritise the countries RecruitAI will see first
+// (Spain + LATAM + main European + anglo markets), with a long tail of
+// common emigration/remote destinations so a candidate anywhere can pick
+// theirs. Extend freely — the list is just data.
+// Keyed by ISO-3166 alpha-2; `dial` is the E.164 country code with the +
+// prefix; `flag` is the regional-indicator emoji equivalent.
+const COUNTRIES = [
+  { code: "ES", name: "España",             dial: "+34",  flag: "🇪🇸" },
+  { code: "MX", name: "México",             dial: "+52",  flag: "🇲🇽" },
+  { code: "AR", name: "Argentina",          dial: "+54",  flag: "🇦🇷" },
+  { code: "CO", name: "Colombia",           dial: "+57",  flag: "🇨🇴" },
+  { code: "CL", name: "Chile",              dial: "+56",  flag: "🇨🇱" },
+  { code: "PE", name: "Perú",               dial: "+51",  flag: "🇵🇪" },
+  { code: "EC", name: "Ecuador",            dial: "+593", flag: "🇪🇨" },
+  { code: "VE", name: "Venezuela",          dial: "+58",  flag: "🇻🇪" },
+  { code: "UY", name: "Uruguay",            dial: "+598", flag: "🇺🇾" },
+  { code: "PY", name: "Paraguay",           dial: "+595", flag: "🇵🇾" },
+  { code: "BO", name: "Bolivia",            dial: "+591", flag: "🇧🇴" },
+  { code: "CR", name: "Costa Rica",         dial: "+506", flag: "🇨🇷" },
+  { code: "PA", name: "Panamá",             dial: "+507", flag: "🇵🇦" },
+  { code: "GT", name: "Guatemala",          dial: "+502", flag: "🇬🇹" },
+  { code: "HN", name: "Honduras",           dial: "+504", flag: "🇭🇳" },
+  { code: "SV", name: "El Salvador",        dial: "+503", flag: "🇸🇻" },
+  { code: "NI", name: "Nicaragua",          dial: "+505", flag: "🇳🇮" },
+  { code: "DO", name: "República Dominicana", dial: "+1", flag: "🇩🇴" },
+  { code: "PR", name: "Puerto Rico",        dial: "+1",   flag: "🇵🇷" },
+  { code: "CU", name: "Cuba",               dial: "+53",  flag: "🇨🇺" },
+  { code: "PT", name: "Portugal",           dial: "+351", flag: "🇵🇹" },
+  { code: "FR", name: "Francia",            dial: "+33",  flag: "🇫🇷" },
+  { code: "IT", name: "Italia",             dial: "+39",  flag: "🇮🇹" },
+  { code: "DE", name: "Alemania",           dial: "+49",  flag: "🇩🇪" },
+  { code: "GB", name: "Reino Unido",        dial: "+44",  flag: "🇬🇧" },
+  { code: "IE", name: "Irlanda",            dial: "+353", flag: "🇮🇪" },
+  { code: "NL", name: "Países Bajos",       dial: "+31",  flag: "🇳🇱" },
+  { code: "BE", name: "Bélgica",            dial: "+32",  flag: "🇧🇪" },
+  { code: "CH", name: "Suiza",              dial: "+41",  flag: "🇨🇭" },
+  { code: "AT", name: "Austria",            dial: "+43",  flag: "🇦🇹" },
+  { code: "SE", name: "Suecia",             dial: "+46",  flag: "🇸🇪" },
+  { code: "NO", name: "Noruega",            dial: "+47",  flag: "🇳🇴" },
+  { code: "DK", name: "Dinamarca",          dial: "+45",  flag: "🇩🇰" },
+  { code: "FI", name: "Finlandia",          dial: "+358", flag: "🇫🇮" },
+  { code: "PL", name: "Polonia",            dial: "+48",  flag: "🇵🇱" },
+  { code: "CZ", name: "Chequia",            dial: "+420", flag: "🇨🇿" },
+  { code: "RO", name: "Rumanía",            dial: "+40",  flag: "🇷🇴" },
+  { code: "HU", name: "Hungría",            dial: "+36",  flag: "🇭🇺" },
+  { code: "GR", name: "Grecia",             dial: "+30",  flag: "🇬🇷" },
+  { code: "TR", name: "Turquía",            dial: "+90",  flag: "🇹🇷" },
+  { code: "RU", name: "Rusia",              dial: "+7",   flag: "🇷🇺" },
+  { code: "UA", name: "Ucrania",            dial: "+380", flag: "🇺🇦" },
+  { code: "US", name: "Estados Unidos",     dial: "+1",   flag: "🇺🇸" },
+  { code: "CA", name: "Canadá",             dial: "+1",   flag: "🇨🇦" },
+  { code: "BR", name: "Brasil",             dial: "+55",  flag: "🇧🇷" },
+  { code: "AU", name: "Australia",          dial: "+61",  flag: "🇦🇺" },
+  { code: "NZ", name: "Nueva Zelanda",      dial: "+64",  flag: "🇳🇿" },
+  { code: "JP", name: "Japón",              dial: "+81",  flag: "🇯🇵" },
+  { code: "KR", name: "Corea del Sur",      dial: "+82",  flag: "🇰🇷" },
+  { code: "CN", name: "China",              dial: "+86",  flag: "🇨🇳" },
+  { code: "IN", name: "India",              dial: "+91",  flag: "🇮🇳" },
+  { code: "ID", name: "Indonesia",          dial: "+62",  flag: "🇮🇩" },
+  { code: "TH", name: "Tailandia",          dial: "+66",  flag: "🇹🇭" },
+  { code: "VN", name: "Vietnam",            dial: "+84",  flag: "🇻🇳" },
+  { code: "PH", name: "Filipinas",          dial: "+63",  flag: "🇵🇭" },
+  { code: "SG", name: "Singapur",           dial: "+65",  flag: "🇸🇬" },
+  { code: "AE", name: "Emiratos Árabes Unidos", dial: "+971", flag: "🇦🇪" },
+  { code: "SA", name: "Arabia Saudí",       dial: "+966", flag: "🇸🇦" },
+  { code: "IL", name: "Israel",             dial: "+972", flag: "🇮🇱" },
+  { code: "ZA", name: "Sudáfrica",          dial: "+27",  flag: "🇿🇦" },
+  { code: "MA", name: "Marruecos",          dial: "+212", flag: "🇲🇦" },
+  { code: "EG", name: "Egipto",             dial: "+20",  flag: "🇪🇬" },
+  { code: "NG", name: "Nigeria",            dial: "+234", flag: "🇳🇬" },
+  { code: "KE", name: "Kenia",              dial: "+254", flag: "🇰🇪" },
+];
+
+// Module-level helper: extracts plain text from an uploaded .txt/.docx/.pdf.
+// Shared by the recruiter's setup screen AND the candidate's apply screen
+// (to let candidates upload their exercise response as a document).
+async function extractTextFromFile(file) {
+  const ext = file.name.split(".").pop().toLowerCase();
+  if (ext === "txt") return await file.text();
+  if (ext === "docx") {
+    const mammoth = await import("mammoth");
+    const r = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+    return r.value;
+  }
+  if (ext === "pdf") {
+    const pdfjsLib = await import("pdfjs-dist");
+    pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+    const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+    let t = "";
+    for (let i = 1; i <= pdf.numPages; i++) {
+      const pg = await pdf.getPage(i);
+      const ct = await pg.getTextContent();
+      t += ct.items.map(x => x.str).join(" ") + "\n";
+    }
+    return t;
+  }
+  throw new Error("Formato no soportado. Usa .txt, .docx o .pdf.");
+}
+
 // ─── Conversational process-creation flow (same DNA as OnboardingScreen) ─────
 function RecruiterSetupScreen({ onPublish, onPublishAndShare, onBack }) {
   const [step, setStep] = useState(0);
@@ -210,28 +310,8 @@ function RecruiterSetupScreen({ onPublish, onPublishAndShare, onBack }) {
   const [critParseTarget, setCritParseTarget] = useState(null); // { exerciseId, fileName, status, criteria?, error? }
   const critFileRefs = useRef({});
 
-  const extractTextFromFile = async (file) => {
-    const ext = file.name.split(".").pop().toLowerCase();
-    if (ext === "txt") return await file.text();
-    if (ext === "docx") {
-      const mammoth = await import("mammoth");
-      const r = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
-      return r.value;
-    }
-    if (ext === "pdf") {
-      const pdfjsLib = await import("pdfjs-dist");
-      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-      const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
-      let t = "";
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const pg = await pdf.getPage(i);
-        const ct = await pg.getTextContent();
-        t += ct.items.map(x => x.str).join(" ") + "\n";
-      }
-      return t;
-    }
-    throw new Error("Formato no soportado. Usa .txt, .docx o .pdf.");
-  };
+  // extractTextFromFile is now a module-level helper (see top of file) so it
+  // can be reused by the candidate's apply screen for uploading their answer.
 
   const handleExerciseFile = async (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -1233,9 +1313,53 @@ function JobPreviewScreen({ job, onApply, onBack }) {
   );
 }
 
+// Country-aware phone input. The user picks their country and the dial
+// prefix fills itself automatically. We store both the assembled phone
+// string (with prefix, used everywhere downstream — emails, Slack, CSVs)
+// and the ISO country code (for geo analytics and so we can re-hydrate
+// the selector on edit). Local number is free-form digits/spaces, we
+// don't over-validate to stay country-agnostic.
+function CountryPhoneInput({ country, localNumber, onChange }) {
+  const current = COUNTRIES.find(c => c.code === country) || COUNTRIES[0];
+  const update = (nextCountry, nextLocal) => {
+    const c = COUNTRIES.find(x => x.code === nextCountry) || current;
+    const local = (nextLocal ?? localNumber ?? "").trim();
+    const phone = local ? `${c.dial} ${local}` : "";
+    onChange({ country: c.code, localNumber: local, phone });
+  };
+  return (
+    <div className="grid grid-cols-[minmax(150px,1fr)_auto_2fr] gap-2 items-stretch">
+      <select
+        className={inp + " pr-6"}
+        value={current.code}
+        onChange={(e) => update(e.target.value, localNumber)}
+      >
+        {COUNTRIES.map(c => (
+          <option key={c.code} value={c.code}>{c.flag} {c.name}</option>
+        ))}
+      </select>
+      <div className="flex items-center px-3 bg-gray-50 border border-gray-200 rounded-xl text-gray-600 text-sm font-medium select-none">
+        {current.dial}
+      </div>
+      <input
+        className={inp}
+        value={localNumber || ""}
+        onChange={(e) => update(current.code, e.target.value)}
+        placeholder="600 000 000"
+        inputMode="tel"
+      />
+    </div>
+  );
+}
+
 function CandidateApplyScreen({ job, onNext }) {
-  const [form, setForm] = useState({ name: "", email: "", phone: "", linkedin: "", presentation: "" });
+  const [form, setForm] = useState({
+    name: "", email: "", phone: "", country: "ES", localNumber: "",
+    linkedin: "", presentation: "",
+  });
   const up = (f, v) => setForm((d) => ({ ...d, [f]: v }));
+  const onPhoneChange = ({ country, localNumber, phone }) =>
+    setForm(d => ({ ...d, country, localNumber, phone }));
   const valid = form.name && form.email && form.presentation.trim().length > 20;
   return (
     <div className="min-h-screen bg-white flex flex-col">
@@ -1256,15 +1380,16 @@ function CandidateApplyScreen({ job, onNext }) {
             </p>
 
             <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className={lbl}>Nombre completo *</label>
-                  <input className={inp} value={form.name} onChange={(e) => up("name", e.target.value)} placeholder="Nombre y apellidos" />
-                </div>
-                <div>
-                  <label className={lbl}>Teléfono</label>
-                  <input className={inp} value={form.phone} onChange={(e) => up("phone", e.target.value)} placeholder="+34 600 000 000" />
-                </div>
+              <div>
+                <label className={lbl}>Nombre completo *</label>
+                <input className={inp} value={form.name} onChange={(e) => up("name", e.target.value)} placeholder="Nombre y apellidos" />
+              </div>
+              <div>
+                <label className={lbl}>¿Desde dónde aplicas? · Teléfono</label>
+                <CountryPhoneInput country={form.country} localNumber={form.localNumber} onChange={onPhoneChange} />
+                <p className="text-xs text-gray-400 mt-1.5">
+                  Elige tu país y el prefijo se completa solo.
+                </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
@@ -1307,6 +1432,41 @@ function ExercisesScreen({ job, candidate, onSubmit, submitting }) {
   const upR = (f, v) => setResps(rs => rs.map(r => r.exerciseId === ex.id ? { ...r, [f]: v } : r));
   const canNext = resp?.response?.trim().length > 30 && resp?.loomUrl?.trim().length > 5;
   const isLast = idx === job.exercises.length - 1;
+
+  // Per-exercise upload state: {status: "parsing"|"error", fileName, error}.
+  // Keyed by exerciseId so switching exercises doesn't lose feedback.
+  const [uploadState, setUploadState] = useState({});
+  const fileRefs = useRef({});
+  const uStat = uploadState[ex.id] || null;
+
+  const handleResponseUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadState(s => ({ ...s, [ex.id]: { status: "parsing", fileName: file.name } }));
+    try {
+      const text = await extractTextFromFile(file);
+      if (!text.trim() || text.trim().length < 20) throw new Error("El documento parece vacío.");
+      const res = await fetch("/api/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "response", text }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) throw new Error(json.error || "No se pudo procesar el documento.");
+      // Append the parsed markdown to whatever the candidate had typed so we
+      // never silently clobber existing work. If the box was empty, this just
+      // becomes the full answer.
+      const existing = (resp?.response || "").trim();
+      const next = existing ? `${existing}\n\n${json.response}` : json.response;
+      upR("response", next);
+      setUploadState(s => ({ ...s, [ex.id]: { status: "done", fileName: file.name } }));
+      setTimeout(() => setUploadState(s => ({ ...s, [ex.id]: null })), 3500);
+    } catch (err) {
+      setUploadState(s => ({ ...s, [ex.id]: { status: "error", fileName: file.name, error: err.message } }));
+    }
+    // Reset input so the same file can be re-selected if parsing fails.
+    if (fileRefs.current[ex.id]) fileRefs.current[ex.id].value = "";
+  };
   return (
     <div className="min-h-screen bg-white flex flex-col">
       <CandidateTopBar counterText="Paso 2 de 2" />
@@ -1336,9 +1496,36 @@ function ExercisesScreen({ job, candidate, onSubmit, submitting }) {
 
             <div className="space-y-5">
               <div>
-                <label className={lbl}>Tu respuesta escrita *</label>
-                <textarea className={inp} rows={10} value={resp?.response || ""} onChange={e => upR("response", e.target.value)}
-                  placeholder="Desarrolla tu propuesta aquí. Sé específico, cita ejemplos y muestra tu método..." />
+                <div className="flex items-center justify-between mb-1">
+                  <label className={lbl + " mb-0"}>Tu respuesta escrita *</label>
+                  <button
+                    type="button"
+                    onClick={() => fileRefs.current[ex.id]?.click()}
+                    disabled={uStat?.status === "parsing"}
+                    className="text-xs font-semibold text-gray-700 hover:text-gray-900 bg-gray-50 hover:bg-gray-100 border border-gray-200 rounded-lg px-2.5 py-1 transition-colors disabled:opacity-50"
+                    title="Sube un .pdf, .docx o .txt y lo añadimos al editor con formato"
+                  >
+                    {uStat?.status === "parsing" ? "⏳ Procesando…" : "📎 Subir mi respuesta"}
+                  </button>
+                  <input
+                    ref={el => { fileRefs.current[ex.id] = el; }}
+                    type="file" accept=".txt,.pdf,.docx" className="hidden"
+                    onChange={handleResponseUpload}
+                  />
+                </div>
+                <MarkdownEditor
+                  value={resp?.response || ""}
+                  onChange={(v) => upR("response", v)}
+                  rows={12}
+                  placeholder="Desarrolla tu propuesta aquí. Usa negritas, listas y subtítulos para estructurarla. Puedes también subir tu respuesta como PDF/DOCX."
+                  allowHeadings
+                />
+                {uStat?.status === "done" && (
+                  <p className="text-xs text-green-700 mt-1.5">✓ Añadido desde <strong>{uStat.fileName}</strong></p>
+                )}
+                {uStat?.status === "error" && (
+                  <p className="text-xs text-red-600 mt-1.5">No se pudo procesar <strong>{uStat.fileName}</strong>: {uStat.error}</p>
+                )}
                 <p className="text-xs text-gray-400 mt-1.5">{(resp?.response || "").split(/\s+/).filter(Boolean).length} palabras</p>
               </div>
               <div>
@@ -1751,7 +1938,8 @@ function CandidatePublicScreen({ processId }) {
     try {
       const appRef = await addDoc(collection(db, "publicProcesses", processId, "applications"), {
         name: candidate?.name || "", email: candidate?.email || "", phone: candidate?.phone || "",
-        linkedin: candidate?.linkedin || "", presentation: candidate?.presentation || "",
+        country: candidate?.country || "", linkedin: candidate?.linkedin || "",
+        presentation: candidate?.presentation || "",
         responses, submittedAt: new Date().toISOString(),
         estado: "Pendiente", progreso: "Ingreso", entrevistador: "", notas: "", phase: "applied",
       });
@@ -3152,10 +3340,25 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
     <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
-          <div>
+        <div className="px-5 py-4 border-b border-gray-100 flex items-start justify-between shrink-0 gap-3">
+          <div className="flex-1 min-w-0">
             <h2 className="font-bold text-gray-900">{candidate.name}</h2>
-            <p className="text-xs text-gray-400">{candidate.email} · {position}</p>
+            <p className="text-xs text-gray-400">{candidate.email || "—"} · {position}</p>
+            {(candidate.linkedin || candidate.phone || candidate.referredBy) && (
+              <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 text-[11px]">
+                {candidate.linkedin && (
+                  <a
+                    href={/^https?:\/\//.test(candidate.linkedin) ? candidate.linkedin : `https://${candidate.linkedin}`}
+                    target="_blank" rel="noreferrer"
+                    className="text-gray-700 hover:text-gray-900 hover:underline inline-flex items-center gap-1"
+                  >
+                    💼 LinkedIn
+                  </a>
+                )}
+                {candidate.phone && <span className="text-gray-500">📞 {candidate.phone}</span>}
+                {candidate.referredBy && <span className="text-gray-500">🤝 Recomendado por <strong className="text-gray-700">{candidate.referredBy}</strong></span>}
+              </div>
+            )}
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
         </div>
@@ -3182,7 +3385,12 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                     return (
                       <div key={i} className="border border-gray-100 rounded-xl p-4 bg-gray-50">
                         <p className="font-semibold text-gray-800 text-sm mb-2">{ex.title || `Ejercicio ${i + 1}`}</p>
-                        <p className="text-xs text-gray-500 mb-3 whitespace-pre-wrap line-clamp-3">{r.response}</p>
+                        {/* Candidate answers may now contain Markdown (editor + doc upload).
+                            Render them properly. Scroll after ~16rem so huge answers don't push
+                            the evaluation button off-screen. */}
+                        <div className="max-h-64 overflow-y-auto pr-1 mb-3 text-gray-700">
+                          <MarkdownContent>{r.response || "_(sin respuesta)_"}</MarkdownContent>
+                        </div>
                         {r.loomUrl && <a href={r.loomUrl} target="_blank" rel="noreferrer" className="text-xs text-gray-900 hover:underline flex items-center gap-1">🎥 Ver vídeo de defensa en Loom →</a>}
                       </div>
                     );
@@ -3469,6 +3677,8 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user,
   const [showAddForm, setShowAddForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
+  const [newLinkedin, setNewLinkedin] = useState("");
+  const [newReferredBy, setNewReferredBy] = useState("");
   // Restore the public link on mount if the process was already published.
   // Before: publicLink was plain null on mount, so coming back to the detail
   // screen after publishing would hide the link + 'Publicación' button until
@@ -3498,7 +3708,28 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user,
     setCandidates(u); onUpdate(process.id, u);
   };
   const updateCandidateFull = (updated) => { const u = candidates.map(c => c.id === updated.id ? updated : c); setCandidates(u); onUpdate(process.id, u); if (evalCandidate?.id === updated.id) setEvalCandidate(updated); };
-  const addCandidate = () => { if (!newName.trim()) return; const nc = { id: `c_${Date.now()}`, name: newName.trim(), email: newEmail.trim(), phase: "applied", estado: "Pendiente", progreso: "Ingreso", entrevistador: user?.displayName || "", notas: "" }; const u = [...candidates, nc]; setCandidates(u); onUpdate(process.id, u); setNewName(""); setNewEmail(""); setShowAddForm(false); };
+  const resetAddForm = () => { setNewName(""); setNewEmail(""); setNewLinkedin(""); setNewReferredBy(""); };
+  const addCandidate = () => {
+    if (!newName.trim()) return;
+    const nc = {
+      id: `c_${Date.now()}`,
+      name: newName.trim(),
+      email: newEmail.trim(),
+      linkedin: newLinkedin.trim(),
+      referredBy: newReferredBy.trim(),
+      phase: "applied",
+      estado: "Pendiente",
+      progreso: "Ingreso",
+      entrevistador: user?.displayName || "",
+      notas: "",
+      // Stamp the source so the panel can show "añadido manualmente" vs applied.
+      addedManually: true,
+      addedAt: new Date().toISOString(),
+    };
+    const u = [...candidates, nc];
+    setCandidates(u); onUpdate(process.id, u);
+    resetAddForm(); setShowAddForm(false);
+  };
   const [removeTarget, setRemoveTarget] = useState(null);
   const requestRemoveCandidate = (c) => setRemoveTarget(c);
   const confirmRemoveCandidate = () => {
@@ -4035,10 +4266,31 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user,
             </div>
           </div>
           {showAddForm && (
-            <div className="px-5 py-4 bg-gray-50 border-b border-gray-100 flex flex-wrap items-end gap-3">
-              <div><label className={lbl}>Nombre *</label><input className={inp} style={{ width: "180px" }} value={newName} onChange={e => setNewName(e.target.value)} autoFocus onKeyDown={e => e.key === "Enter" && addCandidate()} /></div>
-              <div><label className={lbl}>Email</label><input className={inp} style={{ width: "220px" }} value={newEmail} onChange={e => setNewEmail(e.target.value)} type="email" /></div>
-              <div className="flex gap-2"><button onClick={addCandidate} className="px-4 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-gray-800">Añadir</button><button onClick={() => { setShowAddForm(false); setNewName(""); setNewEmail(""); }} className="px-4 py-2.5 border border-gray-200 bg-white text-gray-500 rounded-lg text-sm">Cancelar</button></div>
+            <div className="px-5 py-4 bg-gray-50 border-b border-gray-100 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className={lbl}>Nombre *</label>
+                  <input className={inp} value={newName} onChange={e => setNewName(e.target.value)} autoFocus onKeyDown={e => e.key === "Enter" && addCandidate()} placeholder="Nombre y apellidos" />
+                </div>
+                <div>
+                  <label className={lbl}>Email</label>
+                  <input className={inp} value={newEmail} onChange={e => setNewEmail(e.target.value)} type="email" placeholder="email@dominio.com" />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className={lbl}>LinkedIn</label>
+                  <input className={inp} value={newLinkedin} onChange={e => setNewLinkedin(e.target.value)} placeholder="linkedin.com/in/..." />
+                </div>
+                <div>
+                  <label className={lbl}>Viene recomendado de</label>
+                  <input className={inp} value={newReferredBy} onChange={e => setNewReferredBy(e.target.value)} placeholder="Nombre de quién lo recomienda (opcional)" />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={addCandidate} className="px-4 py-2.5 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-gray-800">Añadir</button>
+                <button onClick={() => { setShowAddForm(false); resetAddForm(); }} className="px-4 py-2.5 border border-gray-200 bg-white text-gray-500 rounded-lg text-sm">Cancelar</button>
+              </div>
             </div>
           )}
           {candidates.length === 0 ? (

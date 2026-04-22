@@ -1,15 +1,19 @@
 // api/parse.js
 //
-// Consolidated document-parsing router. One serverless function for the
-// three document types the recruiter can drop on us:
+// Consolidated document-parsing router. One serverless function for four
+// document types:
 //
-//   action: "job"      → extract full job spec (company + position + exercises)
-//   action: "exercise" → extract a single exercise (title + description + criteria)
-//   action: "criteria" → extract only an evaluation rubric
+//   action: "job"       → extract full job spec (company + position + exercises)
+//   action: "exercise"  → extract a single exercise (title + description + criteria)
+//   action: "criteria"  → extract only an evaluation rubric
+//   action: "response"  → reformat a candidate's own exercise answer to Markdown,
+//                         preserving headings/lists/bold/italic/structure without
+//                         changing the content
 //
 // Body: { action, text }
 // Each branch uses Claude to turn the raw document text into structured JSON
-// matching the shapes consumed by RecruiterSetupScreen in src/App.jsx.
+// matching the shapes consumed by RecruiterSetupScreen and the candidate's
+// public apply screen in src/App.jsx.
 //
 // Required Vercel env var: ANTHROPIC_API_KEY
 
@@ -187,6 +191,39 @@ Si el documento NO contiene ningún ejercicio (es una oferta de empleo, CV, manu
 }`;
 }
 
+function buildResponsePrompt(text) {
+  return `Eres un asistente que reformatea las respuestas a ejercicios de procesos de selección subidas en castellano por el candidato. No eres un editor: tu misión es PRESERVAR EL CONTENIDO y solo darle formato Markdown limpio.
+
+DOCUMENTO PROPORCIONADO POR EL CANDIDATO:
+"""
+${text.slice(0, 15000)}
+"""
+
+TAREA: Devuelve el contenido de este documento en formato Markdown estructurado, respetando el significado literal. NO añadas contenido que no esté, NO resumas, NO omitas, NO corrijas las ideas del candidato.
+
+REGLAS:
+
+1. **Respeta el texto original.** Si el candidato escribe "pinzeladas" o da una opinión, la dejas tal cual. No es tu tarea corregirle faltas de ortografía ni reestructurar su argumento — solo dar formato.
+
+2. **Detecta y aplica estructura:**
+   - Títulos de sección (por jerarquía visual en el documento) → \`## Título\` o \`### Subtítulo\`
+   - Listas con guiones, asteriscos o números → \`- bullet\` o \`1. item\`
+   - Negritas del documento original (ej. del .docx) → \`**texto**\`
+   - Cursivas del documento original → \`_texto_\`
+   - Párrafos separados por línea en blanco
+   - Citas o bloques destacados → \`> cita\`
+
+3. **Conserva emojis, cifras, fechas y nombres propios** tal cual aparecen.
+
+4. **No generes preguntas ni meta-comentarios** tipo "El candidato dice…" o "Esta respuesta…". Solo devuelve el contenido formateado.
+
+5. **Si el documento es solo texto plano sin estructura discernible**, devuélvelo con párrafos separados por líneas en blanco y sin forzar listas o títulos inventados.
+
+6. **Formato de salida:** solo el Markdown, sin envolverlo en triple backticks, sin prefacios.
+
+Devuelve ÚNICAMENTE el Markdown de la respuesta del candidato.`;
+}
+
 function buildCriteriaPrompt(text) {
   return `Eres un asistente que extrae criterios de evaluación de documentos de rúbricas en castellano.
 
@@ -285,6 +322,23 @@ async function parseExercise(text, res) {
   });
 }
 
+async function parseResponse(text, res) {
+  // For pure reformatting we skip the JSON wrapping step — the model returns
+  // raw Markdown. Keep the roundtrip simple and tolerant: strip stray code
+  // fences the model might add even with the instructions saying otherwise.
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-6",
+    max_tokens: 4000,
+    messages: [{ role: "user", content: buildResponsePrompt(text) }],
+  });
+  let md = (message.content?.[0]?.text || "").trim();
+  if (md.startsWith("```")) {
+    md = md.replace(/^```(?:markdown|md)?\s*/i, "").replace(/```\s*$/, "").trim();
+  }
+  if (!md) return res.status(200).json({ error: "No se pudo extraer contenido del documento." });
+  return res.status(200).json({ response: md });
+}
+
 async function parseCriteria(text, res) {
   const parsed = await callClaude(buildCriteriaPrompt(text), 2000);
   if (parsed.error) return res.status(200).json({ error: parsed.error });
@@ -321,7 +375,10 @@ export default async function handler(req, res) {
     if (action === "criteria") {
       return await parseCriteria(text, res);
     }
-    return res.status(400).json({ error: `Unknown action: ${action}. Use "job" | "exercise" | "criteria".` });
+    if (action === "response") {
+      return await parseResponse(text, res);
+    }
+    return res.status(400).json({ error: `Unknown action: ${action}. Use "job" | "exercise" | "criteria" | "response".` });
   } catch (err) {
     console.error(`parse/${action} error:`, err);
     return res.status(500).json({ error: err.message || "Error interno del servidor" });
