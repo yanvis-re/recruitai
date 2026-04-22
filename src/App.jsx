@@ -180,6 +180,60 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
   const [salaryApplied, setSalaryApplied] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
 
+  // Document-parsing state (for the "subir documento" start option)
+  const [parseMode, setParseMode] = useState("choose"); // "choose" | "manual" | "upload" | "parsing" | "parsed"
+  const [parseError, setParseError] = useState("");
+  const [parsedFileName, setParsedFileName] = useState("");
+  const parseFileRef = useRef(null);
+
+  const handleParseFile = async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    setParseError(""); setParseMode("parsing"); setParsedFileName(file.name);
+    try {
+      const ext = file.name.split(".").pop().toLowerCase();
+      let text = "";
+      if (ext === "txt") text = await file.text();
+      else if (ext === "docx") {
+        const mammoth = await import("mammoth");
+        const r = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+        text = r.value;
+      } else if (ext === "pdf") {
+        const pdfjsLib = await import("pdfjs-dist");
+        pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+        const pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const pg = await pdf.getPage(i);
+          const ct = await pg.getTextContent();
+          text += ct.items.map(x => x.str).join(" ") + "\n";
+        }
+      } else {
+        throw new Error("Formato no soportado. Usa .txt, .docx o .pdf.");
+      }
+      if (!text.trim() || text.trim().length < 50) {
+        throw new Error("El documento parece vacío o no contiene texto legible.");
+      }
+      const res = await fetch("/api/parseJobDocument", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) throw new Error(json.error || "Error desconocido al analizar.");
+      // Merge AI output into state, keeping defaults for any field the AI left empty.
+      const ai = json.job || {};
+      setData(d => ({
+        ...d,
+        company: { ...d.company, ...(ai.company || {}) },
+        position: { ...d.position, ...(ai.position || {}) },
+        exercises: Array.isArray(ai.exercises) && ai.exercises.length > 0 ? ai.exercises : d.exercises,
+      }));
+      setParseMode("parsed");
+    } catch (err) {
+      setParseError(err.message || "No se pudo analizar el documento.");
+      setParseMode("upload");
+    }
+  };
+
   // Has the user touched anything beyond the defaults? If yes, confirm on exit.
   const hasProgress = () => {
     if (step > 0) return true;
@@ -220,7 +274,7 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
 
   const canAdvance = (() => {
     switch (current.id) {
-      case "intro": return true;
+      case "intro": return parseMode === "manual" || parseMode === "parsed";
       case "company": return !!data.company.name.trim();
       case "position_type":
         return !!data.position.positionType
@@ -260,19 +314,69 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
     switch (current.id) {
       case "intro":
         return (
-          <div className="text-center py-6 space-y-5">
-            <div className="text-6xl">📝</div>
-            <div>
+          <div className="space-y-5">
+            <div className="text-center">
+              <div className="text-6xl mb-4">📝</div>
               <h2 className="text-3xl font-black text-gray-900 tracking-tight">Vamos a crear un nuevo proceso</h2>
               <p className="text-gray-500 mt-3 leading-relaxed">
-                Te guío paso a paso. En ~5 minutos tendrás tu oferta lista para publicar y recibir candidatos.
+                Puedes empezar desde cero (te guío paso a paso, ~5 min) o subir un documento existente y la IA te pre-rellena los campos.
               </p>
             </div>
-            <div className="pt-2 grid grid-cols-3 gap-2 text-xs text-gray-400">
-              <div><span className="font-bold text-gray-700 block">🏢</span>Empresa</div>
-              <div><span className="font-bold text-gray-700 block">👤</span>Posición</div>
-              <div><span className="font-bold text-gray-700 block">🎯</span>Ejercicios</div>
-            </div>
+
+            {parseMode === "parsed" && (
+              <div className="bg-green-50 border border-green-200 rounded-2xl p-4 flex items-start gap-3">
+                <div className="text-2xl shrink-0">✅</div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-green-800">Documento analizado</p>
+                  <p className="text-xs text-green-700 mt-0.5">
+                    {parsedFileName} · revisa los datos pre-rellenados en los siguientes pasos y ajusta lo que haga falta.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {parseMode === "parsing" && (
+              <div className="bg-gray-50 border border-gray-100 rounded-2xl p-6 flex items-center justify-center gap-3">
+                <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+                <span className="text-sm text-gray-600">Analizando documento con IA...</span>
+              </div>
+            )}
+
+            {parseMode === "choose" && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <button type="button" onClick={() => setParseMode("manual")}
+                  className="rounded-2xl border-2 border-gray-200 bg-white p-5 text-left hover:border-gray-400 transition-all">
+                  <div className="text-3xl mb-2">✏️</div>
+                  <p className="font-bold text-gray-900">Crear desde cero</p>
+                  <p className="text-xs text-gray-500 mt-1 leading-snug">Te hago preguntas paso a paso. Control total sobre cada campo.</p>
+                </button>
+                <button type="button" onClick={() => setParseMode("upload")}
+                  className="rounded-2xl border-2 border-gray-200 bg-white p-5 text-left hover:border-gray-400 transition-all">
+                  <div className="text-3xl mb-2">📄</div>
+                  <p className="font-bold text-gray-900">Subir documento <span className="text-xs bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded ml-1 align-middle">Nuevo</span></p>
+                  <p className="text-xs text-gray-500 mt-1 leading-snug">Pega o sube un PDF/DOCX con la oferta. La IA rellena los campos.</p>
+                </button>
+              </div>
+            )}
+
+            {parseMode === "upload" && (
+              <div className="space-y-3">
+                <div onClick={() => parseFileRef.current?.click()}
+                  className="border-2 border-dashed border-gray-300 rounded-2xl p-8 text-center cursor-pointer hover:border-gray-900 hover:bg-gray-50 transition-all">
+                  <p className="text-3xl mb-2">📁</p>
+                  <p className="text-sm font-medium text-gray-700">Haz clic para seleccionar archivo</p>
+                  <p className="text-xs text-gray-400 mt-1">Formatos: .pdf · .docx · .txt</p>
+                </div>
+                <input ref={parseFileRef} type="file" accept=".pdf,.docx,.txt" onChange={handleParseFile} className="hidden" />
+                {parseError && (
+                  <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2.5 text-sm text-red-700">{parseError}</div>
+                )}
+                <button type="button" onClick={() => { setParseMode("choose"); setParseError(""); }}
+                  className="w-full text-xs text-gray-500 hover:text-gray-900 py-2">
+                  ← Volver
+                </button>
+              </div>
+            )}
           </div>
         );
 
@@ -2865,6 +2969,70 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
 
   const copyLink = async () => { if (!publicLink) return; await navigator.clipboard.writeText(publicLink); setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); };
 
+  // ── Publish post generator (LinkedIn + Instagram Story + internal email) ──
+  const [showPublishModal, setShowPublishModal] = useState(false);
+  const [publishPosts, setPublishPosts] = useState(null);
+  const [generatingPosts, setGeneratingPosts] = useState(false);
+  const [publishError, setPublishError] = useState("");
+  const [activePostTab, setActivePostTab] = useState("linkedin");
+  const [copiedPost, setCopiedPost] = useState(false);
+
+  const generatePublishPosts = async () => {
+    setGeneratingPosts(true); setPublishError(""); setPublishPosts(null);
+    try {
+      const res = await fetch("/api/generatePublishPost", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          process,
+          brandManual: agencySettings?.brandManual || "",
+          publicUrl: publicLink || `${window.location.origin}/#apply/${process.id}`,
+          recruiterName: user?.displayName || "",
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok || json.error) throw new Error(json.error || "Error al generar.");
+      setPublishPosts(json.posts);
+    } catch (e) {
+      setPublishError(e.message || "No se pudo generar la publicación.");
+    }
+    setGeneratingPosts(false);
+  };
+
+  const openPublishModal = () => {
+    setShowPublishModal(true);
+    setActivePostTab("linkedin");
+    if (!publishPosts && !generatingPosts) generatePublishPosts();
+  };
+
+  const copyCurrentPost = async () => {
+    if (!publishPosts) return;
+    let text = "";
+    if (activePostTab === "linkedin") text = publishPosts.linkedin?.text || "";
+    else if (activePostTab === "instagram_story") text = publishPosts.instagram_story?.text || "";
+    else if (activePostTab === "email_internal") {
+      text = `Asunto: ${publishPosts.email_internal?.subject || ""}\n\n${publishPosts.email_internal?.body || ""}`;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedPost(true);
+      setTimeout(() => setCopiedPost(false), 2000);
+    } catch { /* clipboard blocked, ignore */ }
+  };
+
+  const updateCurrentPost = (newText) => {
+    setPublishPosts(p => {
+      if (!p) return p;
+      const updated = { ...p };
+      if (activePostTab === "linkedin") updated.linkedin = { ...updated.linkedin, text: newText };
+      else if (activePostTab === "instagram_story") updated.instagram_story = { ...updated.instagram_story, text: newText };
+      return updated;
+    });
+  };
+  const updateEmailField = (field, value) => {
+    setPublishPosts(p => ({ ...p, email_internal: { ...p.email_internal, [field]: value } }));
+  };
+
   const importApplications = async () => {
     setImporting(true);
     try {
@@ -2946,6 +3114,107 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
   return (
     <div className="min-h-screen bg-gray-50">
       {evalCandidate && <CandidateEvaluationPanel candidate={evalCandidate} process={process} agencySettings={agencySettings} onUpdateCandidate={updateCandidateFull} onClose={() => setEvalCandidate(null)} />}
+      {showPublishModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setShowPublishModal(false)}>
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-5 border-b border-gray-100 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-bold text-gray-900 text-lg">✨ Publicación para compartir</h2>
+                <p className="text-xs text-gray-500 mt-0.5">Copy generado con la voz de tu marca, listo para copiar y publicar.</p>
+              </div>
+              <button onClick={() => setShowPublishModal(false)} className="text-gray-400 hover:text-gray-900 text-2xl leading-none shrink-0">×</button>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex border-b border-gray-100 shrink-0 overflow-x-auto">
+              {[
+                ["linkedin", "💼 LinkedIn"],
+                ["instagram_story", "📸 Instagram Story"],
+                ["email_internal", "✉️ Email interno"],
+              ].map(([id, label]) => (
+                <button key={id} onClick={() => setActivePostTab(id)}
+                  className={`flex-1 py-3 text-sm font-semibold transition-colors whitespace-nowrap min-w-max px-4 ${activePostTab === id ? "border-b-2 border-gray-900 text-gray-900" : "text-gray-400 hover:text-gray-900"}`}>
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              {generatingPosts && (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <div className="w-6 h-6 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+                  <p className="text-sm text-gray-500">Redactando con IA... ~20 segundos</p>
+                </div>
+              )}
+              {publishError && !generatingPosts && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700 mb-3">{publishError}</div>
+              )}
+              {publishPosts && !generatingPosts && (
+                <>
+                  {activePostTab === "linkedin" && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className={lbl}>Texto del post</label>
+                        <span className="text-xs text-gray-400">{(publishPosts.linkedin?.text || "").length} caracteres</span>
+                      </div>
+                      <textarea className={inp + " font-sans"} rows={16}
+                        value={publishPosts.linkedin?.text || ""}
+                        onChange={e => updateCurrentPost(e.target.value)} />
+                      <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+                        💡 <strong>Tip:</strong> reemplaza el placeholder <code className="text-[11px] bg-gray-100 px-1 rounded">@{process.company?.name}</code> por la mención real a la página de empresa en LinkedIn antes de publicar.
+                      </p>
+                    </div>
+                  )}
+                  {activePostTab === "instagram_story" && (
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <label className={lbl}>Texto del story</label>
+                        <span className="text-xs text-gray-400">{(publishPosts.instagram_story?.text || "").length} caracteres</span>
+                      </div>
+                      <textarea className={inp + " font-sans"} rows={5}
+                        value={publishPosts.instagram_story?.text || ""}
+                        onChange={e => updateCurrentPost(e.target.value)} />
+                      <p className="text-xs text-gray-500 mt-2 leading-relaxed">
+                        💡 <strong>Tip:</strong> Instagram no permite enlaces clicables en stories salvo que uses sticker de enlace. Recuerda añadir el sticker con el link público.
+                      </p>
+                    </div>
+                  )}
+                  {activePostTab === "email_internal" && (
+                    <div className="space-y-4">
+                      <div>
+                        <label className={lbl}>Asunto</label>
+                        <input className={inp} type="text"
+                          value={publishPosts.email_internal?.subject || ""}
+                          onChange={e => updateEmailField("subject", e.target.value)} />
+                      </div>
+                      <div>
+                        <label className={lbl}>Cuerpo del email</label>
+                        <textarea className={inp + " font-sans"} rows={12}
+                          value={publishPosts.email_internal?.body || ""}
+                          onChange={e => updateEmailField("body", e.target.value)} />
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+
+            {publishPosts && !generatingPosts && (
+              <div className="px-6 py-4 border-t border-gray-100 flex flex-wrap gap-2 shrink-0">
+                <button onClick={generatePublishPosts}
+                  className="py-2.5 px-4 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50">
+                  🔄 Regenerar todo
+                </button>
+                <button onClick={copyCurrentPost}
+                  className="flex-1 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
+                  {copiedPost ? "✓ Copiado al portapapeles" : "📋 Copiar este post"}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {showMissingConfigModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-xl max-w-md w-full">
@@ -3071,6 +3340,17 @@ function ProcessDetailScreen({ process, onBack, onUpdate, user, onStartDemo, age
             </div>
           </div>
           {publicLink && (<div className="mt-3 flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2"><span className="text-xs text-gray-500 font-mono flex-1 truncate">{publicLink}</span><button onClick={copyLink} className={`text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0 transition-colors ${linkCopied ? "bg-green-100 text-green-700" : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-100"}`}>{linkCopied ? "✓ Copiado" : "Copiar"}</button></div>)}
+          {publicLink && (
+            <div className="mt-3 flex items-center justify-between gap-3 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2.5">
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-bold text-indigo-900">✨ ¿Lo compartes en redes?</p>
+                <p className="text-[11px] text-indigo-700 mt-0.5 leading-snug">Genero posts listos para LinkedIn, Instagram Story y email interno con el tono de tu marca.</p>
+              </div>
+              <button onClick={openPublishModal} className="shrink-0 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-lg hover:bg-gray-800">
+                Generar publicación →
+              </button>
+            </div>
+          )}
           {importCount > 0 && <p className="text-xs text-green-600 font-semibold mt-2">✅ {importCount} nueva{importCount > 1 ? "s" : ""} candidatura{importCount > 1 ? "s" : ""} importada{importCount > 1 ? "s" : ""}</p>}
           {importCount === -1 && <p className="text-xs text-gray-400 mt-2">No hay candidaturas nuevas.</p>}
         </div>
