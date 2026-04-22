@@ -20,7 +20,7 @@ async function requireAdmin(req, res) {
   if (!token) { res.status(401).json({ error: "Missing token" }); return null; }
   try {
     const decoded = await admin.auth().verifyIdToken(token);
-    if (decoded.email !== ADMIN_EMAIL) { res.status(403).json({ error: "Forbidden" }); return null; }
+    if ((decoded.email || "").toLowerCase().trim() !== ADMIN_EMAIL.toLowerCase().trim()) { res.status(403).json({ error: "Forbidden" }); return null; }
     return decoded;
   } catch { res.status(401).json({ error: "Invalid token" }); return null; }
 }

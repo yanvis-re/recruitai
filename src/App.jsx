@@ -12,7 +12,10 @@ import {
 // account is a matter of updating VITE_ADMIN_EMAIL in Vercel + redeploy, no
 // code edit needed. Keep the backend ADMIN_EMAIL env var in sync (they
 // control different layers: frontend gate UI vs backend endpoint auth).
-const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || "yanvis@gmail.com";
+// Normalized to lowercase + trimmed so weird cases (Google returning 'Yanvis
+// @Gmail.com', trailing spaces) don't break the admin comparison.
+const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "yanvis@gmail.com").toLowerCase().trim();
+const isAdminEmail = (email) => (email || "").toLowerCase().trim() === ADMIN_EMAIL;
 
 // Spanish-friendly translations for the most common Firebase Auth error codes.
 function translateAuthError(code) {
@@ -3465,7 +3468,14 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user,
   const [showAddForm, setShowAddForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
-  const [publicLink, setPublicLink] = useState(null);
+  // Restore the public link on mount if the process was already published.
+  // Before: publicLink was plain null on mount, so coming back to the detail
+  // screen after publishing would hide the link + 'Publicación' button until
+  // the user regenerated. The link is deterministic from the process id, and
+  // publishedAt tells us whether the public doc exists in Firestore.
+  const [publicLink, setPublicLink] = useState(() =>
+    process.publishedAt ? `${window.location.origin}/#apply/${process.id}` : null
+  );
   const [linkCopied, setLinkCopied] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -3546,8 +3556,11 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user,
   const copyLink = async () => { if (!publicLink) return; await navigator.clipboard.writeText(publicLink); setLinkCopied(true); setTimeout(() => setLinkCopied(false), 2000); };
 
   // ── Publish post generator (LinkedIn + Instagram Story + internal email) ──
+  // publishPosts is persisted to the process doc (process.publishedPosts) so
+  // the recruiter can come back and see / edit the generated copy without
+  // having to regenerate (which would discard their manual tweaks).
   const [showPublishModal, setShowPublishModal] = useState(false);
-  const [publishPosts, setPublishPosts] = useState(null);
+  const [publishPosts, setPublishPosts] = useState(() => process.publishedPosts || null);
   const [generatingPosts, setGeneratingPosts] = useState(false);
   const [publishError, setPublishError] = useState("");
   const [activePostTab, setActivePostTab] = useState("linkedin");
@@ -3569,6 +3582,8 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user,
       const json = await res.json();
       if (!res.ok || json.error) throw new Error(json.error || "Error al generar.");
       setPublishPosts(json.posts);
+      // Persist so the copy survives navigating back to the dashboard.
+      if (onUpdateProcess) onUpdateProcess({ id: process.id, publishedPosts: json.posts });
     } catch (e) {
       setPublishError(e.message || "No se pudo generar la publicación.");
     }
@@ -3629,6 +3644,22 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user,
   const updateEmailField = (field, value) => {
     setPublishPosts(p => ({ ...p, email_internal: { ...p.email_internal, [field]: value } }));
   };
+
+  // Debounced persistence of manual edits to the post copy. We skip the very
+  // first run (initial mount / initial generation write) by comparing against
+  // what's already stored on the process. 600ms is fast enough that the user
+  // won't lose anything if they navigate away mid-typing.
+  useEffect(() => {
+    if (!publishPosts || !onUpdateProcess) return;
+    const timer = setTimeout(() => {
+      // Avoid an unnecessary Firestore write if nothing actually changed.
+      const prev = process.publishedPosts;
+      if (JSON.stringify(prev) === JSON.stringify(publishPosts)) return;
+      onUpdateProcess({ id: process.id, publishedPosts: publishPosts });
+    }, 600);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publishPosts]);
 
   const importApplications = async () => {
     setImporting(true);
@@ -4348,7 +4379,7 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
           <div className="flex items-center gap-2">
             {user?.photoURL && <img src={user.photoURL} alt={user.displayName} className="w-8 h-8 rounded-full border-2 border-gray-200" />}
             <span className="text-sm text-gray-600 hidden sm:block">{firstName}</span>
-            {user?.email === ADMIN_EMAIL && (
+            {isAdminEmail(user?.email) && (
               <button onClick={() => { window.location.hash = "#admin"; }} className="px-3 py-2 border border-gray-900 bg-gray-900 text-white rounded-xl text-sm hover:bg-gray-800" title="Panel admin">🔐</button>
             )}
             <button onClick={onOpenSettings} className="px-3 py-2 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Configuración de agencia">⚙️</button>
@@ -5410,7 +5441,7 @@ export default function App() {
             //  1. Admin signup     → active (self-safeguard)
             //  2. Valid invite code in sessionStorage → active + consume code
             //  3. Everyone else    → pending, waits for admin approval
-            const isAdminSignup = u.email === ADMIN_EMAIL;
+            const isAdminSignup = isAdminEmail(u.email);
             const pendingInvite = sessionStorage.getItem("recruitai_pending_invite");
 
             // First create the doc as pending (or active for admin). The
@@ -5628,7 +5659,7 @@ export default function App() {
   // Admin route: only the configured admin email can see this. Non-admins
   // get redirected back to the dashboard silently.
   if (adminRoute) {
-    if (user.email === ADMIN_EMAIL) return <AdminPanel adminUser={user} onExit={() => { window.location.hash = ""; setAdminRoute(false); }} onLogout={handleLogout} />;
+    if (isAdminEmail(user.email)) return <AdminPanel adminUser={user} onExit={() => { window.location.hash = ""; setAdminRoute(false); }} onLogout={handleLogout} />;
     // Not admin — strip the hash and fall through to normal flow.
     if (typeof window !== "undefined") window.location.hash = "";
   }
