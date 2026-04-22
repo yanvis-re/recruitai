@@ -2166,10 +2166,19 @@ async function acceptAgencyInvite(token, user) {
       acceptedEmail: user.email || "",
     });
 
-    // Point the recruiter at this agency. Only if they weren't already on it
-    // (spares a write and avoids clobbering a pre-existing same-value field).
+    // Point the recruiter at this agency + activate their platform status.
+    // The agency invite itself IS the trust grant: an existing agency member
+    // is vouching for them, so we don't also require a platform-level invite
+    // code. A pending user accepting an agency invite becomes active
+    // instantly. A suspended user won't reach this code path (the gate in
+    // App.jsx blocks suspended before pendingAgencyInvite). Already-active
+    // users keep their active status (merge is additive).
     if (!alreadyMember) {
-      tx.set(doc(db, "recruiters", user.uid), { agencyId: invite.agencyId }, { merge: true });
+      tx.set(doc(db, "recruiters", user.uid), {
+        agencyId: invite.agencyId,
+        status: "active",
+        statusUpdatedAt: now,
+      }, { merge: true });
     }
 
     return { ok: true, agencyId: invite.agencyId, alreadyMember, agencyName: agency.name };
@@ -6975,7 +6984,15 @@ export default function App() {
               sessionStorage.removeItem("recruitai_pending_invite");
             }
 
-            if (!isAdminSignup && !activatedViaInvite) {
+            // If they arrived via an agency invite we skip the "new pending
+            // signup" Slack alert — they're about to self-activate on the
+            // next screen. No need to bother the platform admin with a
+            // false-positive approval request.
+            const pendingAgencyInviteAtSignup = (() => {
+              try { return !!sessionStorage.getItem("recruitai_pending_agency_invite"); } catch { return false; }
+            })();
+
+            if (!isAdminSignup && !activatedViaInvite && !pendingAgencyInviteAtSignup) {
               // Notify admin about the new signup (fire-and-forget).
               fetch("/api/notify", {
                 method: "POST",
@@ -7280,14 +7297,21 @@ export default function App() {
     // Not admin — strip the hash and fall through to normal flow.
     if (typeof window !== "undefined") window.location.hash = "";
   }
-  // Access gates: block pending / suspended accounts before they see anything.
-  if (accountStatus === "pending") return <PendingApprovalScreen user={user} onLogout={handleLogout} />;
+  // Access gates. Order matters:
+  //
+  //   1. Suspended beats everything — a suspended platform user cannot
+  //      override their suspension by accepting an agency invite.
+  //
+  //   2. An agency invite beats "pending". An agency invite is itself a
+  //      trust grant from an already-active member, so a brand-new user
+  //      signing up via an invite link should NOT be stuck at the
+  //      "pendiente de aprobación" screen. Accepting the invite also
+  //      flips their status to active inside the same transaction
+  //      (see acceptAgencyInvite).
+  //
+  //   3. Only after those two, the vanilla "pending" gate applies.
   if (accountStatus === "suspended") return <SuspendedScreen user={user} onLogout={handleLogout} />;
 
-  // Agency invite landing: a logged-in active user who arrived (or returned)
-  // with an ?agencyInvite=xxx token sees the accept screen BEFORE anything
-  // else, so they can't accidentally start working in their old agency
-  // while an invite is pending.
   if (pendingAgencyInvite) {
     return <AcceptAgencyInviteScreen
       token={pendingAgencyInvite}
@@ -7302,6 +7326,8 @@ export default function App() {
       onDismissed={() => { clearPendingAgencyInvite(); }}
     />;
   }
+
+  if (accountStatus === "pending") return <PendingApprovalScreen user={user} onLogout={handleLogout} />;
 
   if (showOnboarding) return <OnboardingScreen user={user} onComplete={handleCompleteOnboarding} />;
 
