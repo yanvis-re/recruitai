@@ -4532,6 +4532,9 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDel
   const [publishing, setPublishing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [importCount, setImportCount] = useState(0);
+  // Separate counter for "existing rows whose auto-eval result just arrived".
+  // Surfaces as a green line next to/under the normal import banner.
+  const [importRefreshedCount, setImportRefreshedCount] = useState(0);
   const [evalCandidate, setEvalCandidate] = useState(null);
 
   const FINAL_ESTADOS = ["Contratado", "Descartado", "En cartera"];
@@ -4743,10 +4746,52 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDel
     try {
       const snap = await getDocs(collection(db, "publicProcesses", process.id, "applications"));
       const apps = snap.docs.map(d => ({ id: `app_${d.id}`, ...d.data() }));
+      const serverById = new Map(apps.map(a => [a.id, a]));
+
+      // Merge fresh auto-eval data into existing rows WITHOUT touching the
+      // recruiter's manual mutations (estado, progreso, entrevistador, notas,
+      // interviewEvaluation, interviewTranscript). This fixes the "I
+      // imported too early, now auto-eval ran but my table doesn't show
+      // it" scenario.
+      let refreshedCount = 0;
+      const merged = candidates.map(c => {
+        const fromServer = serverById.get(c.id);
+        if (!fromServer) return c;
+        const updated = { ...c };
+        let changed = false;
+        if (fromServer.exerciseEvaluation && !c.exerciseEvaluation) {
+          updated.exerciseEvaluation = fromServer.exerciseEvaluation;
+          changed = true;
+        }
+        if (fromServer.autoEvaluatedAt && !c.autoEvaluatedAt) {
+          updated.autoEvaluatedAt = fromServer.autoEvaluatedAt;
+          changed = true;
+        }
+        if (changed) refreshedCount++;
+        return changed ? updated : c;
+      });
+
       const existingIds = new Set(candidates.map(c => c.id));
       const newApps = apps.filter(a => !existingIds.has(a.id));
-      if (newApps.length > 0) { const u = [...candidates, ...newApps]; setCandidates(u); onUpdate(process.id, u); setImportCount(newApps.length); setTimeout(() => setImportCount(0), 4000); }
-      else { setImportCount(-1); setTimeout(() => setImportCount(0), 3000); }
+
+      if (newApps.length > 0 || refreshedCount > 0) {
+        const u = [...merged, ...newApps];
+        setCandidates(u); onUpdate(process.id, u);
+        // Positive number = newly added count (existing banner shows "N nuevas
+        // candidaturas importadas"). When only refreshes happened with zero
+        // new, use a negative sentinel so the banner line below can show a
+        // different copy without a bigger refactor.
+        if (newApps.length > 0) {
+          setImportCount(newApps.length);
+        } else {
+          setImportCount(-2); // sentinel: "N evaluaciones IA actualizadas"
+        }
+        setImportRefreshedCount(refreshedCount);
+        setTimeout(() => { setImportCount(0); setImportRefreshedCount(0); }, 4000);
+      } else {
+        setImportCount(-1);
+        setTimeout(() => setImportCount(0), 3000);
+      }
     } catch (e) { console.error(e); }
     setImporting(false);
   };
@@ -5097,7 +5142,16 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDel
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div><p className="font-bold text-gray-800 text-sm">🔗 Link público para candidatos</p><p className="text-xs text-gray-400 mt-0.5">Genera un link único que los candidatos abren para aplicar.</p></div>
             <div className="flex gap-2 flex-wrap">
-              {publicLink && <button onClick={importApplications} disabled={importing} className="px-3 py-2 border border-gray-200 text-gray-900 rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-50">{importing ? "Importando..." : "⬇ Importar candidatos"}</button>}
+              {publicLink && (
+                <button
+                  onClick={importApplications}
+                  disabled={importing}
+                  title="Importa nuevas aplicaciones y actualiza las evaluaciones IA que hayan terminado después del último import"
+                  className="px-3 py-2 border border-gray-200 text-gray-900 rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-50"
+                >
+                  {importing ? "Importando..." : "⬇ Importar / Actualizar"}
+                </button>
+              )}
               <button onClick={generatePublicLink} disabled={publishing} className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 disabled:opacity-50">{publishing ? "Publicando..." : publicLink ? "🔄 Regenerar link" : "🚀 Generar link público"}</button>
             </div>
           </div>
@@ -5122,8 +5176,9 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDel
               </button>
             </div>
           )}
-          {importCount > 0 && <p className="text-xs text-green-600 font-semibold mt-2">✅ {importCount} nueva{importCount > 1 ? "s" : ""} candidatura{importCount > 1 ? "s" : ""} importada{importCount > 1 ? "s" : ""}</p>}
-          {importCount === -1 && <p className="text-xs text-gray-400 mt-2">No hay candidaturas nuevas.</p>}
+          {importCount > 0 && <p className="text-xs text-green-600 font-semibold mt-2">✅ {importCount} nueva{importCount > 1 ? "s" : ""} candidatura{importCount > 1 ? "s" : ""} importada{importCount > 1 ? "s" : ""}{importRefreshedCount > 0 ? ` · ${importRefreshedCount} evaluación${importRefreshedCount > 1 ? "es" : ""} IA actualizada${importRefreshedCount > 1 ? "s" : ""}` : ""}</p>}
+          {importCount === -2 && <p className="text-xs text-green-600 font-semibold mt-2">✅ {importRefreshedCount} evaluación{importRefreshedCount > 1 ? "es" : ""} IA actualizada{importRefreshedCount > 1 ? "s" : ""}</p>}
+          {importCount === -1 && <p className="text-xs text-gray-400 mt-2">Sin cambios: sin candidaturas nuevas y sin evaluaciones IA pendientes.</p>}
         </div>
         {/* Candidate Table */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
@@ -5252,9 +5307,41 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDel
                             <td className="px-4 py-3"><input type="text" value={c.entrevistador || ""} onChange={e => updateCandidate(c.id, "entrevistador", e.target.value)} placeholder="Asignar..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-300 bg-transparent" /></td>
                             <td className="px-4 py-3"><input type="text" value={c.notas || ""} onChange={e => updateCandidate(c.id, "notas", e.target.value)} placeholder="Añadir nota..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-300 bg-transparent" /></td>
                             <td className="px-4 py-3 text-center">
-                              <button onClick={() => setEvalCandidate(c)} className={`text-xs font-semibold px-2 py-1 rounded-lg transition-colors ${c.exerciseEvaluation || c.interviewEvaluation ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>
-                                {c.exerciseEvaluation && c.interviewEvaluation ? "✅ Ver" : c.exerciseEvaluation ? "🎤 Entrev." : "🤖 Evaluar"}
-                              </button>
+                              {/* Detect "auto-eval likely in progress" for rows that came from the
+                                  public link recently but don't yet carry exerciseEvaluation. Anything
+                                  submitted in the last 10 min gets the ⏳ state with a tooltip so the
+                                  recruiter knows to click "Importar / Actualizar" rather than wondering
+                                  why the evaluation is missing. After 10 min we assume it failed /
+                                  never ran and go back to the normal "🤖 Evaluar" CTA. */}
+                              {(() => {
+                                const hasExerciseEval = !!c.exerciseEvaluation;
+                                const hasInterviewEval = !!c.interviewEvaluation;
+                                const submittedAtMs = c.submittedAt ? new Date(c.submittedAt).getTime() : 0;
+                                const recentlySubmitted = submittedAtMs > 0 && (Date.now() - submittedAtMs) < 10 * 60 * 1000;
+                                const evalLikelyPending = !hasExerciseEval && recentlySubmitted;
+
+                                let label, cls, title;
+                                if (hasExerciseEval && hasInterviewEval) {
+                                  label = "✅ Ver"; cls = "bg-indigo-100 text-indigo-700 hover:bg-indigo-200";
+                                  title = "Ver evaluaciones";
+                                } else if (hasExerciseEval) {
+                                  label = "🎤 Entrev."; cls = "bg-indigo-100 text-indigo-700 hover:bg-indigo-200";
+                                  title = "Analizar entrevista";
+                                } else if (evalLikelyPending) {
+                                  label = "⏳ IA evaluando"; cls = "bg-yellow-50 text-yellow-700 hover:bg-yellow-100";
+                                  title = "La IA está evaluando este candidato en segundo plano (tarda 20-90s). Pulsa ⬇ Importar / Actualizar en la parte superior para refrescar cuando termine.";
+                                } else {
+                                  label = "🤖 Evaluar"; cls = "bg-gray-100 text-gray-500 hover:bg-gray-200";
+                                  title = "Ejecutar evaluación manualmente";
+                                }
+
+                                return (
+                                  <button onClick={() => setEvalCandidate(c)} title={title}
+                                    className={`text-xs font-semibold px-2 py-1 rounded-lg transition-colors ${cls}`}>
+                                    {label}
+                                  </button>
+                                );
+                              })()}
                             </td>
                             <td className="px-4 py-3 text-center"><button onClick={() => requestRemoveCandidate(c)} className="text-gray-300 hover:text-red-400 text-xl leading-none" title={`Eliminar a ${c.name || "candidato"}`}>×</button></td>
                           </tr>
