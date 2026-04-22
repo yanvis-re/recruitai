@@ -54,8 +54,12 @@ service cloud.firestore {
 
     // ── Agencies (workspaces) ───────────────────────────────────────────────
     match /agencies/{agencyId} {
-      // Read: any member.
-      allow read: if isAuthed() && request.auth.uid in resource.data.memberUids;
+      // Read: any member. Non-existent docs are also readable (resource is
+      // null for those) so the client-side bootstrap `getDoc` in
+      // ensureAgencyForUser doesn't hit permission-denied before it ever
+      // gets a chance to create the agency. Leaking "does this agency id
+      // exist" is fine — the id is deterministic from uid anyway.
+      allow read: if isAuthed() && (resource == null || request.auth.uid in resource.data.memberUids);
 
       // Create: caller must be owner + sole member at creation time, and the
       // initial processes array must respect the cap (usually [] on auto-
