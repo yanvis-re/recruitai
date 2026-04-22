@@ -1557,6 +1557,22 @@ function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, 
               </p>
             )}
 
+            {/* Google option also available inside signin/signup so the user
+                doesn't have to go back to the chooser. */}
+            {mode !== "reset" && (
+              <>
+                <button type="button" onClick={onLogin} disabled={loading || emailLoading}
+                  className="w-full flex items-center justify-center gap-3 py-3 px-6 border-2 border-gray-200 rounded-xl font-semibold text-gray-700 hover:border-gray-400 hover:bg-gray-50 transition-all disabled:opacity-50 mb-3">
+                  {loading ? <span className="text-sm">Iniciando sesión...</span> : (<><GoogleIcon /><span className="text-sm">{mode === "signup" ? "Crear cuenta con Google" : "Continuar con Google"}</span></>)}
+                </button>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="flex-1 h-px bg-gray-200" />
+                  <span className="text-xs text-gray-400 font-medium">o con email</span>
+                  <div className="flex-1 h-px bg-gray-200" />
+                </div>
+              </>
+            )}
+
             <form onSubmit={handleSubmit} className="space-y-3">
               {mode === "signup" && (
                 <div>
