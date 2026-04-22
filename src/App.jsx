@@ -191,7 +191,13 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
   const [exParsePreview, setExParsePreview] = useState(null);
   const [exParseError, setExParseError] = useState("");
   const [exParseFileName, setExParseFileName] = useState("");
+  const [exEditMode, setExEditMode] = useState(false); // toggle ajustes panel inside modal
+  const [lastAddedName, setLastAddedName] = useState(""); // tiny success banner after accepting
   const exFileRef = useRef(null);
+
+  // Per-exercise criteria upload state (attach rubric to an existing exercise)
+  const [critParseTarget, setCritParseTarget] = useState(null); // { exerciseId, fileName, status, criteria?, error? }
+  const critFileRefs = useRef({});
 
   const extractTextFromFile = async (file) => {
     const ext = file.name.split(".").pop().toLowerCase();
@@ -256,9 +262,51 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
       ...d,
       exercises: onlyDefault ? [newExercise] : [...d.exercises, newExercise],
     }));
+    setLastAddedName(newExercise.title);
     setExParseState("idle");
     setExParsePreview(null);
     setExParseFileName("");
+    setExEditMode(false);
+    setTimeout(() => setLastAddedName(""), 6000);
+  };
+
+  // Per-exercise criteria upload handler
+  const handleCriteriaFile = async (exerciseId, file) => {
+    if (!file) return;
+    setCritParseTarget({ exerciseId, fileName: file.name, status: "parsing" });
+    try {
+      const text = await extractTextFromFile(file);
+      if (!text.trim() || text.trim().length < 30) throw new Error("El documento parece vacío.");
+      const res = await fetch("/api/parseCriteriaDocument", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      const json = await res.json();
+      if (json.error) throw new Error(json.error);
+      if (!json.criteria || json.criteria.length === 0) throw new Error("No se detectaron criterios.");
+      setCritParseTarget({ exerciseId, fileName: file.name, status: "preview", criteria: json.criteria });
+    } catch (err) {
+      setCritParseTarget({ exerciseId, fileName: file.name, status: "error", error: err.message });
+    }
+  };
+
+  const applyCriteria = (mode /* "replace" | "append" */) => {
+    if (!critParseTarget || !critParseTarget.criteria) return;
+    const { exerciseId, criteria } = critParseTarget;
+    setData(d => ({
+      ...d,
+      exercises: d.exercises.map(ex => {
+        if (ex.id !== exerciseId) return ex;
+        return {
+          ...ex,
+          criteria: mode === "replace"
+            ? criteria
+            : [...(ex.criteria || []).filter(c => c.area?.trim() || c.indicators?.trim()), ...criteria],
+        };
+      }),
+    }));
+    setCritParseTarget(null);
   };
 
   const handleParseFile = async (e) => {
@@ -644,94 +692,52 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
               Cada candidato resuelve estos ejercicios con respuesta escrita + vídeo de defensa en Loom. La IA los evalúa con los criterios que definas.
             </p>
 
-            {/* Upload exercise from document */}
-            <div className="border-2 border-dashed border-gray-200 rounded-2xl p-4 mb-5 bg-gray-50">
-              {exParseState === "idle" && (
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-start gap-2.5 flex-1 min-w-0">
-                    <span className="text-xl shrink-0">📄</span>
-                    <div>
-                      <p className="text-sm font-bold text-gray-900">¿Ya tienes el ejercicio en un documento?</p>
-                      <p className="text-xs text-gray-500 mt-0.5 leading-snug">Sube un PDF/DOCX con el enunciado y los criterios. La IA lo estructura y te pide confirmación antes de añadirlo.</p>
-                    </div>
+            {/* Upload exercise from document — simple banner. Preview + confirm go in a modal */}
+            <div className="border-2 border-dashed border-gray-200 rounded-2xl p-4 mb-3 bg-gray-50">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-start gap-2.5 flex-1 min-w-0">
+                  <span className="text-xl shrink-0">📄</span>
+                  <div>
+                    <p className="text-sm font-bold text-gray-900">
+                      {data.exercises.some(e => e.description?.trim()) ? "¿Añadir otro ejercicio desde documento?" : "¿Ya tienes el ejercicio en un documento?"}
+                    </p>
+                    <p className="text-xs text-gray-500 mt-0.5 leading-snug">
+                      Sube un PDF/DOCX con el enunciado (y criterios si los tienes). La IA lo estructura y te muestra un preview de cómo lo verá el candidato antes de añadirlo al proceso. <strong>Puedes subir tantos documentos como ejercicios quieras incluir.</strong>
+                    </p>
                   </div>
-                  <button type="button" onClick={() => exFileRef.current?.click()}
-                    className="shrink-0 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-lg hover:bg-gray-800">
-                    Subir documento
-                  </button>
-                  <input ref={exFileRef} type="file" accept=".pdf,.docx,.txt" onChange={handleExerciseFile} className="hidden" />
                 </div>
-              )}
+                <button type="button" onClick={() => exFileRef.current?.click()} disabled={exParseState === "parsing"}
+                  className="shrink-0 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-lg hover:bg-gray-800 disabled:opacity-50">
+                  {exParseState === "parsing" ? "Analizando..." : "Subir documento"}
+                </button>
+                <input ref={exFileRef} type="file" accept=".pdf,.docx,.txt" onChange={handleExerciseFile} className="hidden" />
+              </div>
               {exParseState === "parsing" && (
-                <div className="flex items-center justify-center gap-3 py-2">
-                  <div className="w-4 h-4 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
-                  <span className="text-sm text-gray-600">Analizando <strong>{exParseFileName}</strong> con IA...</span>
+                <div className="mt-3 flex items-center gap-2 text-xs text-gray-600">
+                  <div className="w-3 h-3 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+                  <span>Analizando <strong>{exParseFileName}</strong> con IA (~15s)...</span>
                 </div>
               )}
               {exParseState === "error" && (
-                <div className="flex items-start justify-between gap-3">
+                <div className="mt-3 flex items-start justify-between gap-3 bg-red-50 border border-red-200 rounded-lg p-2.5">
                   <div className="flex items-start gap-2">
                     <span className="text-base">⚠️</span>
                     <p className="text-xs text-red-700 leading-relaxed">{exParseError}</p>
                   </div>
                   <button type="button" onClick={() => { setExParseState("idle"); setExParseError(""); }}
-                    className="shrink-0 text-xs text-gray-500 hover:text-gray-900 font-medium">Cerrar</button>
-                </div>
-              )}
-              {exParseState === "preview" && exParsePreview && (
-                <div className="space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-bold text-gray-900">✨ Esto es lo que encontré</p>
-                      <p className="text-xs text-gray-500 mt-0.5">Revisa, edita si hace falta, y confirma para añadirlo.</p>
-                    </div>
-                    <button type="button" onClick={() => { setExParseState("idle"); setExParsePreview(null); setExParseError(""); }}
-                      className="shrink-0 text-xs text-gray-400 hover:text-gray-900">✕</button>
-                  </div>
-                  <div className="bg-white border border-gray-200 rounded-xl p-3 space-y-2">
-                    <div>
-                      <label className={lbl}>Título</label>
-                      <input className={inp}
-                        value={exParsePreview.title}
-                        onChange={e => setExParsePreview(p => ({ ...p, title: e.target.value }))} />
-                    </div>
-                    <div>
-                      <label className={lbl}>Enunciado</label>
-                      <textarea className={inp} rows={4}
-                        value={exParsePreview.description}
-                        onChange={e => setExParsePreview(p => ({ ...p, description: e.target.value }))} />
-                    </div>
-                    <div>
-                      <label className={lbl}>Criterios detectados ({exParsePreview.criteria.length})</label>
-                      <div className="space-y-1.5 mt-1">
-                        {exParsePreview.criteria.map((c, i) => (
-                          <div key={i} className="flex gap-2 items-start bg-gray-50 rounded-lg p-2">
-                            <div className="flex-1 min-w-0 space-y-1">
-                              <input className={inp + " text-xs"}
-                                value={c.area}
-                                onChange={e => setExParsePreview(p => ({ ...p, criteria: p.criteria.map((cc, j) => j === i ? { ...cc, area: e.target.value } : cc) }))}
-                                placeholder="Área" />
-                              <input className={inp + " text-xs"}
-                                value={c.indicators}
-                                onChange={e => setExParsePreview(p => ({ ...p, criteria: p.criteria.map((cc, j) => j === i ? { ...cc, indicators: e.target.value } : cc) }))}
-                                placeholder="Indicadores" />
-                            </div>
-                            <input type="number" min={1} max={10}
-                              className="w-12 border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-center"
-                              value={c.maxScore}
-                              onChange={e => setExParsePreview(p => ({ ...p, criteria: p.criteria.map((cc, j) => j === i ? { ...cc, maxScore: parseInt(e.target.value) || 5 } : cc) }))} />
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                  <button type="button" onClick={acceptParsedExercise}
-                    className="w-full py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
-                    ✅ Añadir este ejercicio al proceso
-                  </button>
+                    className="shrink-0 text-xs text-red-700 hover:text-red-900 font-bold">×</button>
                 </div>
               )}
             </div>
+
+            {lastAddedName && (
+              <div className="bg-green-50 border border-green-200 rounded-xl p-3 mb-4 flex items-center gap-2.5">
+                <span className="text-lg">✅</span>
+                <p className="text-sm text-green-800">
+                  <strong>{lastAddedName}</strong> añadido al proceso. Puedes subir otro documento arriba o continuar al siguiente paso.
+                </p>
+              </div>
+            )}
 
             {data.exercises.map((ex, idx) => (
               <div key={ex.id} className="border border-gray-200 rounded-2xl p-4 mb-4 bg-gray-50">
@@ -748,9 +754,19 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                     placeholder="Describe el reto concreto. Cuanto más específico, mejores respuestas recibirás..." />
                 </div>
                 <div>
-                  <div className="flex justify-between items-center mb-2">
+                  <div className="flex justify-between items-center mb-2 gap-2 flex-wrap">
                     <label className={lbl}>Criterios de evaluación</label>
-                    <button onClick={() => addCr(ex.id)} className="text-xs text-gray-900 hover:underline font-medium">+ Criterio</button>
+                    <div className="flex gap-3 items-center">
+                      <button type="button" onClick={() => critFileRefs.current[ex.id]?.click()}
+                        className="text-xs text-gray-500 hover:text-gray-900 hover:underline font-medium">
+                        📄 Subir criterios
+                      </button>
+                      <input
+                        ref={el => { critFileRefs.current[ex.id] = el; }}
+                        type="file" accept=".pdf,.docx,.txt" className="hidden"
+                        onChange={e => { handleCriteriaFile(ex.id, e.target.files[0]); e.target.value = ""; }} />
+                      <button type="button" onClick={() => addCr(ex.id)} className="text-xs text-gray-900 hover:underline font-medium">+ Criterio</button>
+                    </div>
                   </div>
                   {ex.criteria.map((cr, ci) => (
                     <div key={ci} className="flex gap-2 items-start bg-white rounded-lg p-3 mb-2 border border-gray-100">
@@ -868,6 +884,156 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                 Salir sin guardar
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Exercise preview / confirmation modal (upload from document) ── */}
+      {exParseState === "preview" && exParsePreview && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+          onClick={() => { setExParseState("idle"); setExParsePreview(null); setExEditMode(false); }}>
+          <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-5 border-b border-gray-100 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-bold text-gray-900 text-lg">✨ Revisa el ejercicio antes de añadirlo</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Detectado en <strong>{exParseFileName}</strong>. Así lo verá el candidato. Si quieres ajustar algo, usa el botón de abajo.
+                </p>
+              </div>
+              <button onClick={() => { setExParseState("idle"); setExParsePreview(null); setExEditMode(false); }}
+                className="text-gray-400 hover:text-gray-900 text-2xl leading-none shrink-0">×</button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+              {/* Preview as candidate sees it */}
+              <ExercisePreview exercise={exParsePreview} />
+
+              {/* Collapsible edit panel */}
+              <button type="button" onClick={() => setExEditMode(v => !v)}
+                className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 rounded-xl text-sm font-semibold text-gray-700 transition-colors">
+                <span>✏️ Ajustar antes de añadir</span>
+                <span className="text-gray-400">{exEditMode ? "▲" : "▼"}</span>
+              </button>
+
+              {exEditMode && (
+                <div className="bg-white border border-gray-200 rounded-xl p-4 space-y-3">
+                  <div>
+                    <label className={lbl}>Título del ejercicio</label>
+                    <input className={inp}
+                      value={exParsePreview.title}
+                      onChange={e => setExParsePreview(p => ({ ...p, title: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className={lbl}>Enunciado</label>
+                    <textarea className={inp} rows={6}
+                      value={exParsePreview.description}
+                      onChange={e => setExParsePreview(p => ({ ...p, description: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className={lbl}>Criterios de evaluación</label>
+                    <div className="space-y-1.5 mt-1">
+                      {exParsePreview.criteria.map((c, i) => (
+                        <div key={i} className="flex gap-2 items-start bg-gray-50 rounded-lg p-2">
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <input className={inp + " text-xs"} placeholder="Área"
+                              value={c.area}
+                              onChange={e => setExParsePreview(p => ({ ...p, criteria: p.criteria.map((cc, j) => j === i ? { ...cc, area: e.target.value } : cc) }))} />
+                            <input className={inp + " text-xs"} placeholder="Indicadores"
+                              value={c.indicators}
+                              onChange={e => setExParsePreview(p => ({ ...p, criteria: p.criteria.map((cc, j) => j === i ? { ...cc, indicators: e.target.value } : cc) }))} />
+                          </div>
+                          <input type="number" min={1} max={10}
+                            className="w-12 border border-gray-200 rounded-lg px-2 py-1.5 text-xs text-center"
+                            value={c.maxScore}
+                            onChange={e => setExParsePreview(p => ({ ...p, criteria: p.criteria.map((cc, j) => j === i ? { ...cc, maxScore: parseInt(e.target.value) || 5 } : cc) }))} />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="px-6 py-4 border-t border-gray-100 flex gap-2 shrink-0">
+              <button onClick={() => { setExParseState("idle"); setExParsePreview(null); setExEditMode(false); }}
+                className="flex-1 py-3 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button onClick={acceptParsedExercise}
+                className="flex-[2] py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
+                ✅ Añadir al proceso
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Criteria upload confirmation modal (per exercise) ── */}
+      {critParseTarget && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+          onClick={() => setCritParseTarget(null)}>
+          <div className="bg-white rounded-3xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-5 border-b border-gray-100 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-bold text-gray-900 text-lg">📋 Criterios de evaluación</h2>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Desde <strong>{critParseTarget.fileName}</strong> · ejercicio{' '}
+                  <strong>{data.exercises.find(x => x.id === critParseTarget.exerciseId)?.title || ""}</strong>
+                </p>
+              </div>
+              <button onClick={() => setCritParseTarget(null)} className="text-gray-400 hover:text-gray-900 text-2xl leading-none shrink-0">×</button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6">
+              {critParseTarget.status === "parsing" && (
+                <div className="flex items-center justify-center gap-3 py-8">
+                  <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 rounded-full animate-spin" />
+                  <span className="text-sm text-gray-600">Analizando criterios...</span>
+                </div>
+              )}
+              {critParseTarget.status === "error" && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+                  ⚠️ {critParseTarget.error}
+                </div>
+              )}
+              {critParseTarget.status === "preview" && critParseTarget.criteria && (
+                <>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">
+                    Criterios detectados ({critParseTarget.criteria.length})
+                  </p>
+                  <div className="space-y-2">
+                    {critParseTarget.criteria.map((c, i) => (
+                      <div key={i} className="bg-gray-50 border border-gray-100 rounded-lg p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-bold text-gray-900">{c.area}</p>
+                            <p className="text-xs text-gray-600 mt-0.5 leading-relaxed">{c.indicators}</p>
+                          </div>
+                          <span className="shrink-0 text-xs font-bold text-gray-500 bg-white border border-gray-200 rounded px-2 py-0.5">
+                            Máx. {c.maxScore}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+            {critParseTarget.status === "preview" && (
+              <div className="px-6 py-4 border-t border-gray-100 flex flex-wrap gap-2 shrink-0">
+                <button onClick={() => setCritParseTarget(null)}
+                  className="py-2.5 px-4 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50">
+                  Cancelar
+                </button>
+                <button onClick={() => applyCriteria("append")}
+                  className="py-2.5 px-4 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50">
+                  + Añadir a los existentes
+                </button>
+                <button onClick={() => applyCriteria("replace")}
+                  className="flex-1 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
+                  ↻ Reemplazar criterios
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -3930,6 +4096,35 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Faithful preview of how a candidate will see an exercise ────────────────
+// Mirrors the layout of ExercisesScreen without the surrounding chrome so the
+// recruiter can see the actual visual result before committing to add it.
+function ExercisePreview({ exercise }) {
+  return (
+    <div className="bg-white rounded-2xl border border-gray-200 p-5 sm:p-6">
+      <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-100 rounded-full px-3 py-1 mb-4">
+        <span>👀</span><span>Así lo verá el candidato</span>
+      </div>
+      <h3 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight mb-2">{exercise.title || "Sin título"}</h3>
+      <p className="text-gray-500 leading-relaxed mb-4 whitespace-pre-wrap">{exercise.description || <span className="text-gray-300 italic">(Sin enunciado)</span>}</p>
+      <div className="bg-gray-50 border border-gray-100 rounded-xl p-4">
+        <p className="text-xs font-bold text-gray-900 uppercase tracking-wide mb-2">📋 Criterios que se evalúan</p>
+        {(exercise.criteria || []).length > 0 ? (
+          <ul className="space-y-1.5">
+            {exercise.criteria.map((c, i) => (
+              <li key={i} className="text-xs text-gray-700 leading-relaxed">
+                <strong className="text-gray-900">{c.area || "(sin área)"}:</strong> {c.indicators || <span className="italic text-gray-400">sin indicadores</span>}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-xs text-gray-400 italic">Sin criterios detectados. Tendrás que añadirlos manualmente.</p>
+        )}
+      </div>
     </div>
   );
 }
