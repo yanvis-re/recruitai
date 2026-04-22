@@ -4063,6 +4063,28 @@ function Roadmap({ user, agencySettings, processes, onNavigate }) {
   const requiredSteps = steps.filter(s => !s.optional);
   const doneRequired = requiredSteps.filter(s => s.done).length;
   const pct = Math.round((doneRequired / requiredSteps.length) * 100);
+  // Index of the first pending step (skipping optional ones if they're all
+  // done — but if slack is pending, still mark it so the user knows it's
+  // an available nudge). We prefer the first non-optional pending step as
+  // 'next'; if all required are done, fall back to the first pending at all.
+  const firstPendingRequired = steps.findIndex(s => !s.done && !s.optional);
+  const firstPendingAny = steps.findIndex(s => !s.done);
+  const nextIdx = firstPendingRequired !== -1 ? firstPendingRequired : firstPendingAny;
+  // Scroll the 'next' step into view on first mount if it's off-screen.
+  // Only once — don't jump the page every time a step completes.
+  const nextStepRef = useRef(null);
+  const didInitialScrollRef = useRef(false);
+  useEffect(() => {
+    if (didInitialScrollRef.current) return;
+    const el = nextStepRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const vh = window.innerHeight || document.documentElement.clientHeight;
+    if (rect.top < 80 || rect.bottom > vh - 40) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    didInitialScrollRef.current = true;
+  }, [nextIdx]);
   // Hide the roadmap once every REQUIRED step is done (slack is optional).
   if (doneRequired === requiredSteps.length) return null;
 
@@ -4095,38 +4117,58 @@ function Roadmap({ user, agencySettings, processes, onNavigate }) {
 
       {/* Step list */}
       <div className="space-y-1">
-        {steps.map((step, i) => (
-          <div key={step.id}
-            className={`flex items-start gap-3 py-3 border-b last:border-0 border-gray-50 ${step.milestone && !step.done ? "bg-yellow-50 -mx-3 px-3 rounded-xl border-yellow-100" : ""}`}>
-            <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-black transition-colors ${
-              step.done
-                ? "bg-gray-900 text-white"
-                : step.milestone
-                  ? "bg-yellow-400 text-gray-900"
-                  : "bg-gray-100 text-gray-500"
-            }`}>
-              {step.done ? "✓" : i + 1}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <p className={`font-bold text-sm ${step.done ? "text-gray-400 line-through" : "text-gray-900"}`}>{step.label}</p>
-                {step.optional && <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium">OPCIONAL</span>}
-                {step.milestone && !step.done && <span className="text-[10px] bg-yellow-400 text-gray-900 px-1.5 py-0.5 rounded font-black">🎯 HITO FINAL</span>}
+        {steps.map((step, i) => {
+          const isNext = i === nextIdx;
+          // Visual layering:
+          //  - milestone pending   → amber card with milestone badge (strongest)
+          //  - next (non-milestone)→ gray card with 'SIGUIENTE' badge (focus)
+          //  - done                → reduced opacity, tachado
+          //  - rest pending        → neutral row
+          const cardBg =
+            step.milestone && !step.done ? "bg-yellow-50 -mx-3 px-3 rounded-xl border border-yellow-100"
+            : isNext && !step.done ? "bg-gray-50 -mx-3 px-3 rounded-xl"
+            : "border-b last:border-0 border-gray-50";
+          return (
+            <div key={step.id}
+              ref={isNext ? nextStepRef : null}
+              className={`flex items-start gap-3 py-3 transition-opacity ${cardBg} ${step.done ? "opacity-40" : "opacity-100"}`}>
+              <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm font-black transition-colors ${
+                step.done
+                  ? "bg-gray-900 text-white"
+                  : step.milestone
+                    ? "bg-yellow-400 text-gray-900"
+                    : isNext
+                      ? "bg-gray-900 text-white ring-2 ring-offset-2 ring-gray-200"
+                      : "bg-gray-100 text-gray-500"
+              }`}>
+                {step.done ? "✓" : i + 1}
               </div>
-              <p className="text-xs text-gray-500 mt-0.5 leading-snug">{step.detail}</p>
-              {!step.done && step.action && (
-                <button onClick={() => handleAction(step.action)}
-                  className={`mt-2 inline-flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg transition-colors ${
-                    step.milestone
-                      ? "bg-yellow-400 text-gray-900 hover:bg-yellow-500"
-                      : "bg-gray-900 text-white hover:bg-gray-800"
-                  }`}>
-                  {step.action.label} →
-                </button>
-              )}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className={`font-bold text-sm ${step.done ? "text-gray-400 line-through" : "text-gray-900"}`}>{step.label}</p>
+                  {step.optional && <span className="text-[10px] bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded font-medium">OPCIONAL</span>}
+                  {step.milestone && !step.done && <span className="text-[10px] bg-yellow-400 text-gray-900 px-1.5 py-0.5 rounded font-black">🎯 HITO FINAL</span>}
+                  {isNext && !step.done && !step.milestone && (
+                    <span className="text-[10px] bg-gray-900 text-white px-1.5 py-0.5 rounded font-black">👉 SIGUIENTE PASO</span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 mt-0.5 leading-snug">{step.detail}</p>
+                {!step.done && step.action && (
+                  <button onClick={() => handleAction(step.action)}
+                    className={`mt-2.5 inline-flex items-center gap-1 font-bold rounded-lg transition-colors ${
+                      step.milestone
+                        ? "bg-yellow-400 text-gray-900 hover:bg-yellow-500 text-sm px-4 py-2"
+                        : isNext
+                          ? "bg-gray-900 text-white hover:bg-gray-800 text-sm px-4 py-2 shadow-sm"
+                          : "bg-gray-900 text-white hover:bg-gray-800 text-xs px-3 py-1.5"
+                    }`}>
+                    {step.action.label} →
+                  </button>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
