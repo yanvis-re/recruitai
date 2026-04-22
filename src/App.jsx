@@ -17,6 +17,27 @@ import {
 const ADMIN_EMAIL = (import.meta.env.VITE_ADMIN_EMAIL || "yanvis@gmail.com").toLowerCase().trim();
 const isAdminEmail = (email) => (email || "").toLowerCase().trim() === ADMIN_EMAIL;
 
+// AI evaluation monthly quota. Mirrors FREE_AI_EVALUATIONS_PER_MONTH from
+// the server side — both env vars must be kept in sync when changed (server
+// enforces, client surfaces). Keep the label in the recruiter dashboard
+// accurate even if the real cap differs on the server — the server is always
+// the source of truth for blocking, this is just UI.
+const AI_EVAL_LIMIT = parseInt(import.meta.env.VITE_AI_EVALUATION_LIMIT || "50", 10);
+
+function getCurrentUsagePeriod() {
+  // UTC-aligned with the server's currentPeriod() in api/_quota.js so the
+  // client reads the same slot the server is writing to.
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+function getCurrentUsage(usage) {
+  const period = getCurrentUsagePeriod();
+  const used = usage?.[period]?.aiEvaluations || 0;
+  const limit = AI_EVAL_LIMIT;
+  return { used, limit, period, remaining: Math.max(0, limit - used) };
+}
+
 // Spanish-friendly translations for the most common Firebase Auth error codes.
 function translateAuthError(code) {
   const map = {
@@ -3383,7 +3404,7 @@ const REC_LABELS = {
   CONTRATAR: "🎉 Contratar", SEGUNDA_ENTREVISTA: "🔄 Segunda entrevista", EN_CARTERA: "📁 En cartera",
 };
 
-function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdateCandidate, onClose }) {
+function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdateCandidate, onClose, aiUsage, onEvalConsumed }) {
   const [tab, setTab] = useState("exercise");
   const [evaluatingEx, setEvaluatingEx] = useState(false);
   const [evaluatingInt, setEvaluatingInt] = useState(false);
@@ -3441,6 +3462,10 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
         // friendly message from the server.
         if (res.status === 429) throw new Error(json.message || "Has alcanzado el límite mensual de evaluaciones IA.");
         if (json.error) throw new Error(json.error);
+        // Server charged one unit of quota against the recruiter. Reflect
+        // that optimistically so the visible counter drops without waiting
+        // for a re-read.
+        onEvalConsumed?.();
         perExercise.push({
           exerciseId: exercise.id,
           exerciseTitle: exercise.title,
@@ -3505,6 +3530,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
       const json = await res.json();
       if (res.status === 429) throw new Error(json.message || "Has alcanzado el límite mensual de evaluaciones IA.");
       if (json.error) throw new Error(json.error);
+      onEvalConsumed?.();
       onUpdateCandidate({ ...candidate, interviewEvaluation: json.evaluation, interviewTranscript });
       // Slack notification
       sendSlackNotification(agencySettings?.slackConfig, "ai_evaluation", {
@@ -3624,9 +3650,12 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                     );
                   })}
                   {!exerciseEval && (
-                    <button onClick={evaluateExercise} disabled={evaluatingEx} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors">
-                      {evaluatingEx ? "🤖 Evaluando con IA..." : "🤖 Evaluar ejercicio con IA"}
-                    </button>
+                    <div>
+                      <button onClick={evaluateExercise} disabled={evaluatingEx} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors">
+                        {evaluatingEx ? "🤖 Evaluando con IA..." : "🤖 Evaluar ejercicio con IA"}
+                      </button>
+                      <AiUsageHint aiUsage={aiUsage} consumes={process.exercises?.length || 1} />
+                    </div>
                   )}
                 </>
               )}
@@ -3715,6 +3744,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                   <button onClick={evaluateInterview} disabled={evaluatingInt || !interviewTranscript.trim()} className="w-full py-3 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 disabled:opacity-50 transition-colors">
                     {evaluatingInt ? "🤖 Analizando entrevista..." : "🤖 Analizar entrevista con IA"}
                   </button>
+                  <AiUsageHint aiUsage={aiUsage} consumes={1} />
                 </>
               ) : (
                 <div className="space-y-4">
@@ -3890,7 +3920,7 @@ const ESTADO_COLORS = { "Pendiente": "bg-gray-100 text-gray-700", "Primera entre
 const PROGRESO_COLORS = { "Ingreso": "bg-purple-100 text-purple-700", "Prueba técnica": "bg-gray-100 text-gray-800", "Entrevista": "bg-indigo-100 text-indigo-700", "Onboarding": "bg-teal-100 text-teal-700", "Descalificado": "bg-red-100 text-red-700", "En cartera": "bg-yellow-100 text-yellow-700", "Desiste": "bg-gray-100 text-gray-800", "Validación prueba técnica": "bg-cyan-100 text-cyan-700", "Entrevista RRHH": "bg-violet-100 text-violet-700" };
 
 // ─── PROCESS DETAIL SCREEN ───────────────────────────────────────────────────
-function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDeleteProcess, onToggleStatus, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare }) {
+function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDeleteProcess, onToggleStatus, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare, aiUsage, onEvalConsumed }) {
   // Delete flow for the entire process — closes the public link, drops any
   // applications received, and removes the process from the recruiter's
   // workspace. Two-step (modal) confirmation because it's irreversible.
@@ -4247,7 +4277,7 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDel
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {evalCandidate && <CandidateEvaluationPanel candidate={evalCandidate} process={process} agencySettings={agencySettings} onUpdateCandidate={updateCandidateFull} onClose={() => setEvalCandidate(null)} />}
+      {evalCandidate && <CandidateEvaluationPanel candidate={evalCandidate} process={process} agencySettings={agencySettings} onUpdateCandidate={updateCandidateFull} onClose={() => setEvalCandidate(null)} aiUsage={aiUsage} onEvalConsumed={onEvalConsumed} />}
       <ConfirmModal
         open={!!removeTarget}
         onClose={() => setRemoveTarget(null)}
@@ -4982,13 +5012,60 @@ function RoadmapPreview() {
   );
 }
 
-function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout, onOpenSettings, agencySettings }) {
+// Visible AI quota indicator for the dashboard header. Color shifts from
+// neutral → warning → blocked as the counter approaches (then hits) the cap.
+// Server is the source of truth for enforcement; this is UX surfacing only.
+function AiUsagePill({ snapshot }) {
+  const { used, limit, remaining } = snapshot;
+  const ratio = limit > 0 ? used / limit : 0;
+  const tone =
+    ratio >= 1 ? "bg-red-50 border-red-200 text-red-700"
+    : ratio >= 0.8 ? "bg-yellow-50 border-yellow-200 text-yellow-700"
+    : "bg-gray-50 border-gray-200 text-gray-700";
+  const title =
+    ratio >= 1 ? `Has alcanzado el límite mensual (${used}/${limit}). Resetea el 1 del próximo mes.`
+    : `Has usado ${used} de ${limit} evaluaciones IA este mes. Te quedan ${remaining}.`;
+  return (
+    <span title={title} className={`hidden md:inline-flex items-center gap-1 px-2.5 py-1.5 border rounded-xl text-xs font-semibold ${tone}`}>
+      <span>🤖</span>
+      <span>{used}/{limit}</span>
+    </span>
+  );
+}
+
+// Inline helper rendered next to "Evaluate with AI" buttons. Tells the
+// recruiter how many evaluations they have left, and warns if the current
+// action would blow the cap (e.g. a process with 4 exercises when only 2
+// slots remain).
+function AiUsageHint({ aiUsage, consumes = 1 }) {
+  const { used, limit, remaining } = getCurrentUsage(aiUsage);
+  const willExceed = consumes > remaining;
+  const allUsed = remaining <= 0;
+  return (
+    <p className={`text-xs mt-2 text-center ${allUsed ? "text-red-600" : willExceed ? "text-yellow-700" : "text-gray-400"}`}>
+      {allUsed
+        ? `⚠️ Has agotado tu cuota mensual (${used}/${limit}). Reinicia el 1 del próximo mes.`
+        : willExceed
+        ? `⚠️ Solo te quedan ${remaining} evaluaciones este mes y este paso consume ${consumes}.`
+        : `Te quedan ${remaining} evaluaciones IA este mes · cuenta esta: consume ${consumes}.`}
+    </p>
+  );
+}
+
+function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout, onOpenSettings, agencySettings, aiUsage, onRefreshUsage }) {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const active = processes.filter(p => p.status === "active").length;
   const totalCandidates = processes.reduce((s, p) => s + (p.candidates?.length || 0), 0);
   const hired = processes.reduce((s, p) => s + (p.candidates?.filter(c => c.estado === "Contratado" || c.phase === "hired").length || 0), 0);
   const isEmpty = processes.length === 0;
   const firstName = (user?.displayName || "").split(" ")[0];
+
+  // Re-read usage from Firestore on every dashboard mount so counters bumped
+  // server-side by autoEvaluate (candidate submissions) show up without a
+  // full page refresh. Cheap single-doc read.
+  useEffect(() => { onRefreshUsage?.(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const usageSnapshot = getCurrentUsage(aiUsage);
 
   // Checklist state for the empty-state hero — tracks what the user already has set up
   const hasBrand = !!(agencySettings?.brandManual && agencySettings.brandManual.trim());
@@ -5009,6 +5086,7 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
             {isAdminEmail(user?.email) && (
               <button onClick={() => { window.location.hash = "#admin"; }} className="px-3 py-2 border border-gray-900 bg-gray-900 text-white rounded-xl text-sm hover:bg-gray-800" title="Panel admin">🔐</button>
             )}
+            <AiUsagePill snapshot={usageSnapshot} />
             <button onClick={onOpenSettings} className="px-3 py-2 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Configuración de agencia">⚙️</button>
             <button onClick={onNew} className="px-5 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">+ Nuevo proceso</button>
             <button onClick={() => setShowLogoutConfirm(true)}
@@ -6050,6 +6128,11 @@ export default function App() {
   const [emailError, setEmailError] = useState("");
   const [resetSent, setResetSent] = useState(false);
   const [agencySettings, setAgencySettings] = useState({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "", notifications: { newApplication: "both", aiEvaluation: "instant", finalDecision: "both", dailyDigest: true } }, onboardingCompleted: false });
+  // AI evaluation usage snapshot — shape: { "YYYY-MM": { aiEvaluations: N } }.
+  // Loaded from the recruiter doc on auth, bumped optimistically when a
+  // manual eval succeeds, and refetched whenever the dashboard remounts to
+  // pick up server-side bumps from auto-evaluate (candidate submissions).
+  const [aiUsage, setAiUsage] = useState({});
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState("marca");
   const openSettings = (section) => {
@@ -6090,6 +6173,9 @@ export default function App() {
             }
             if (data.processes?.length > 0) setProcesses(data.processes);
             if (data.settings) setAgencySettings(data.settings);
+            // Usage counter lives at the root of the recruiter doc (not under
+            // settings) because it's a runtime counter, not user config.
+            if (data.usage) setAiUsage(data.usage);
             // Onboarding trigger for returning users whose first login didn't
             // complete the wizard (e.g. admin just activated a pending user —
             // the doc existed during the pending state but settings don't
@@ -6358,6 +6444,31 @@ export default function App() {
     setProcesses(ps => ps.filter(p => p.id !== id));
     if (activeJob?.id === id) setActiveJob(null);
   };
+
+  // Optimistic bump after a manual evaluation succeeds (exercise or
+  // interview). The real source of truth is the server counter in
+  // recruiters/{uid}.usage; this just keeps the UI snappy.
+  const bumpAiUsage = () => {
+    const period = getCurrentUsagePeriod();
+    setAiUsage(u => ({
+      ...u,
+      [period]: { ...(u[period] || {}), aiEvaluations: (u[period]?.aiEvaluations || 0) + 1 },
+    }));
+  };
+
+  // Re-read usage from Firestore. Called when the dashboard mounts so
+  // server-side bumps from /api/autoEvaluate (candidate submissions) are
+  // reflected without waiting for a full refresh.
+  const refreshAiUsage = async () => {
+    if (!user) return;
+    try {
+      const snap = await getDoc(doc(db, "recruiters", user.uid));
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.usage) setAiUsage(data.usage);
+      }
+    } catch (e) { /* silent — non-critical */ }
+  };
   const handleSaveSettings = (newSettings) => { setAgencySettings(s => ({ ...s, ...newSettings })); };
 
   const handleCompleteOnboarding = (newSettings) => {
@@ -6388,8 +6499,8 @@ export default function App() {
     <>
       {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} initialSection={settingsInitialSection} />}
       <FeedbackWidget user={user} />
-      {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={openSettings} agencySettings={agencySettings} />}
-      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} onDeleteProcess={handleDeleteProcess} onToggleStatus={handleToggle} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} />; })()}
+      {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={openSettings} agencySettings={agencySettings} aiUsage={aiUsage} onRefreshUsage={refreshAiUsage} />}
+      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} onDeleteProcess={handleDeleteProcess} onToggleStatus={handleToggle} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} aiUsage={aiUsage} onEvalConsumed={bumpAiUsage} />; })()}
       {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onPublishAndShare={handlePublishAndShare} onBack={goToDashboard} />}
       {phase === "preview" && <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />}
       {phase === "apply" && <CandidateApplyScreen job={activeJob} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />}
