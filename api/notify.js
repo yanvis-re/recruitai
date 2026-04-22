@@ -103,46 +103,66 @@ function buildNewApplicationMessage({ candidateName, candidateEmail, positionTit
   return { blocks };
 }
 
-function buildAiEvaluationMessage({ candidateName, positionTitle, evaluationType, recommendation, score }) {
+function buildAiEvaluationMessage({ candidateName, positionTitle, evaluationType, recommendation, score, dashboardUrl }) {
   const evalLabel = evaluationType === "exercise" ? "Ejercicio" : "Entrevista";
   const recColors = { AVANZAR: "✅", REVISAR: "⚠️", DESCARTAR: "❌", CONTRATAR: "🎉" };
   const recIcon = recColors[recommendation] || "📊";
-  return {
-    blocks: [
-      { type: "header", text: { type: "plain_text", text: `🤖 Evaluación IA completada · ${evalLabel}`, emoji: true } },
-      {
-        type: "section",
-        fields: [
-          { type: "mrkdwn", text: `*Candidato:*\n${candidateName}` },
-          { type: "mrkdwn", text: `*Puesto:*\n${positionTitle}` },
-          { type: "mrkdwn", text: `*Tipo:*\n${evalLabel}` },
-          { type: "mrkdwn", text: `*Resultado IA:*\n${recIcon} ${recommendation || "—"}${score ? ` (${score}/100)` : ""}` },
-        ],
-      },
-      { type: "divider" },
-      { type: "context", elements: [{ type: "mrkdwn", text: `RecruitAI · ${new Date().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" })}` }] },
-    ],
-  };
+  const blocks = [
+    { type: "header", text: { type: "plain_text", text: `🤖 Evaluación IA completada · ${evalLabel}`, emoji: true } },
+    {
+      type: "section",
+      fields: [
+        { type: "mrkdwn", text: `*Candidato:*\n${candidateName}` },
+        { type: "mrkdwn", text: `*Puesto:*\n${positionTitle}` },
+        { type: "mrkdwn", text: `*Tipo:*\n${evalLabel}` },
+        { type: "mrkdwn", text: `*Resultado IA:*\n${recIcon} ${recommendation || "—"}${score ? ` (${score}/100)` : ""}` },
+      ],
+    },
+  ];
+  if (dashboardUrl) {
+    blocks.push({
+      type: "actions",
+      elements: [{
+        type: "button",
+        text: { type: "plain_text", text: "📋 Abrir evaluación en RecruitAI", emoji: true },
+        url: dashboardUrl,
+        style: "primary",
+      }],
+    });
+  }
+  blocks.push({ type: "divider" });
+  blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `RecruitAI · ${new Date().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" })}` }] });
+  return { blocks };
 }
 
-function buildFinalDecisionMessage({ candidateName, positionTitle, decision }) {
+function buildFinalDecisionMessage({ candidateName, positionTitle, decision, dashboardUrl }) {
   const icons = { Contratado: "🎉", "Segunda entrevista": "🔄", "En cartera": "📁", Descartado: "❌" };
   const icon = icons[decision] || "✅";
-  return {
-    blocks: [
-      { type: "header", text: { type: "plain_text", text: `${icon} Decisión final tomada`, emoji: true } },
-      {
-        type: "section",
-        fields: [
-          { type: "mrkdwn", text: `*Candidato:*\n${candidateName}` },
-          { type: "mrkdwn", text: `*Puesto:*\n${positionTitle}` },
-          { type: "mrkdwn", text: `*Decisión:*\n${icon} ${decision}` },
-        ],
-      },
-      { type: "divider" },
-      { type: "context", elements: [{ type: "mrkdwn", text: `RecruitAI · ${new Date().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" })}` }] },
-    ],
-  };
+  const blocks = [
+    { type: "header", text: { type: "plain_text", text: `${icon} Decisión final tomada`, emoji: true } },
+    {
+      type: "section",
+      fields: [
+        { type: "mrkdwn", text: `*Candidato:*\n${candidateName}` },
+        { type: "mrkdwn", text: `*Puesto:*\n${positionTitle}` },
+        { type: "mrkdwn", text: `*Decisión:*\n${icon} ${decision}` },
+      ],
+    },
+  ];
+  if (dashboardUrl) {
+    blocks.push({
+      type: "actions",
+      elements: [{
+        type: "button",
+        text: { type: "plain_text", text: "📋 Abrir candidatura en RecruitAI", emoji: true },
+        url: dashboardUrl,
+        style: "primary",
+      }],
+    });
+  }
+  blocks.push({ type: "divider" });
+  blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `RecruitAI · ${new Date().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" })}` }] });
+  return { blocks };
 }
 
 function buildDailyDigestMessage({ processes, date }) {

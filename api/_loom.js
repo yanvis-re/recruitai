@@ -42,6 +42,15 @@ function extractVideoId(loomUrl) {
   return m ? m[1] : null;
 }
 
+// Strip query params (especially ?sid=…) and force the /share/ path. Loom
+// sometimes serves a different A/B variant of the page depending on the
+// session id, and our bot-headers combo may trigger the lighter SSR variant.
+function canonicalUrl(videoId, original) {
+  if (videoId) return `https://www.loom.com/share/${videoId}`;
+  try { const u = new URL(original); u.search = ""; return u.toString(); }
+  catch { return original; }
+}
+
 // Joins an array of { raw_text | text | content | value } objects into a
 // single space-separated string. Used by every extractor below.
 function joinSegments(arr) {
@@ -99,17 +108,26 @@ async function tryOembed(loomUrl) {
       return null;
     }
     const data = await res.json();
+    // Debug log: oEmbed top-level keys. Helps us learn what Loom currently
+    // exposes without logging (potentially sensitive) values.
+    console.log(`[loom] oembed keys: ${Object.keys(data || {}).join(", ") || "(empty)"}`);
     // oEmbed sometimes exposes a transcript field directly.
     if (data.transcript) {
-      if (typeof data.transcript === "string" && data.transcript.length > 20) return data.transcript.trim();
-      const walked = walkForTranscript(data.transcript);
-      if (walked) return walked;
-    }
-    // Check common fields just in case.
-    for (const k of ["description", "title", "html"]) {
-      if (typeof data[k] === "string" && data[k].length > 200 && /\.(\s|$)/.test(data[k])) {
-        // Unlikely to be a transcript — just noise. Skip.
+      if (typeof data.transcript === "string" && data.transcript.length > 20) {
+        console.log("[loom] transcript found via oembed.transcript (string)");
+        return data.transcript.trim();
       }
+      const walked = walkForTranscript(data.transcript);
+      if (walked) {
+        console.log("[loom] transcript found via oembed.transcript (nested)");
+        return walked;
+      }
+    }
+    // Final attempt: recursive walk across the entire oEmbed response.
+    const walkedAll = walkForTranscript(data);
+    if (walkedAll) {
+      console.log("[loom] transcript found via oembed recursive walk");
+      return walkedAll;
     }
     return null;
   } catch (e) {
@@ -142,10 +160,14 @@ async function tryApiEndpoints(videoId) {
           "Referer": `https://www.loom.com/share/${videoId}`,
         },
       });
+      // Log the status for every endpoint so we can see at a glance which
+      // returned something promising (200s) vs dead-end (404/403/500).
+      console.log(`[loom] api ${res.status} ← ${url}`);
       if (!res.ok) continue;
       const ct = res.headers.get("content-type") || "";
       if (ct.includes("application/json")) {
         const data = await res.json();
+        console.log(`[loom] api json keys (${url.split("/").slice(-1)[0]}): ${Object.keys(data || {}).join(", ") || "(empty)"}`);
         const walked = walkForTranscript(data);
         if (walked) {
           console.log(`[loom] transcript found via JSON endpoint: ${url}`);
@@ -174,7 +196,7 @@ async function tryApiEndpoints(videoId) {
         }
       }
     } catch (e) {
-      // Quietly try the next one — we expect most to 404.
+      console.log(`[loom] api error ${e.message} ← ${url}`);
     }
   }
   return null;
@@ -196,6 +218,12 @@ async function tryHtmlScrape(loomUrl) {
     if (nextMatch) {
       try {
         const data = JSON.parse(nextMatch[1]);
+        // Log top-level + pageProps keys so we can see the current Loom
+        // structure without reading the full blob.
+        const topKeys = Object.keys(data || {}).join(", ");
+        const ppKeys = Object.keys(data?.props?.pageProps || {}).join(", ");
+        console.log(`[loom] __NEXT_DATA__ top keys: ${topKeys || "(empty)"}`);
+        console.log(`[loom] __NEXT_DATA__ pageProps keys: ${ppKeys || "(empty)"}`);
         const walked = walkForTranscript(data);
         if (walked) {
           console.log(`[loom] transcript found via __NEXT_DATA__`);
@@ -204,6 +232,8 @@ async function tryHtmlScrape(loomUrl) {
       } catch (e) {
         console.warn(`[loom] __NEXT_DATA__ parse failed: ${e.message}`);
       }
+    } else {
+      console.log(`[loom] no __NEXT_DATA__ block in html`);
     }
 
     // Fallback: walk every inline JSON script tag.
@@ -245,20 +275,22 @@ async function tryHtmlScrape(loomUrl) {
 export async function fetchLoomTranscript(loomUrl) {
   if (!loomUrl) return null;
   const videoId = extractVideoId(loomUrl);
-  console.log(`[loom] fetching transcript for ${loomUrl} (videoId: ${videoId || "—"})`);
+  const canonical = canonicalUrl(videoId, loomUrl);
+  console.log(`[loom] fetching transcript for ${loomUrl} → canonical ${canonical} (videoId: ${videoId || "—"})`);
 
   // Strategy 1: oEmbed first (quickest).
-  const oembed = await tryOembed(loomUrl);
+  const oembed = await tryOembed(canonical);
   if (oembed) return oembed;
 
   // Strategy 2: API endpoints keyed by video UUID.
   const api = await tryApiEndpoints(videoId);
   if (api) return api;
 
-  // Strategy 3: HTML scrape (legacy path).
-  const html = await tryHtmlScrape(loomUrl);
+  // Strategy 3: HTML scrape (legacy path) — use the canonical URL so sid
+  // session params don't push us into a stripped SSR variant.
+  const html = await tryHtmlScrape(canonical);
   if (html) return html;
 
-  console.warn(`[loom] all strategies failed for ${loomUrl}`);
+  console.warn(`[loom] all strategies failed for ${canonical}`);
   return null;
 }

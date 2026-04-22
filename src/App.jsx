@@ -4147,6 +4147,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
       sendSlackNotification(agencySettings?.slackConfig, "ai_evaluation", {
         candidateName: candidate.name, positionTitle: position,
         evaluationType: "exercise", recommendation: aggregate.recommendation,
+        dashboardUrl: `${window.location.origin}/#process/${process.id}?candidate=${candidate.id}`,
       });
     } catch (e) { setError("Error al evaluar: " + e.message); }
     setEvaluatingEx(false);
@@ -4178,6 +4179,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
         candidateName: candidate.name, positionTitle: position,
         evaluationType: "interview", recommendation: json.evaluation?.candidate?.overall?.recommendation,
         score: json.evaluation?.candidate?.weights ? Math.round(json.evaluation.candidate.weights.reduce((s, w) => s + (w.score * w.weight / 100), 0)) : null,
+        dashboardUrl: `${window.location.origin}/#process/${process.id}?candidate=${candidate.id}`,
       });
     } catch (e) { setError("Error al evaluar: " + e.message); }
     setEvaluatingInt(false);
@@ -4224,6 +4226,7 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
       candidateName: candidate.name || "Candidato",
       positionTitle: getPositionTitle(process.position) || process.positionType || "la posición",
       decision,
+      dashboardUrl: `${window.location.origin}/#process/${process.id}?candidate=${candidate.id}`,
     });
   };
 
