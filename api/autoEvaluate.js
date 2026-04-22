@@ -156,11 +156,34 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, skipped: true, reason: "no_exercises_defined" });
     }
 
-    // 2. Brand manual from private recruiter doc
+    // 2. Brand manual — with multi-tenancy it lives on the agency, not the
+    //    recruiter doc. Resolution order:
+    //      a) proc.agencyId  → read agencies/{agencyId}.settings.brandManual
+    //      b) fallback: proc.recruiterUid → read recruiters/{uid}.agencyId
+    //         → read the agency (covers processes published before agencyId
+    //         was stamped on publicProcesses).
+    //      c) last-resort fallback: the legacy recruiters/{uid}.settings
+    //         path (keeps this working during transition for any doc we
+    //         haven't touched since the migration).
     let brandManual = "";
-    if (proc.recruiterUid) {
-      const recSnap = await db.collection("recruiters").doc(proc.recruiterUid).get();
-      if (recSnap.exists) brandManual = recSnap.data()?.settings?.brandManual || "";
+    let agencyIdForProc = proc.agencyId || null;
+    if (!agencyIdForProc && proc.recruiterUid) {
+      try {
+        const recSnap = await db.collection("recruiters").doc(proc.recruiterUid).get();
+        if (recSnap.exists) agencyIdForProc = recSnap.data()?.agencyId || null;
+      } catch { /* ignore */ }
+    }
+    if (agencyIdForProc) {
+      try {
+        const agSnap = await db.collection("agencies").doc(agencyIdForProc).get();
+        if (agSnap.exists) brandManual = agSnap.data()?.settings?.brandManual || "";
+      } catch { /* ignore */ }
+    }
+    if (!brandManual && proc.recruiterUid) {
+      try {
+        const recSnap = await db.collection("recruiters").doc(proc.recruiterUid).get();
+        if (recSnap.exists) brandManual = recSnap.data()?.settings?.brandManual || "";
+      } catch { /* ignore */ }
     }
 
     // 3. Application responses

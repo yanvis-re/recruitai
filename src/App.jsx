@@ -5278,6 +5278,97 @@ function getPipelineStats(process) {
   return { total: c.length, hired: c.filter(x => x.estado === "Contratado" || x.phase === "hired").length, interview: c.filter(x => x.estado === "Primera entrevista" || x.estado === "Segunda entrevista").length };
 }
 
+// ProcessesList: dashboard processes with search + filters. Mirrors the
+// candidate-table filter pattern so both feel familiar. With multi-tenancy
+// the agency can have many processes from multiple members, so filter-by-
+// author is genuinely useful (switches "just mine" / "everyone's").
+function ProcessesList({ processes, user, onView, onToggle }) {
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [authorFilter, setAuthorFilter] = useState("all");
+
+  const q = search.trim().toLowerCase();
+  const filtered = (processes || []).filter(p => {
+    // Search across position title, company name, sector, location and the
+    // custom title (for positionType === "otro").
+    if (q) {
+      const blob = [
+        p.company?.name,
+        p.company?.sector,
+        p.company?.location,
+        p.position?.specialty,
+        p.position?.customTitle,
+        getPositionTitle(p.position),
+      ].filter(Boolean).join(" ").toLowerCase();
+      if (!blob.includes(q)) return false;
+    }
+    if (statusFilter !== "all" && (p.status || "active") !== statusFilter) return false;
+    if (authorFilter === "mine" && p.createdBy !== user?.uid) return false;
+    if (authorFilter === "others" && (p.createdBy === user?.uid || !p.createdBy)) return false;
+    return true;
+  });
+  const hasFilters = q || statusFilter !== "all" || authorFilter !== "all";
+
+  if ((processes || []).length === 0) return null;
+
+  return (
+    <>
+      <div className="mb-3 px-4 py-3 bg-white border border-gray-100 rounded-2xl shadow-sm flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[180px]">
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Buscar por puesto, empresa, sector, ubicación..."
+            className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-300 bg-white"
+          />
+        </div>
+        <select
+          value={statusFilter}
+          onChange={e => setStatusFilter(e.target.value)}
+          className="text-xs font-semibold px-3 py-2 border border-gray-200 rounded-lg bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300"
+        >
+          <option value="all">Todos los estados</option>
+          <option value="active">Activos</option>
+          <option value="paused">Pausados</option>
+        </select>
+        <select
+          value={authorFilter}
+          onChange={e => setAuthorFilter(e.target.value)}
+          className="text-xs font-semibold px-3 py-2 border border-gray-200 rounded-lg bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300"
+          title="Filtrar por autor"
+        >
+          <option value="all">Todos los autores</option>
+          <option value="mine">Creados por mí</option>
+          <option value="others">De otros miembros</option>
+        </select>
+        {hasFilters && (
+          <button
+            onClick={() => { setSearch(""); setStatusFilter("all"); setAuthorFilter("all"); }}
+            className="text-xs font-semibold text-gray-500 hover:text-gray-900 px-2"
+          >
+            Limpiar
+          </button>
+        )}
+        <span className="text-xs text-gray-400 ml-auto">
+          {hasFilters ? `${filtered.length} de ${processes.length}` : `${processes.length}`}
+        </span>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="bg-white border border-gray-100 rounded-2xl p-8 text-center text-sm text-gray-400">
+          Ningún proceso coincide con los filtros.
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {filtered.map(p => <ProcessCard key={p.id} process={p} onView={onView} onToggle={onToggle} />)}
+        </div>
+      )}
+    </>
+  );
+}
+
 function ProcessCard({ process, onView, onToggle }) {
   const stats = getPipelineStats(process);
   const isActive = process.status === "active";
@@ -5698,7 +5789,7 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
                 {procCounts.agency}/{procCounts.agencyLimit} · tuyos {procCounts.user}/{procCounts.userLimit}
               </span>
             </div>
-            <div className="space-y-4">{processes.map(p => <ProcessCard key={p.id} process={p} onView={onView} onToggle={onToggle} />)}</div>
+            <ProcessesList processes={processes} user={user} onView={onView} onToggle={onToggle} />
           </>
         )}
       </div>
@@ -6190,6 +6281,75 @@ function AcceptAgencyInviteScreen({ token, user, onAccepted, onDismissed }) {
   );
 }
 
+// ─── Invitee welcome screen (one-shot after accepting an agency invite) ────
+// The regular OnboardingScreen targets brand-new recruiters setting up their
+// own agency. When a teammate joins an existing agency, that flow is
+// inappropriate (brand + email + Slack are already configured by the owner).
+// This screen gives them context and a clear CTA into the dashboard.
+function InviteeWelcomeScreen({ user, role, agencyName, onContinue }) {
+  const firstName = (user?.displayName || user?.email?.split("@")[0] || "").split(" ")[0];
+  const roleLabel = role === "admin" ? "administrador" : "member";
+  const roleBullets = role === "admin"
+    ? [
+        "Crear, editar y borrar procesos de selección",
+        "Invitar a otros miembros (como admin o member)",
+        "Eliminar members del equipo",
+        "Ver todas las candidaturas y evaluaciones de la agencia",
+      ]
+    : [
+        "Crear, editar y borrar procesos de selección",
+        "Publicar ofertas y recibir candidatos",
+        "Ver todas las candidaturas y evaluaciones de la agencia",
+        "La gestión de miembros la lleva el owner / admin",
+      ];
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="max-w-md w-full">
+          <div className="bg-white rounded-3xl border border-gray-200 p-8 shadow-sm">
+            <div className="text-center mb-6">
+              <div className="text-5xl mb-3">🎉</div>
+              <h1 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">
+                ¡Bienvenido{firstName ? `, ${firstName}` : ""}!
+              </h1>
+              <p className="text-gray-500 text-sm leading-relaxed">
+                Te has unido a <strong className="text-gray-800">{agencyName || "la agencia"}</strong> como <strong className="text-gray-800">{roleLabel}</strong>.
+              </p>
+            </div>
+
+            <div className="bg-gray-50 border border-gray-100 rounded-2xl p-5 mb-5">
+              <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-3">Qué puedes hacer</p>
+              <ul className="space-y-2">
+                {roleBullets.map((b, i) => (
+                  <li key={i} className="flex gap-2 text-sm text-gray-700 leading-relaxed">
+                    <span className="shrink-0">✓</span>
+                    <span>{b}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-4 mb-5">
+              <p className="text-xs text-indigo-900 leading-relaxed">
+                💡 El manual de marca, email y Slack ya están configurados por el owner de la agencia. Si necesitas ajustar algo, habla con quien gestiona el equipo.
+              </p>
+            </div>
+
+            <button
+              onClick={onContinue}
+              className="w-full py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800"
+            >
+              🚀 Ir al dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+      <BrandFooter />
+    </div>
+  );
+}
+
 // ─── Pending approval screen (new user awaits admin activation) ─────────────
 function PendingApprovalScreen({ user, onLogout }) {
   return (
@@ -6639,6 +6799,7 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wide">
                   <th className="text-left px-4 py-3">Usuario</th>
+                  <th className="text-left px-4 py-3">Agencia</th>
                   <th className="text-left px-4 py-3">Estado</th>
                   <th className="text-left px-4 py-3">Registro</th>
                   <th className="text-left px-4 py-3">Última sesión</th>
@@ -6649,18 +6810,37 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
               </thead>
               <tbody>
                 {filtered.length === 0 && (
-                  <tr><td colSpan={7} className="text-center py-10 text-sm text-gray-400">No hay usuarios que coincidan.</td></tr>
+                  <tr><td colSpan={8} className="text-center py-10 text-sm text-gray-400">No hay usuarios que coincidan.</td></tr>
                 )}
                 {filtered.map(u => {
                   const meta = STATUS_META[u.status] || STATUS_META.active;
                   const isBusy = actionState?.uid === u.uid;
                   const isAdminSelf = u.email === adminUser.email;
+                  const roleBadge = u.role === "owner"
+                    ? { label: "Owner", cls: "bg-gray-900 text-white" }
+                    : u.role === "admin"
+                      ? { label: "Admin", cls: "bg-indigo-100 text-indigo-700" }
+                      : u.role === "member"
+                        ? { label: "Member", cls: "bg-gray-100 text-gray-700" }
+                        : null;
                   return (
                     <tr key={u.uid} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/40 ${isAdminSelf ? "bg-indigo-50/30" : ""}`}>
                       <td className="px-4 py-3">
                         <p className="font-bold text-gray-800">{u.displayName || "(sin nombre)"}</p>
                         <p className="text-xs text-gray-500">{u.email || "—"}</p>
                         {isAdminSelf && <p className="text-[10px] text-indigo-700 font-bold mt-1">👑 TÚ (admin)</p>}
+                      </td>
+                      <td className="px-4 py-3">
+                        {u.agencyName ? (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs font-semibold text-gray-800 truncate max-w-[180px]" title={u.agencyName}>{u.agencyName}</span>
+                            {roleBadge && (
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${roleBadge.cls}`}>{roleBadge.label}</span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-gray-400">—</span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${meta.cls}`}>{meta.label}</span>
@@ -6833,6 +7013,10 @@ export default function App() {
   // not its settings or processes. Loaded alongside agencyId. The settings
   // modal's Members tab reads this directly.
   const [agency, setAgency] = useState(null);
+  // One-shot invitee welcome. Set to { role, agencyName } when the server
+  // stamps inviteeWelcomePending on the recruiter doc (fires inside the
+  // agency-invite accept transaction). Cleared when the user dismisses.
+  const [inviteeWelcome, setInviteeWelcome] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState("marca");
   const openSettings = (section) => {
@@ -6874,6 +7058,16 @@ export default function App() {
             // Usage counter lives at the root of the recruiter doc (not under
             // settings) because it's a runtime counter, not user config.
             if (data.usage) setAiUsage(data.usage);
+
+            // One-shot welcome for freshly-accepted invitees (set by the
+            // server inside the accept transaction). We clear the flag when
+            // they dismiss — see dismissInviteeWelcome below.
+            if (data.inviteeWelcomePending) {
+              setInviteeWelcome({
+                role: data.inviteeWelcomeRole || "member",
+                agencyName: data.inviteeWelcomeAgencyName || "",
+              });
+            }
 
             // ── Multi-tenancy resolution ───────────────────────────────────
             // If the recruiter already has an agencyId, load that agency's
@@ -7144,6 +7338,7 @@ export default function App() {
     setAgencyId(null);
     setAgency(null);
     setAiUsage({});
+    setInviteeWelcome(null);
     setShowOnboarding(false);
     setAccountStatus(null);
     setPhase("dashboard");
@@ -7235,6 +7430,21 @@ export default function App() {
     } catch (e) { /* silent — non-critical */ }
   };
 
+  // Dismiss the one-time invitee welcome screen. Updates local state
+  // immediately (so the screen disappears) and clears the server flags in
+  // the background so the welcome doesn't re-fire on the next login.
+  const dismissInviteeWelcome = async () => {
+    setInviteeWelcome(null);
+    if (!user) return;
+    try {
+      await setDoc(doc(db, "recruiters", user.uid), {
+        inviteeWelcomePending: false,
+        inviteeWelcomeRole: null,
+        inviteeWelcomeAgencyName: null,
+      }, { merge: true });
+    } catch (e) { /* silent */ }
+  };
+
   // Refresh just the agency's membership metadata (name, members, roles).
   // Called after invite-accept / role-change / ownership-transfer / member
   // removal so the Members tab reflects the latest state without waiting
@@ -7309,6 +7519,18 @@ export default function App() {
   }
 
   if (accountStatus === "pending") return <PendingApprovalScreen user={user} onLogout={handleLogout} />;
+
+  // One-shot welcome for just-joined teammates. Overrides the regular
+  // onboarding wizard (which targets brand-new recruiters setting up their
+  // first agency, not someone joining an existing one).
+  if (inviteeWelcome) {
+    return <InviteeWelcomeScreen
+      user={user}
+      role={inviteeWelcome.role}
+      agencyName={inviteeWelcome.agencyName}
+      onContinue={dismissInviteeWelcome}
+    />;
+  }
 
   if (showOnboarding) return <OnboardingScreen user={user} onComplete={handleCompleteOnboarding} />;
 

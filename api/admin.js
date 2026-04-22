@@ -61,8 +61,18 @@ async function requireAdmin(req, res) {
 
 async function listUsers(req, res) {
   const db = admin.firestore();
-  const snap = await db.collection("recruiters").get();
-  const users = await Promise.all(snap.docs.map(async (d) => {
+  const [recSnap, agencySnap] = await Promise.all([
+    db.collection("recruiters").get(),
+    db.collection("agencies").get(),
+  ]);
+
+  // Build an agency lookup once. Each user hits this map in O(1) instead of
+  // fetching N individual agency docs. Works well up to a few thousand
+  // agencies, which is way past our beta-tier scale.
+  const agencyById = {};
+  agencySnap.forEach(d => { agencyById[d.id] = d.data(); });
+
+  const users = await Promise.all(recSnap.docs.map(async (d) => {
     const data = d.data();
     let lastSignInTime = null;
     let authEmail = data.email || "";
@@ -73,6 +83,19 @@ async function listUsers(req, res) {
       authEmail = rec.email || authEmail;
       authName = rec.displayName || authName;
     } catch { /* auth user may not exist */ }
+
+    // Agency metadata: with multi-tenancy, processes and candidates live on
+    // the agency, not the recruiter. Pre-migration docs still have those
+    // fields locally; we fall back to them so counts stay accurate during
+    // the transition.
+    const agencyId = data.agencyId || null;
+    const agency = agencyId ? agencyById[agencyId] : null;
+    const processes = agency?.processes || data.processes || [];
+    const myRole =
+      agency?.ownerUid === d.id ? "owner"
+      : (agency?.members || []).find(m => m.uid === d.id)?.role
+      || (agency ? "member" : null);
+
     return {
       uid: d.id,
       email: authEmail,
@@ -82,10 +105,14 @@ async function listUsers(req, res) {
       statusNote: data.statusNote || "",
       createdAt: data.createdAt || null,
       lastSignInTime,
-      processCount: (data.processes || []).length,
-      candidateCount: (data.processes || []).reduce((s, p) => s + (p.candidates?.length || 0), 0),
+      agencyId,
+      agencyName: agency?.name || "",
+      role: myRole,
+      processCount: processes.length,
+      candidateCount: processes.reduce((s, p) => s + (p.candidates?.length || 0), 0),
     };
   }));
+
   users.sort((a, b) => {
     const aT = new Date(a.createdAt || a.lastSignInTime || 0).getTime();
     const bT = new Date(b.createdAt || b.lastSignInTime || 0).getTime();

@@ -186,6 +186,11 @@ async function acceptAgency(req, res) {
           agencyId: invite.agencyId,
           status: "active",
           statusUpdatedAt: now,
+          // Marker so the client can show a one-time welcome screen to the
+          // just-joined teammate. Cleared when they dismiss it.
+          inviteeWelcomePending: true,
+          inviteeWelcomeRole: invite.role || "member",
+          inviteeWelcomeAgencyName: agency.name || "",
         }, { merge: true });
       }
 
