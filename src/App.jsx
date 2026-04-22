@@ -1135,7 +1135,7 @@ function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, 
   );
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center p-6">
+    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 gap-4">
       <div className="bg-white rounded-3xl shadow-xl border border-gray-100 p-8 sm:p-10 max-w-md w-full">
         {/* Header */}
         <div className="text-center mb-7">
@@ -3449,6 +3449,7 @@ function ProcessCard({ process, onView, onToggle }) {
 }
 
 function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout, onOpenSettings, agencySettings }) {
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const active = processes.filter(p => p.status === "active").length;
   const totalCandidates = processes.reduce((s, p) => s + (p.candidates?.length || 0), 0);
   const hired = processes.reduce((s, p) => s + (p.candidates?.filter(c => c.estado === "Contratado" || c.phase === "hired").length || 0), 0);
@@ -3473,7 +3474,12 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
             <span className="text-sm text-gray-600 hidden sm:block">{firstName}</span>
             <button onClick={onOpenSettings} className="px-3 py-2 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Configuración de agencia">⚙️</button>
             <button onClick={onNew} className="px-5 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">+ Nuevo proceso</button>
-            <button onClick={onLogout} className="px-3 py-2.5 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Cerrar sesión">↩</button>
+            <button onClick={() => setShowLogoutConfirm(true)}
+              className="px-3 py-2.5 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50 hover:text-gray-900 transition-colors flex items-center gap-1.5"
+              title="Cerrar sesión">
+              <span>↩</span>
+              <span className="hidden sm:inline font-medium">Cerrar sesión</span>
+            </button>
           </div>
         </div>
       </div>
@@ -3623,6 +3629,28 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
         )}
       </div>
       <BrandFooter />
+
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-xl max-w-sm w-full p-6">
+            <div className="text-center mb-5">
+              <div className="text-4xl mb-2">👋</div>
+              <h3 className="font-bold text-gray-900 text-lg mb-1">¿Cerrar sesión?</h3>
+              <p className="text-sm text-gray-500 leading-relaxed">Volverás a la pantalla de login. Tus procesos y datos se quedan guardados, al volver a entrar estarán aquí.</p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setShowLogoutConfirm(false)}
+                className="flex-1 py-3 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button onClick={() => { setShowLogoutConfirm(false); onLogout(); }}
+                className="flex-1 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
+                Cerrar sesión
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
