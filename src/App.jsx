@@ -1317,13 +1317,22 @@ function JobPreviewScreen({ job, onApply, onBack }) {
 // prefix fills itself automatically. We store both the assembled phone
 // string (with prefix, used everywhere downstream — emails, Slack, CSVs)
 // and the ISO country code (for geo analytics and so we can re-hydrate
-// the selector on edit). Local number is free-form digits/spaces, we
-// don't over-validate to stay country-agnostic.
+// the selector on edit).
+//
+// Local number is filtered to digits + common phone formatting chars on
+// every keystroke so the candidate cannot type letters. inputMode="tel"
+// also surfaces the numeric keypad on mobile, but that's a hint only —
+// the controlled-filter below is what actually enforces it, both on
+// desktop keyboards and when pasting.
+function sanitizePhoneLocal(v) {
+  return (v || "").replace(/[^\d\s\-()+]/g, "");
+}
+
 function CountryPhoneInput({ country, localNumber, onChange }) {
   const current = COUNTRIES.find(c => c.code === country) || COUNTRIES[0];
   const update = (nextCountry, nextLocal) => {
     const c = COUNTRIES.find(x => x.code === nextCountry) || current;
-    const local = (nextLocal ?? localNumber ?? "").trim();
+    const local = sanitizePhoneLocal(nextLocal ?? localNumber ?? "").trim();
     const phone = local ? `${c.dial} ${local}` : "";
     onChange({ country: c.code, localNumber: local, phone });
   };
@@ -1345,6 +1354,15 @@ function CountryPhoneInput({ country, localNumber, onChange }) {
         className={inp}
         value={localNumber || ""}
         onChange={(e) => update(current.code, e.target.value)}
+        onKeyDown={(e) => {
+          // Allow navigation/editing keys; block everything else that isn't
+          // a digit or phone-format char. Metamodifiers (cmd/ctrl) pass through
+          // so cut/copy/paste/select-all still work.
+          if (e.metaKey || e.ctrlKey || e.altKey) return;
+          const navKeys = ["Backspace","Delete","Tab","ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","Enter"];
+          if (navKeys.includes(e.key)) return;
+          if (e.key.length === 1 && !/[\d\s\-()+]/.test(e.key)) e.preventDefault();
+        }}
         placeholder="600 000 000"
         inputMode="tel"
       />
@@ -2004,14 +2022,31 @@ function CandidatePublicScreen({ processId }) {
 
   if (loading) return <LoadingScreen />;
   if (error) return (
-    <div className="min-h-screen bg-white flex items-center justify-center p-6">
-      <div className="max-w-md w-full text-center">
-        <div className="bg-white rounded-3xl border border-gray-200 p-8 sm:p-10">
-          <div className="text-5xl mb-4">⚠️</div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Proceso no disponible</h1>
-          <p className="text-gray-500 text-sm leading-relaxed">{error}</p>
+    // Dead-end screen for expired/deleted process links. A candidate who
+    // copied a URL months ago or received it forwarded may end up here;
+    // make it feel intentional (branded, clear copy, exit CTA) rather
+    // than a raw error.
+    <div className="min-h-screen bg-white flex flex-col">
+      <CandidateTopBar counterText="" />
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="max-w-md w-full text-center">
+          <div className="bg-white rounded-3xl border border-gray-200 p-8 sm:p-10">
+            <div className="text-5xl mb-4">🗂️</div>
+            <h1 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">Este proceso ya no está activo</h1>
+            <p className="text-gray-500 text-sm leading-relaxed mb-5">
+              El enlace que has usado apunta a un proceso que ya ha cerrado o ha sido retirado por el equipo de selección. No hay nada roto en tu lado.
+            </p>
+            <p className="text-xs text-gray-400 leading-relaxed mb-5">
+              Si crees que es un error, contacta con la persona que te compartió el enlace.
+            </p>
+            <a href="https://rumboeficiente.com" target="_blank" rel="noreferrer"
+              className="inline-block px-5 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 transition-colors">
+              Visitar Rumbo Eficiente →
+            </a>
+          </div>
         </div>
       </div>
+      <BrandFooter />
     </div>
   );
   if (submitted) {
