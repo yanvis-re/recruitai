@@ -1222,7 +1222,7 @@ function CandidateTopBar({ counterText }) {
   );
 }
 
-function JobPreviewScreen({ job, onApply, onBack }) {
+function JobPreviewScreen({ job, onApply, onBack, hasDraft }) {
   const exCount = job.exercises?.length || 1;
   return (
     <div className="min-h-screen bg-white">
@@ -1237,6 +1237,20 @@ function JobPreviewScreen({ job, onApply, onBack }) {
       </div>
 
       <div className="max-w-2xl mx-auto px-6 py-8 sm:py-10">
+        {hasDraft && (
+          // Announced only on the preview step so it's the first thing the
+          // candidate sees when they reopen the link. Past that point the
+          // restored data is visible in the form itself.
+          <div className="mb-5 bg-indigo-50 border border-indigo-100 rounded-2xl px-4 py-3 flex items-start gap-3">
+            <span className="text-xl leading-none">📝</span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-indigo-900">Has recuperado tu aplicación</p>
+              <p className="text-xs text-indigo-700 mt-0.5 leading-relaxed">
+                Tus respuestas y datos anteriores se han guardado automáticamente. Continúa donde lo dejaste.
+              </p>
+            </div>
+          </div>
+        )}
         {/* Company + position hero */}
         <div className="bg-white rounded-3xl border border-gray-200 overflow-hidden mb-5">
           <div className="p-6 sm:p-8 border-b border-gray-100">
@@ -1322,7 +1336,7 @@ function JobPreviewScreen({ job, onApply, onBack }) {
 
         <button onClick={onApply}
           className="w-full bg-gray-900 text-white py-4 rounded-xl font-bold hover:bg-gray-800 transition-colors">
-          🚀 Solicitar empleo
+          {hasDraft ? "Continuar mi aplicación →" : "🚀 Solicitar empleo"}
         </button>
       </div>
     </div>
@@ -1968,6 +1982,54 @@ function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, 
   );
 }
 
+// localStorage draft persistence for the public apply flow.
+//
+// Why: a candidate might type a long answer, upload a PDF, record a Loom,
+// and then accidentally refresh / close the tab / lose wifi before
+// submitting. Losing 20 minutes of work is unacceptable — we persist the
+// form + responses in localStorage scoped per processId so the draft
+// survives full page reloads on the same device.
+//
+// Scope: only the public apply flow (CandidatePublicScreen). Auth'd
+// recruiters already have Firestore persistence.
+// TTL: drafts older than 30 days auto-expire on next load.
+const APPLY_DRAFT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const applyDraftKey = (processId) => `recruitai_apply_draft_${processId}`;
+
+function loadApplyDraft(processId) {
+  try {
+    const raw = localStorage.getItem(applyDraftKey(processId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed.savedAt || Date.now() - parsed.savedAt > APPLY_DRAFT_TTL_MS) {
+      localStorage.removeItem(applyDraftKey(processId));
+      return null;
+    }
+    return parsed;
+  } catch {
+    // Corrupted entry — drop it so future loads start clean.
+    try { localStorage.removeItem(applyDraftKey(processId)); } catch {}
+    return null;
+  }
+}
+
+function saveApplyDraft(processId, candidate, responses) {
+  try {
+    localStorage.setItem(applyDraftKey(processId), JSON.stringify({
+      candidate: candidate || null,
+      responses: responses || [],
+      savedAt: Date.now(),
+    }));
+  } catch {
+    // localStorage can throw in private mode / when quota is full / etc.
+    // Silent — draft persistence is best-effort, never fatal.
+  }
+}
+
+function clearApplyDraft(processId) {
+  try { localStorage.removeItem(applyDraftKey(processId)); } catch {}
+}
+
 // ─── PUBLIC CANDIDATE SCREEN ──────────────────────────────────────────────────
 function CandidatePublicScreen({ processId }) {
   const [processData, setProcessData] = useState(null);
@@ -1981,15 +2043,47 @@ function CandidatePublicScreen({ processId }) {
   // candidate can use the new "← Volver" buttons between phases without
   // losing their typed answers or uploaded documents on remount.
   const [responses, setResponses] = useState([]);
+  // Draft-restored flag: set when we rehydrated meaningful content from
+  // localStorage on mount. Used to render a subtle "continuing where you
+  // left off" banner on the job preview.
+  const [draftRestored, setDraftRestored] = useState(false);
 
-  // When the process finishes loading, seed an empty response slot per
-  // exercise so ExercisesScreen is pure and re-mountable. Only seeds once.
+  // When the process finishes loading, either seed empty response slots per
+  // exercise (fresh visit) or rehydrate from localStorage if a saved draft
+  // exists. Exercise IDs are reconciled against the current process: if the
+  // recruiter edited the exercises between sessions, stale responses are
+  // dropped and the slot is replaced with an empty one.
   useEffect(() => {
-    if (processData?.exercises?.length && responses.length === 0) {
-      setResponses(processData.exercises.map(e => ({ exerciseId: e.id, response: "", loomUrl: "" })));
+    if (!processData?.exercises?.length) return;
+    const draft = loadApplyDraft(processId);
+    const emptyResponses = processData.exercises.map(e => ({ exerciseId: e.id, response: "", loomUrl: "" }));
+
+    if (draft) {
+      const merged = emptyResponses.map(empty => {
+        const hit = (draft.responses || []).find(r => r.exerciseId === empty.exerciseId);
+        return hit ? { ...empty, ...hit } : empty;
+      });
+      const hasContent = !!draft.candidate || merged.some(r => (r.response || r.loomUrl));
+      if (draft.candidate) setCandidate(draft.candidate);
+      setResponses(merged);
+      if (hasContent) setDraftRestored(true);
+    } else if (responses.length === 0) {
+      setResponses(emptyResponses);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [processData]);
+
+  // Persist draft whenever candidate or responses change, with a small
+  // debounce so we don't thrash localStorage on every keystroke. Skipped
+  // while processData is loading (we'd write empty state) and after
+  // submission (submitted drafts are actively cleared below).
+  useEffect(() => {
+    if (!processData || submitted) return;
+    const hasContent = !!candidate || responses.some(r => r.response || r.loomUrl);
+    if (!hasContent) return;
+    const t = setTimeout(() => saveApplyDraft(processId, candidate, responses), 300);
+    return () => clearTimeout(t);
+  }, [candidate, responses, submitted, processData, processId]);
 
   useEffect(() => {
     const load = async () => {
@@ -2080,6 +2174,8 @@ function CandidatePublicScreen({ processId }) {
       }).catch(e => console.error("Slack notify error:", e));
 
       setSubmitted(true);
+      // Application landed in Firestore — the draft has served its purpose.
+      clearApplyDraft(processId);
     } catch (e) { alert("Error al enviar. Inténtalo de nuevo."); }
     setSubmitting(false);
   };
@@ -2137,7 +2233,7 @@ function CandidatePublicScreen({ processId }) {
       </div>
     );
   }
-  if (phase === "preview") return <JobPreviewScreen job={processData} onApply={() => setPhase("apply")} onBack={null} />;
+  if (phase === "preview") return <JobPreviewScreen job={processData} onApply={() => setPhase("apply")} onBack={null} hasDraft={draftRestored} />;
   if (phase === "apply") return (
     <CandidateApplyScreen
       job={processData}
