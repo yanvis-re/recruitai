@@ -5304,6 +5304,7 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
   const [search, setSearch] = useState("");
   const [actionState, setActionState] = useState(null); // { uid, action }
   const [deleteTarget, setDeleteTarget] = useState(null);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
   // Invite codes tab state
   const [codes, setCodes] = useState([]);
@@ -5463,7 +5464,7 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
           </div>
           <div className="flex items-center gap-2">
             <button onClick={onExit} className="text-xs text-gray-500 hover:text-gray-900 font-medium">← Volver a la app</button>
-            <button onClick={onLogout} className="px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg text-xs hover:bg-gray-50">Cerrar sesión</button>
+            <button onClick={() => setShowLogoutConfirm(true)} className="px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg text-xs hover:bg-gray-50">Cerrar sesión</button>
           </div>
         </div>
       </div>
@@ -5627,6 +5628,32 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
         confirmLabel="Sí, eliminar permanentemente"
         confirmStyle="bg-red-500 hover:bg-red-600"
       />
+
+      {/* Logout confirmation — same pattern as RecruiterDashboard so the admin
+          doesn't click it by mistake while in the middle of reviewing users. */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-xl max-w-sm w-full p-6">
+            <div className="text-center mb-5">
+              <div className="text-4xl mb-2">👋</div>
+              <h3 className="font-bold text-gray-900 text-lg mb-1">¿Cerrar sesión?</h3>
+              <p className="text-sm text-gray-500 leading-relaxed">
+                Saldrás del panel de administración y volverás a la pantalla de login.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setShowLogoutConfirm(false)}
+                className="flex-1 py-3 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button onClick={() => { setShowLogoutConfirm(false); onLogout(); }}
+                className="flex-1 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">
+                Cerrar sesión
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -5782,16 +5809,32 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
-    // 400ms debounce (was 1000ms). Short enough that a refresh shortly after
-    // creating a process still catches the write; long enough to avoid
-    // hammering Firestore during rapid edits in the evaluation panel.
+    // CRITICAL: gate on settingsLoaded.
+    //
+    // Without this gate we have a classic hydrate-vs-autosave race: on login,
+    // onAuthStateChanged does `setUser(u)` BEFORE awaiting the Firestore read
+    // that hydrates processes + settings. That state change alone triggers
+    // this effect with the default empty arrays/objects, schedules a 400ms
+    // setTimeout, and if the Firestore read takes longer than that (common on
+    // cold loads or slow network) the setTimeout fires FIRST and writes the
+    // defaults back to Firestore with merge: true — silently wiping the
+    // user's processes and agency settings. Then when the read finally
+    // resolves, the doc is already empty.
+    //
+    // With the guard, autosave is enabled ONLY after the hydration path has
+    // completed (setSettingsLoaded(true) at the end of the auth handler), so
+    // the effect never fires with stale initial defaults.
+    //
+    // 400ms debounce: short enough that a refresh shortly after creating a
+    // process still catches the write; long enough to avoid hammering
+    // Firestore during rapid edits in the evaluation panel.
+    if (!user || !settingsLoaded) return;
     const t = setTimeout(async () => {
       try { await setDoc(doc(db, "recruiters", user.uid), { processes, settings: agencySettings, updatedAt: new Date().toISOString() }, { merge: true }); }
       catch (e) { console.error("Error saving:", e); }
     }, 400);
     return () => clearTimeout(t);
-  }, [processes, agencySettings, user]);
+  }, [processes, agencySettings, user, settingsLoaded]);
 
   // ── Slack OAuth callback: detect webhook URL returned from /api/slack/callback ──
   useEffect(() => {
@@ -5864,7 +5907,24 @@ export default function App() {
   };
 
   const clearAuthState = () => { setEmailError(""); setResetSent(false); };
-  const handleLogout = async () => { await signOut(auth); setProcesses([]); setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setShowOnboarding(false); setAccountStatus(null); setPhase("dashboard"); };
+  const handleLogout = async () => {
+    // CRITICAL ORDER: flip settingsLoaded OFF before touching processes/settings.
+    //
+    // The autosave effect is gated on `settingsLoaded`. By setting it to
+    // false first we guarantee the subsequent setProcesses([]) and
+    // setAgencySettings(defaults) calls — which exist only to clear the UI —
+    // do NOT schedule a Firestore write that would overwrite the user's real
+    // data with empty defaults on logout. (This was the second data-loss
+    // path; even with user still non-null, the autosave would fire with the
+    // reset state before onAuthStateChanged nulled it out.)
+    setSettingsLoaded(false);
+    await signOut(auth);
+    setProcesses([]);
+    setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false });
+    setShowOnboarding(false);
+    setAccountStatus(null);
+    setPhase("dashboard");
+  };
   const goToDashboard = () => { setPhase("dashboard"); setActiveJob(null); setCandidate(null); setEvaluation(null); setInterview(null); };
   const handlePublish = (jobData) => {
     // Save-only flow: create the process + return to the dashboard without
