@@ -239,10 +239,10 @@ function RecruiterSetupScreen({ onPublish, onPublishAndShare, onBack }) {
     try {
       const text = await extractTextFromFile(file);
       if (!text.trim() || text.trim().length < 50) throw new Error("El documento parece vacío o no tiene texto.");
-      const res = await fetch("/api/parseExerciseDocument", {
+      const res = await fetch("/api/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ action: "exercise", text }),
       });
       const json = await res.json();
       if (json.error) throw new Error(json.error);
@@ -288,10 +288,10 @@ function RecruiterSetupScreen({ onPublish, onPublishAndShare, onBack }) {
     try {
       const text = await extractTextFromFile(file);
       if (!text.trim() || text.trim().length < 30) throw new Error("El documento parece vacío.");
-      const res = await fetch("/api/parseCriteriaDocument", {
+      const res = await fetch("/api/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ action: "criteria", text }),
       });
       const json = await res.json();
       if (json.error) throw new Error(json.error);
@@ -346,10 +346,10 @@ function RecruiterSetupScreen({ onPublish, onPublishAndShare, onBack }) {
       if (!text.trim() || text.trim().length < 50) {
         throw new Error("El documento parece vacío o no contiene texto legible.");
       }
-      const res = await fetch("/api/parseJobDocument", {
+      const res = await fetch("/api/parse", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ action: "job", text }),
       });
       const json = await res.json();
       if (!res.ok || json.error) throw new Error(json.error || "Error desconocido al analizar.");
@@ -1509,10 +1509,10 @@ function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, 
     setCodeStatus("checking");
     codeCheckTimerRef.current = setTimeout(async () => {
       try {
-        const res = await fetch("/api/validateInviteCode", {
+        const res = await fetch("/api/inviteCode", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code: c }),
+          body: JSON.stringify({ action: "validate", code: c }),
         });
         const json = await res.json();
         setCodeStatus(json.valid ? "valid" : { reason: json.reason || "invalid" });
@@ -1798,10 +1798,11 @@ function CandidatePublicScreen({ processId }) {
       // The webhook URL is NOT stored in the public process doc (sensitive),
       // so the server reads it from the recruiter's private doc via Admin SDK.
       // Fire-and-forget: we don't want to block the candidate's confirmation on Slack.
-      fetch("/api/notifyApplication", {
+      fetch("/api/notify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          action: "application",
           processId,
           candidateName: candidate?.name || "Candidato",
           candidateEmail: candidate?.email || "",
@@ -2698,9 +2699,9 @@ async function sendSlackNotification(slackConfig, type, data) {
   const isInstant = type === "daily_digest" ? true : (setting === "instant" || setting === "both");
   if (!isInstant && type !== "daily_digest") return;
   try {
-    await fetch("/api/slackNotify", {
+    await fetch("/api/notify", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type, data, webhookUrl }),
+      body: JSON.stringify({ action: "slack", type, data, webhookUrl }),
     });
   } catch (e) { console.error("Slack notify error:", e); }
 }
@@ -2726,9 +2727,9 @@ function SlackSetupWizard({ slackConfig, onChange }) {
     if (!webhookUrl) return;
     setTestStatus("sending");
     try {
-      const res = await fetch("/api/slackNotify", {
+      const res = await fetch("/api/notify", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ type: "new_application", webhookUrl, data: { candidateName: "Test Candidato", candidateEmail: "test@ejemplo.com", positionTitle: "Media Buyer", companyName: "Tu Agencia" } }),
+        body: JSON.stringify({ action: "slack", type: "new_application", webhookUrl, data: { candidateName: "Test Candidato", candidateEmail: "test@ejemplo.com", positionTitle: "Media Buyer", companyName: "Tu Agencia" } }),
       });
       const json = await res.json();
       setTestStatus(json.success ? "ok" : "error");
@@ -4701,10 +4702,11 @@ function FeedbackWidget({ user }) {
     if (message.trim().length < 3) return;
     setSending(true); setError("");
     try {
-      const res = await fetch("/api/sendFeedback", {
+      const res = await fetch("/api/notify", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          action: "feedback",
           type,
           message: message.trim(),
           url: window.location.href,
@@ -5067,7 +5069,7 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
   const load = async () => {
     setLoading(true); setError("");
     try {
-      const res = await authedFetch("/api/admin/listUsers");
+      const res = await authedFetch("/api/admin");
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error al cargar");
       setUsers(json.users || []);
@@ -5082,7 +5084,11 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
   const loadCodes = async () => {
     setCodesLoading(true); setCodesError("");
     try {
-      const res = await authedFetch("/api/admin/listInviteCodes", { method: "POST" });
+      const res = await authedFetch("/api/admin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "list_codes" }),
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error al cargar códigos");
       setCodes(json.codes || []);
@@ -5092,10 +5098,10 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
   useEffect(() => { if (tab === "codes") loadCodes(); }, [tab]);
 
   const createCode = async ({ code, maxUses, expiresAt, note }) => {
-    const res = await authedFetch("/api/admin/createInviteCode", {
+    const res = await authedFetch("/api/admin", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code, maxUses, expiresAt, note }),
+      body: JSON.stringify({ action: "create_code", code, maxUses, expiresAt, note }),
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error || "Error al crear código");
@@ -5105,10 +5111,10 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
 
   const toggleCode = async (code, enabled) => {
     try {
-      const res = await authedFetch("/api/admin/updateInviteCode", {
+      const res = await authedFetch("/api/admin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, enabled }),
+        body: JSON.stringify({ action: "update_code", code, enabled }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
@@ -5119,10 +5125,10 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
   const deleteCode = async () => {
     if (!codeDeleteTarget) return;
     try {
-      const res = await authedFetch("/api/admin/deleteInviteCode", {
+      const res = await authedFetch("/api/admin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: codeDeleteTarget.code }),
+        body: JSON.stringify({ action: "delete_code", code: codeDeleteTarget.code }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error);
@@ -5140,10 +5146,10 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
   const updateStatus = async (uid, status) => {
     setActionState({ uid, action: status });
     try {
-      const res = await authedFetch("/api/admin/updateUserStatus", {
+      const res = await authedFetch("/api/admin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uid, status }),
+        body: JSON.stringify({ action: "update_status", uid, status }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error al actualizar");
@@ -5157,10 +5163,10 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
   const doDelete = async () => {
     if (!deleteTarget) return;
     try {
-      const res = await authedFetch("/api/admin/deleteUser", {
+      const res = await authedFetch("/api/admin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ uid: deleteTarget.uid }),
+        body: JSON.stringify({ action: "delete_user", uid: deleteTarget.uid }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Error al eliminar");
@@ -5467,10 +5473,10 @@ export default function App() {
             if (!isAdminSignup && pendingInvite) {
               try {
                 const token = await u.getIdToken();
-                const res = await fetch("/api/consumeInviteCode", {
+                const res = await fetch("/api/inviteCode", {
                   method: "POST",
                   headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
-                  body: JSON.stringify({ code: pendingInvite }),
+                  body: JSON.stringify({ action: "consume", code: pendingInvite }),
                 });
                 const json = await res.json();
                 if (json.success && json.activated) {
@@ -5483,10 +5489,11 @@ export default function App() {
 
             if (!isAdminSignup && !activatedViaInvite) {
               // Notify admin about the new signup (fire-and-forget).
-              fetch("/api/notifySignup", {
+              fetch("/api/notify", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
+                  action: "signup",
                   email: u.email,
                   displayName: u.displayName,
                   uid: u.uid,
