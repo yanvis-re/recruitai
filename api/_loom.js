@@ -110,23 +110,23 @@ async function tryOembed(loomUrl) {
     const data = await res.json();
     // Debug log: oEmbed top-level keys. Helps us learn what Loom currently
     // exposes without logging (potentially sensitive) values.
-    console.log(`[loom] oembed keys: ${Object.keys(data || {}).join(", ") || "(empty)"}`);
+    console.warn(`[loom] oembed keys: ${Object.keys(data || {}).join(", ") || "(empty)"}`);
     // oEmbed sometimes exposes a transcript field directly.
     if (data.transcript) {
       if (typeof data.transcript === "string" && data.transcript.length > 20) {
-        console.log("[loom] transcript found via oembed.transcript (string)");
+        console.warn("[loom] transcript found via oembed.transcript (string)");
         return data.transcript.trim();
       }
       const walked = walkForTranscript(data.transcript);
       if (walked) {
-        console.log("[loom] transcript found via oembed.transcript (nested)");
+        console.warn("[loom] transcript found via oembed.transcript (nested)");
         return walked;
       }
     }
     // Final attempt: recursive walk across the entire oEmbed response.
     const walkedAll = walkForTranscript(data);
     if (walkedAll) {
-      console.log("[loom] transcript found via oembed recursive walk");
+      console.warn("[loom] transcript found via oembed recursive walk");
       return walkedAll;
     }
     return null;
@@ -162,15 +162,15 @@ async function tryApiEndpoints(videoId) {
       });
       // Log the status for every endpoint so we can see at a glance which
       // returned something promising (200s) vs dead-end (404/403/500).
-      console.log(`[loom] api ${res.status} ← ${url}`);
+      console.warn(`[loom] api ${res.status} ← ${url}`);
       if (!res.ok) continue;
       const ct = res.headers.get("content-type") || "";
       if (ct.includes("application/json")) {
         const data = await res.json();
-        console.log(`[loom] api json keys (${url.split("/").slice(-1)[0]}): ${Object.keys(data || {}).join(", ") || "(empty)"}`);
+        console.warn(`[loom] api json keys (${url.split("/").slice(-1)[0]}): ${Object.keys(data || {}).join(", ") || "(empty)"}`);
         const walked = walkForTranscript(data);
         if (walked) {
-          console.log(`[loom] transcript found via JSON endpoint: ${url}`);
+          console.warn(`[loom] transcript found via JSON endpoint: ${url}`);
           return walked;
         }
         if (typeof data === "string" && data.length > 20) return data;
@@ -185,18 +185,18 @@ async function tryApiEndpoints(videoId) {
           .replace(/\s+/g, " ")
           .trim();
         if (cleaned.length > 20) {
-          console.log(`[loom] transcript found via VTT endpoint: ${url}`);
+          console.warn(`[loom] transcript found via VTT endpoint: ${url}`);
           return cleaned;
         }
       } else {
         const text = await res.text();
         if (text.length > 20 && !text.trim().startsWith("<")) {
-          console.log(`[loom] transcript found via text endpoint: ${url}`);
+          console.warn(`[loom] transcript found via text endpoint: ${url}`);
           return text;
         }
       }
     } catch (e) {
-      console.log(`[loom] api error ${e.message} ← ${url}`);
+      console.warn(`[loom] api error ${e.message} ← ${url}`);
     }
   }
   return null;
@@ -211,7 +211,7 @@ async function tryHtmlScrape(loomUrl) {
       return null;
     }
     const html = await res.text();
-    console.log(`[loom] html length: ${html.length}`);
+    console.warn(`[loom] html length: ${html.length}`);
 
     // Primary: __NEXT_DATA__ script blob.
     const nextMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
@@ -222,30 +222,30 @@ async function tryHtmlScrape(loomUrl) {
         // structure without reading the full blob.
         const topKeys = Object.keys(data || {}).join(", ");
         const ppKeys = Object.keys(data?.props?.pageProps || {}).join(", ");
-        console.log(`[loom] __NEXT_DATA__ top keys: ${topKeys || "(empty)"}`);
-        console.log(`[loom] __NEXT_DATA__ pageProps keys: ${ppKeys || "(empty)"}`);
+        console.warn(`[loom] __NEXT_DATA__ top keys: ${topKeys || "(empty)"}`);
+        console.warn(`[loom] __NEXT_DATA__ pageProps keys: ${ppKeys || "(empty)"}`);
         const walked = walkForTranscript(data);
         if (walked) {
-          console.log(`[loom] transcript found via __NEXT_DATA__`);
+          console.warn(`[loom] transcript found via __NEXT_DATA__`);
           return walked;
         }
       } catch (e) {
         console.warn(`[loom] __NEXT_DATA__ parse failed: ${e.message}`);
       }
     } else {
-      console.log(`[loom] no __NEXT_DATA__ block in html`);
+      console.warn(`[loom] no __NEXT_DATA__ block in html`);
     }
 
     // Fallback: walk every inline JSON script tag.
     const jsonScripts = html.match(/<script[^>]*>\s*(\{[\s\S]*?\})\s*<\/script>/g) || [];
-    console.log(`[loom] inline json scripts: ${jsonScripts.length}`);
+    console.warn(`[loom] inline json scripts: ${jsonScripts.length}`);
     for (const raw of jsonScripts) {
       const inner = raw.replace(/<script[^>]*>\s*/, "").replace(/\s*<\/script>$/, "");
       try {
         const data = JSON.parse(inner);
         const hit = walkForTranscript(data);
         if (hit) {
-          console.log(`[loom] transcript found via inline json scan`);
+          console.warn(`[loom] transcript found via inline json scan`);
           return hit;
         }
       } catch { /* skip non-JSON */ }
@@ -259,7 +259,7 @@ async function tryHtmlScrape(loomUrl) {
         // Decode JSON string escapes inline.
         const decoded = JSON.parse(`"${strMatch[1]}"`);
         if (decoded.length > 20) {
-          console.log(`[loom] transcript found via inline string match`);
+          console.warn(`[loom] transcript found via inline string match`);
           return decoded;
         }
       } catch { /* ignore */ }
@@ -276,7 +276,7 @@ export async function fetchLoomTranscript(loomUrl) {
   if (!loomUrl) return null;
   const videoId = extractVideoId(loomUrl);
   const canonical = canonicalUrl(videoId, loomUrl);
-  console.log(`[loom] fetching transcript for ${loomUrl} → canonical ${canonical} (videoId: ${videoId || "—"})`);
+  console.warn(`[loom] fetching transcript for ${loomUrl} → canonical ${canonical} (videoId: ${videoId || "—"})`);
 
   // Strategy 1: oEmbed first (quickest).
   const oembed = await tryOembed(canonical);
