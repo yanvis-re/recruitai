@@ -1481,19 +1481,72 @@ function LoadingScreen() {
 }
 
 function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, resetSent, onClearAuthState }) {
-  const [mode, setMode] = useState("choose"); // "choose" | "signin" | "signup" | "reset"
+  // Invite code detection: if the URL carries ?invite=CODE, we preload it
+  // and default the landing mode to 'signup' so the recruiter doesn't have
+  // to go hunting for the field.
+  const urlInvite = (() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      return (params.get("invite") || "").trim().toUpperCase();
+    } catch { return ""; }
+  })();
+  const [mode, setMode] = useState(urlInvite ? "signup" : "choose");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
+  const [inviteCode, setInviteCode] = useState(urlInvite);
+  const [codeStatus, setCodeStatus] = useState(null); // null | 'checking' | 'valid' | { reason }
+  const codeCheckTimerRef = useRef(null);
+
+  // Debounced live validation of the invite code (200ms after typing stops).
+  useEffect(() => {
+    if (codeCheckTimerRef.current) clearTimeout(codeCheckTimerRef.current);
+    const c = (inviteCode || "").trim();
+    if (!c) { setCodeStatus(null); return; }
+    setCodeStatus("checking");
+    codeCheckTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/validateInviteCode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: c }),
+        });
+        const json = await res.json();
+        setCodeStatus(json.valid ? "valid" : { reason: json.reason || "invalid" });
+      } catch {
+        setCodeStatus({ reason: "network" });
+      }
+    }, 200);
+    return () => { if (codeCheckTimerRef.current) clearTimeout(codeCheckTimerRef.current); };
+  }, [inviteCode]);
 
   const resetForm = () => { setEmail(""); setPassword(""); setName(""); onClearAuthState?.(); };
   const goToChooser = () => { setMode("choose"); resetForm(); };
 
+  // Stash the invite code in sessionStorage just before kicking off a signup
+  // so the App-level onAuthStateChanged can consume it after the account is
+  // created. Google sign-in skips the form entirely, so we also stash on
+  // Google click below.
+  const stashInviteIfAny = () => {
+    const c = (inviteCode || "").trim().toUpperCase();
+    if (c && codeStatus === "valid") {
+      sessionStorage.setItem("recruitai_pending_invite", c);
+    } else {
+      sessionStorage.removeItem("recruitai_pending_invite");
+    }
+  };
+
   const handleSubmit = (e) => {
     e.preventDefault();
+    stashInviteIfAny();
     if (mode === "reset") onEmailAuth({ mode: "reset", email });
     else if (mode === "signup") onEmailAuth({ mode: "signup", email, password, name });
     else onEmailAuth({ mode: "signin", email, password });
+  };
+
+  const handleGoogleWithInvite = () => {
+    stashInviteIfAny();
+    onLogin();
   };
 
   const GoogleIcon = () => (
@@ -1520,7 +1573,7 @@ function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, 
 
         {mode === "choose" && (
           <>
-            <button onClick={onLogin} disabled={loading}
+            <button onClick={handleGoogleWithInvite} disabled={loading}
               className="w-full flex items-center justify-center gap-3 py-3.5 px-6 border-2 border-gray-200 rounded-xl font-semibold text-gray-700 hover:border-gray-400 hover:bg-gray-50 transition-all disabled:opacity-50 mb-3">
               {loading ? <span className="text-sm">Iniciando sesión...</span> : (<><GoogleIcon /><span>Continuar con Google</span></>)}
             </button>
@@ -1567,7 +1620,7 @@ function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, 
                 doesn't have to go back to the chooser. */}
             {mode !== "reset" && (
               <>
-                <button type="button" onClick={onLogin} disabled={loading || emailLoading}
+                <button type="button" onClick={handleGoogleWithInvite} disabled={loading || emailLoading}
                   className="w-full flex items-center justify-center gap-3 py-3 px-6 border-2 border-gray-200 rounded-xl font-semibold text-gray-700 hover:border-gray-400 hover:bg-gray-50 transition-all disabled:opacity-50 mb-3">
                   {loading ? <span className="text-sm">Iniciando sesión...</span> : (<><GoogleIcon /><span className="text-sm">{mode === "signup" ? "Crear cuenta con Google" : "Continuar con Google"}</span></>)}
                 </button>
@@ -1584,6 +1637,32 @@ function LoginScreen({ onLogin, loading, onEmailAuth, emailLoading, emailError, 
                 <div>
                   <label className={lbl}>Nombre completo</label>
                   <input type="text" className={inp} value={name} onChange={e => setName(e.target.value)} required autoFocus placeholder="Tu nombre" />
+                </div>
+              )}
+              {mode === "signup" && (
+                <div>
+                  <label className={lbl}>Código de invitación <span className="text-gray-400 font-normal normal-case">(opcional)</span></label>
+                  <input type="text" className={inp + " uppercase tracking-wider"} value={inviteCode}
+                    onChange={e => setInviteCode(e.target.value.toUpperCase())}
+                    placeholder="RAI-XXXXXX" />
+                  {codeStatus === "checking" && (
+                    <p className="text-xs text-gray-400 mt-1">Comprobando código...</p>
+                  )}
+                  {codeStatus === "valid" && (
+                    <p className="text-xs text-green-600 mt-1 font-semibold">✅ Código válido · entras directo sin espera de aprobación</p>
+                  )}
+                  {codeStatus && typeof codeStatus === "object" && codeStatus.reason && (
+                    <p className="text-xs text-red-600 mt-1">
+                      {codeStatus.reason === "not_found" ? "❌ Código no encontrado"
+                      : codeStatus.reason === "disabled"  ? "❌ Código deshabilitado"
+                      : codeStatus.reason === "expired"   ? "❌ Código expirado"
+                      : codeStatus.reason === "exhausted" ? "❌ Código agotado (ha llegado al máximo de usos)"
+                      : "❌ Código inválido"}
+                    </p>
+                  )}
+                  {!codeStatus && !inviteCode && (
+                    <p className="text-xs text-gray-400 mt-1">Si tienes uno, entras activado al instante. Si no, tu cuenta queda en revisión hasta aprobación.</p>
+                  )}
                 </div>
               )}
               <div>
@@ -4753,8 +4832,186 @@ function SuspendedScreen({ user, onLogout }) {
   );
 }
 
+// ─── Admin: invite codes tab (render only) ─────────────────────────────────
+function CodesTab({ codes, loading, error, onCreate, onReload, onToggle, onDelete, onCopy, copiedCode, inviteLink }) {
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" }) : "—";
+  const isExpired = (exp) => exp && new Date(exp).getTime() < Date.now();
+
+  return (
+    <>
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-4">
+        <div>
+          <p className="text-sm text-gray-700">
+            <strong>{codes.length}</strong> códigos · Los usuarios que usen un código activo entran directo al dashboard sin pasar por la revisión manual.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={onReload} className="px-3 py-1.5 border border-gray-200 text-gray-700 rounded-lg text-xs font-bold hover:bg-gray-50">🔄 Refrescar</button>
+          <button onClick={onCreate} className="px-4 py-1.5 bg-gray-900 text-white rounded-lg text-xs font-bold hover:bg-gray-800">+ Nuevo código</button>
+        </div>
+      </div>
+
+      {loading && <div className="bg-white border border-gray-100 rounded-2xl p-10 text-center text-sm text-gray-500">Cargando códigos...</div>}
+      {error && !loading && <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">⚠️ {error}</div>}
+
+      {!loading && !error && codes.length === 0 && (
+        <div className="bg-white border border-dashed border-gray-200 rounded-2xl p-10 text-center">
+          <p className="text-4xl mb-2">🎟</p>
+          <p className="text-sm text-gray-500">Aún no has creado ningún código de invitación.</p>
+          <button onClick={onCreate} className="mt-4 px-5 py-2 bg-gray-900 text-white rounded-lg text-xs font-bold hover:bg-gray-800">+ Crear el primero</button>
+        </div>
+      )}
+
+      {!loading && !error && codes.length > 0 && (
+        <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                <th className="text-left px-4 py-3">Código</th>
+                <th className="text-left px-4 py-3">Estado</th>
+                <th className="text-left px-4 py-3">Usos</th>
+                <th className="text-left px-4 py-3">Expira</th>
+                <th className="text-left px-4 py-3">Nota</th>
+                <th className="text-right px-4 py-3">Acciones</th>
+              </tr>
+            </thead>
+            <tbody>
+              {codes.map(c => {
+                const expired = isExpired(c.expiresAt);
+                const exhausted = c.maxUses != null && c.maxUses > 0 && c.uses >= c.maxUses;
+                const usable = c.enabled !== false && !expired && !exhausted;
+                return (
+                  <tr key={c.code} className="border-b border-gray-50 last:border-0 hover:bg-gray-50/40">
+                    <td className="px-4 py-3">
+                      <p className="font-mono font-bold text-gray-900">{c.code}</p>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                        usable ? "bg-green-100 text-green-800" :
+                        c.enabled === false ? "bg-gray-100 text-gray-700" :
+                        expired ? "bg-red-100 text-red-700" : "bg-yellow-100 text-yellow-800"
+                      }`}>
+                        {usable ? "✅ Activo" : c.enabled === false ? "⏸ Desactivado" : expired ? "⌛ Expirado" : "🚫 Agotado"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-700">
+                      <strong>{c.uses || 0}</strong> / {c.maxUses != null && c.maxUses > 0 ? c.maxUses : "∞"}
+                    </td>
+                    <td className="px-4 py-3 text-xs text-gray-500">{c.expiresAt ? fmtDate(c.expiresAt) : "Sin expiración"}</td>
+                    <td className="px-4 py-3 text-xs text-gray-500 max-w-[200px] truncate" title={c.note}>{c.note || "—"}</td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex gap-1 justify-end flex-wrap">
+                        <button onClick={() => onCopy(c.code, `code-${c.code}`)}
+                          className="text-xs border border-gray-200 text-gray-700 px-2 py-1 rounded hover:bg-gray-50 font-semibold">
+                          {copiedCode === `code-${c.code}` ? "✓" : "📋"} Código
+                        </button>
+                        <button onClick={() => onCopy(inviteLink(c.code), `link-${c.code}`)}
+                          className="text-xs border border-gray-200 text-gray-700 px-2 py-1 rounded hover:bg-gray-50 font-semibold">
+                          {copiedCode === `link-${c.code}` ? "✓" : "🔗"} Link
+                        </button>
+                        <button onClick={() => onToggle(c.code, c.enabled === false)}
+                          className="text-xs bg-yellow-500 text-white px-2 py-1 rounded font-bold hover:bg-yellow-600">
+                          {c.enabled === false ? "▶ Activar" : "⏸ Desactivar"}
+                        </button>
+                        <button onClick={() => onDelete(c)}
+                          className="text-xs bg-red-500 text-white px-2 py-1 rounded font-bold hover:bg-red-600">
+                          🗑
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── Admin: create-code modal ──────────────────────────────────────────────
+function CreateCodeModal({ onClose, onCreate }) {
+  const [customCode, setCustomCode] = useState("");
+  const [maxUses, setMaxUses] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
+  const [note, setNote] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleCreate = async () => {
+    setError(""); setCreating(true);
+    try {
+      const payload = {
+        code: customCode.trim() || undefined,
+        maxUses: maxUses && parseInt(maxUses) > 0 ? parseInt(maxUses) : undefined,
+        expiresAt: expiresAt || undefined,
+        note: note.trim() || undefined,
+      };
+      await onCreate(payload);
+      onClose();
+    } catch (e) {
+      setError(e.message);
+    }
+    setCreating(false);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-3xl shadow-xl max-w-md w-full p-6" onClick={e => e.stopPropagation()}>
+        <div className="text-center mb-5">
+          <div className="text-4xl mb-2">🎟</div>
+          <h3 className="font-bold text-gray-900 text-lg">Nuevo código de invitación</h3>
+          <p className="text-xs text-gray-500 mt-1">Cualquiera que se registre con este código entra directo sin espera.</p>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className={lbl}>Código personalizado <span className="text-gray-400 font-normal normal-case">(opcional — se genera uno si no lo pones)</span></label>
+            <input type="text" className={inp + " font-mono uppercase tracking-wider"}
+              value={customCode}
+              onChange={e => setCustomCode(e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, ""))}
+              placeholder="RAI-ALUMNI26" />
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={lbl}>Máximo usos</label>
+              <input type="number" min="1" className={inp}
+                value={maxUses} onChange={e => setMaxUses(e.target.value)}
+                placeholder="Ilimitado" />
+            </div>
+            <div>
+              <label className={lbl}>Expira el</label>
+              <input type="date" className={inp}
+                value={expiresAt} onChange={e => setExpiresAt(e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className={lbl}>Nota interna</label>
+            <input type="text" className={inp}
+              value={note} onChange={e => setNote(e.target.value)}
+              placeholder="Promo alumni abril 2026" />
+          </div>
+          {error && <div className="bg-red-50 border border-red-200 rounded-lg p-2 text-xs text-red-700">{error}</div>}
+        </div>
+
+        <div className="flex gap-2 mt-5">
+          <button onClick={onClose} className="flex-1 py-3 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50">
+            Cancelar
+          </button>
+          <button onClick={handleCreate} disabled={creating}
+            className="flex-1 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 disabled:opacity-50">
+            {creating ? "Creando..." : "Crear código"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Admin panel: manage recruiters (approve / suspend / reactivate / delete) ─
 function AdminPanel({ adminUser, onExit, onLogout }) {
+  const [tab, setTab] = useState("users"); // "users" | "codes"
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -4762,6 +5019,14 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
   const [search, setSearch] = useState("");
   const [actionState, setActionState] = useState(null); // { uid, action }
   const [deleteTarget, setDeleteTarget] = useState(null);
+
+  // Invite codes tab state
+  const [codes, setCodes] = useState([]);
+  const [codesLoading, setCodesLoading] = useState(false);
+  const [codesError, setCodesError] = useState("");
+  const [showCreateCode, setShowCreateCode] = useState(false);
+  const [codeDeleteTarget, setCodeDeleteTarget] = useState(null);
+  const [copiedCode, setCopiedCode] = useState(null);
 
   const authedFetch = async (url, options = {}) => {
     const token = await auth.currentUser.getIdToken();
@@ -4781,6 +5046,65 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
     setLoading(false);
   };
   useEffect(() => { load(); }, []);
+
+  // Invite codes API helpers
+  const loadCodes = async () => {
+    setCodesLoading(true); setCodesError("");
+    try {
+      const res = await authedFetch("/api/admin/listInviteCodes", { method: "POST" });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error al cargar códigos");
+      setCodes(json.codes || []);
+    } catch (e) { setCodesError(e.message); }
+    setCodesLoading(false);
+  };
+  useEffect(() => { if (tab === "codes") loadCodes(); }, [tab]);
+
+  const createCode = async ({ code, maxUses, expiresAt, note }) => {
+    const res = await authedFetch("/api/admin/createInviteCode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code, maxUses, expiresAt, note }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Error al crear código");
+    await loadCodes();
+    return json.code;
+  };
+
+  const toggleCode = async (code, enabled) => {
+    try {
+      const res = await authedFetch("/api/admin/updateInviteCode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code, enabled }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      await loadCodes();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const deleteCode = async () => {
+    if (!codeDeleteTarget) return;
+    try {
+      const res = await authedFetch("/api/admin/deleteInviteCode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: codeDeleteTarget.code }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error);
+      setCodeDeleteTarget(null);
+      await loadCodes();
+    } catch (e) { alert("Error: " + e.message); }
+  };
+
+  const inviteLink = (code) => `${window.location.origin}/?invite=${encodeURIComponent(code)}`;
+  const copyToClipboard = async (text, codeId) => {
+    try { await navigator.clipboard.writeText(text); setCopiedCode(codeId); setTimeout(() => setCopiedCode(null), 2000); }
+    catch { alert("No se pudo copiar"); }
+  };
 
   const updateStatus = async (uid, status) => {
     setActionState({ uid, action: status });
@@ -4858,8 +5182,20 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
       <div className="max-w-6xl mx-auto p-6">
         <div className="mb-6">
           <h1 className="text-2xl font-black text-gray-900 tracking-tight">Panel de administración</h1>
-          <p className="text-sm text-gray-500 mt-1">Gestión de usuarios de RecruitAI. Conectado como <strong>{adminUser.email}</strong>.</p>
+          <p className="text-sm text-gray-500 mt-1">Gestión de RecruitAI. Conectado como <strong>{adminUser.email}</strong>.</p>
         </div>
+
+        {/* Top tabs */}
+        <div className="flex gap-2 mb-6 border-b border-gray-200">
+          {[["users", "👥 Usuarios"], ["codes", "🎟 Códigos de invitación"]].map(([id, lbl]) => (
+            <button key={id} onClick={() => setTab(id)}
+              className={`py-3 px-4 text-sm font-bold border-b-2 transition-colors ${tab === id ? "border-gray-900 text-gray-900" : "border-transparent text-gray-400 hover:text-gray-900"}`}>
+              {lbl}
+            </button>
+          ))}
+        </div>
+
+        {tab === "users" && <>
 
         {/* Filter pills + search */}
         <div className="flex flex-wrap gap-2 items-center mb-4">
@@ -4958,7 +5294,39 @@ function AdminPanel({ adminUser, onExit, onLogout }) {
             </table>
           </div>
         )}
+        </>}
+
+        {tab === "codes" && (
+          <CodesTab
+            codes={codes} loading={codesLoading} error={codesError}
+            onCreate={() => setShowCreateCode(true)}
+            onReload={loadCodes}
+            onToggle={toggleCode}
+            onDelete={(c) => setCodeDeleteTarget(c)}
+            onCopy={copyToClipboard}
+            copiedCode={copiedCode}
+            inviteLink={inviteLink}
+          />
+        )}
       </div>
+
+      {showCreateCode && (
+        <CreateCodeModal
+          onClose={() => setShowCreateCode(false)}
+          onCreate={createCode}
+        />
+      )}
+
+      <ConfirmModal
+        open={!!codeDeleteTarget}
+        onClose={() => setCodeDeleteTarget(null)}
+        onConfirm={deleteCode}
+        icon="🗑"
+        title={codeDeleteTarget ? `¿Eliminar el código ${codeDeleteTarget.code}?` : ""}
+        description="Los usuarios que ya se registraron con este código mantienen su acceso. Solo deja de funcionar para futuros registros."
+        confirmLabel="Sí, eliminar"
+        confirmStyle="bg-red-500 hover:bg-red-600"
+      />
 
       <ConfirmModal
         open={!!deleteTarget}
@@ -5038,12 +5406,17 @@ export default function App() {
             // carry onboardingCompleted yet).
             if (!data.settings?.onboardingCompleted) setShowOnboarding(true);
           } else {
-            // First-time user. Admin safeguard: if the signup email matches
-            // ADMIN_EMAIL, mint the account as 'active' directly so the
-            // admin is never locked out by their own gate (edge case: fresh
-            // Firebase project, admin's first login on a new database).
-            // No Slack alert or welcome email for the admin — they know.
+            // First-time user. Three activation paths:
+            //  1. Admin signup     → active (self-safeguard)
+            //  2. Valid invite code in sessionStorage → active + consume code
+            //  3. Everyone else    → pending, waits for admin approval
             const isAdminSignup = u.email === ADMIN_EMAIL;
+            const pendingInvite = sessionStorage.getItem("recruitai_pending_invite");
+
+            // First create the doc as pending (or active for admin). The
+            // invite consumption happens right after and flips to active via
+            // a transaction on the server. We do it in two steps so the doc
+            // exists before consumeInviteCode verifies & updates it.
             const initialStatus = isAdminSignup ? "active" : "pending";
             setAccountStatus(initialStatus);
             try {
@@ -5056,7 +5429,28 @@ export default function App() {
               });
             } catch (e) { console.error("Signup doc create error:", e); }
 
-            if (!isAdminSignup) {
+            // Try to consume the invite code if one was supplied at signup.
+            // On success, the server flips status to 'active' — we then
+            // mirror it in local state so the gate doesn't block this session.
+            let activatedViaInvite = false;
+            if (!isAdminSignup && pendingInvite) {
+              try {
+                const token = await u.getIdToken();
+                const res = await fetch("/api/consumeInviteCode", {
+                  method: "POST",
+                  headers: { "Authorization": `Bearer ${token}`, "Content-Type": "application/json" },
+                  body: JSON.stringify({ code: pendingInvite }),
+                });
+                const json = await res.json();
+                if (json.success && json.activated) {
+                  activatedViaInvite = true;
+                  setAccountStatus("active");
+                }
+              } catch (e) { console.error("Consume invite error:", e); }
+              sessionStorage.removeItem("recruitai_pending_invite");
+            }
+
+            if (!isAdminSignup && !activatedViaInvite) {
               // Notify admin about the new signup (fire-and-forget).
               fetch("/api/notifySignup", {
                 method: "POST",
