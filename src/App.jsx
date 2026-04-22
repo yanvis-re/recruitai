@@ -2358,6 +2358,10 @@ function CandidatePublicScreen({ processId }) {
         positionTitle: getPositionTitle(processData?.position),
         recruiterEmail: processData?.recruiterEmail || "",
         recruiterName: processData?.recruiterName || "Equipo de selección",
+        // Deep link the recruiter can click from the email to land directly
+        // on this candidate's evaluation panel. Matches the format consumed
+        // by the App's #process/{id}?candidate={id} router.
+        dashboardUrl: `${window.location.origin}/#process/${processId}?candidate=app_${appRef.id}`,
       };
 
       const emailConfig = processData?.emailConfig || { provider: "none" };
@@ -2386,6 +2390,7 @@ function CandidatePublicScreen({ processId }) {
         body: JSON.stringify({
           action: "application",
           processId,
+          applicationId: appRef.id, // server builds a #process/{id}?candidate=app_{appRef.id} deep link
           candidateName: candidate?.name || "Candidato",
           candidateEmail: candidate?.email || "",
         }),
@@ -4627,7 +4632,7 @@ const ESTADO_COLORS = { "Pendiente": "bg-gray-100 text-gray-700", "Primera entre
 const PROGRESO_COLORS = { "Ingreso": "bg-purple-100 text-purple-700", "Prueba técnica": "bg-gray-100 text-gray-800", "Entrevista": "bg-indigo-100 text-indigo-700", "Onboarding": "bg-teal-100 text-teal-700", "Descalificado": "bg-red-100 text-red-700", "En cartera": "bg-yellow-100 text-yellow-700", "Desiste": "bg-gray-100 text-gray-800", "Validación prueba técnica": "bg-cyan-100 text-cyan-700", "Entrevista RRHH": "bg-violet-100 text-violet-700" };
 
 // ─── PROCESS DETAIL SCREEN ───────────────────────────────────────────────────
-function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDeleteProcess, onToggleStatus, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare, aiUsage, onEvalConsumed, agencyId, agency }) {
+function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDeleteProcess, onToggleStatus, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare, aiUsage, onEvalConsumed, agencyId, agency, autoFocusCandidateId, clearAutoFocusCandidate }) {
   // Delete flow for the entire process — closes the public link, drops any
   // applications received, and removes the process from the recruiter's
   // workspace. Two-step (modal) confirmation because it's irreversible.
@@ -4706,6 +4711,16 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDel
   // Surfaces as a green line next to/under the normal import banner.
   const [importRefreshedCount, setImportRefreshedCount] = useState(0);
   const [evalCandidate, setEvalCandidate] = useState(null);
+  // Deep link: if the process detail was opened from an `?candidate={id}`
+  // link (Slack / email), auto-open the evaluation panel for that
+  // candidate once the table has been populated. Fires once.
+  useEffect(() => {
+    if (!autoFocusCandidateId) return;
+    const target = candidates.find(c => c.id === autoFocusCandidateId);
+    if (target) setEvalCandidate(target);
+    clearAutoFocusCandidate?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFocusCandidateId]);
 
   const FINAL_ESTADOS = ["Contratado", "Descartado", "En cartera"];
   const updateCandidate = (id, field, value) => {
@@ -7250,6 +7265,20 @@ export default function App() {
   const [publicProcessId] = useState(() => { const m = window.location.hash.match(/^#apply\/(.+)$/); return m ? m[1] : null; });
   if (publicProcessId) return <CandidatePublicScreen processId={publicProcessId} />;
 
+  // Deep link from Slack / email: `#process/{id}` opens the process detail
+  // screen on auth. Optional `?candidate={id}` query param additionally
+  // opens the evaluation panel for that candidate. Both are consumed by
+  // the post-auth effect below — we read them here at render time so the
+  // state can be seeded before any navigation triggers.
+  const [deepLinkTarget] = useState(() => {
+    const m = window.location.hash.match(/^#process\/([^?]+)/);
+    if (!m) return null;
+    const processId = m[1];
+    const q = new URL(window.location.href).searchParams;
+    const candidateId = q.get("candidate") || null;
+    return { processId, candidateId };
+  });
+
   // Detect agency invite token from the URL and stash it in sessionStorage
   // so the accept flow survives login / signup round-trips. Clean the URL
   // immediately so we don't re-detect on every render. This is done at
@@ -7671,6 +7700,27 @@ export default function App() {
     }
   };
   const handleViewProcess = (process) => { setActiveJob(process); setPhase("process_detail"); };
+
+  // Consume the `#process/{id}?candidate={id}` deep link once processes
+  // are hydrated. Runs once per auth session (the deep link is cleared
+  // after it fires). If the target process doesn't exist in this user's
+  // agency (e.g. stale link from a former agency) we silently fall back
+  // to the dashboard.
+  const [deepLinkConsumed, setDeepLinkConsumed] = useState(false);
+  const [pendingCandidateFocus, setPendingCandidateFocus] = useState(null);
+  useEffect(() => {
+    if (deepLinkConsumed || !deepLinkTarget || !settingsLoaded || !user) return;
+    if (!processes || processes.length === 0) return;
+    const match = processes.find(p => p.id === deepLinkTarget.processId);
+    if (match) {
+      setActiveJob(match);
+      setPhase("process_detail");
+      if (deepLinkTarget.candidateId) setPendingCandidateFocus(deepLinkTarget.candidateId);
+    }
+    // Clean the URL so subsequent navigation doesn't re-trigger.
+    try { window.history.replaceState({}, "", window.location.pathname); } catch {}
+    setDeepLinkConsumed(true);
+  }, [deepLinkTarget, deepLinkConsumed, settingsLoaded, user, processes]);
   const handleStartDemo = (process) => { setActiveJob(process); setPhase("preview"); };
   const handleUpdateCandidates = (processId, updatedCandidates) => {
     setProcesses(ps => ps.map(p => p.id === processId ? { ...p, candidates: updatedCandidates } : p));
@@ -7826,7 +7876,7 @@ export default function App() {
       {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} initialSection={settingsInitialSection} agency={agency} user={user} onRefreshAgency={refreshAgency} />}
       <FeedbackWidget user={user} />
       {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={openSettings} agencySettings={agencySettings} aiUsage={aiUsage} onRefreshUsage={refreshAiUsage} />}
-      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} onDeleteProcess={handleDeleteProcess} onToggleStatus={handleToggle} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} aiUsage={aiUsage} onEvalConsumed={bumpAiUsage} agencyId={agencyId} agency={agency} />; })()}
+      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} onDeleteProcess={handleDeleteProcess} onToggleStatus={handleToggle} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} aiUsage={aiUsage} onEvalConsumed={bumpAiUsage} agencyId={agencyId} agency={agency} autoFocusCandidateId={pendingCandidateFocus} clearAutoFocusCandidate={() => setPendingCandidateFocus(null)} />; })()}
       {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onPublishAndShare={handlePublishAndShare} onBack={goToDashboard} />}
       {phase === "preview" && <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />}
       {phase === "apply" && <CandidateApplyScreen job={activeJob} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />}

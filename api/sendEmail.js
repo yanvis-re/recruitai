@@ -18,7 +18,10 @@ function templateApplicationReceived({ candidateName, companyName, positionTitle
   };
 }
 
-function templateNewApplicationAlert({ candidateName, positionTitle, recruiterName }) {
+function templateNewApplicationAlert({ candidateName, positionTitle, recruiterName, dashboardUrl }) {
+  const cta = dashboardUrl
+    ? ctaButton(dashboardUrl, "📋 Ver candidatura en RecruitAI")
+    : `<p style="font-size:15px">Accede a RecruitAI para revisar la solicitud.</p>`;
   return {
     subject: `🔔 Nueva solicitud – ${positionTitle}`,
     html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;color:#1a1a1a">
@@ -30,7 +33,7 @@ function templateNewApplicationAlert({ candidateName, positionTitle, recruiterNa
           <p style="margin:0;font-size:14px;color:#374151"><strong>Candidato:</strong> ${candidateName}</p>
           <p style="margin:8px 0 0;font-size:14px;color:#374151"><strong>Puesto:</strong> ${positionTitle}</p>
         </div>
-        <p style="font-size:15px">Accede a RecruitAI para revisar la solicitud.</p>
+        ${cta}
       </div></div>`,
   };
 }

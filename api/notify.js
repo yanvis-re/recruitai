@@ -72,23 +72,35 @@ async function postToSlack(webhookUrl, message) {
 
 // ── Message builders (shared across actions) ────────────────────────────────
 
-function buildNewApplicationMessage({ candidateName, candidateEmail, positionTitle, companyName }) {
-  return {
-    blocks: [
-      { type: "header", text: { type: "plain_text", text: "🔔 Nueva solicitud recibida", emoji: true } },
-      {
-        type: "section",
-        fields: [
-          { type: "mrkdwn", text: `*Candidato:*\n${candidateName}` },
-          { type: "mrkdwn", text: `*Puesto:*\n${positionTitle}` },
-          { type: "mrkdwn", text: `*Email:*\n${candidateEmail}` },
-          { type: "mrkdwn", text: `*Empresa:*\n${companyName}` },
-        ],
-      },
-      { type: "divider" },
-      { type: "context", elements: [{ type: "mrkdwn", text: `RecruitAI · ${new Date().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" })}` }] },
-    ],
-  };
+function buildNewApplicationMessage({ candidateName, candidateEmail, positionTitle, companyName, dashboardUrl }) {
+  const blocks = [
+    { type: "header", text: { type: "plain_text", text: "🔔 Nueva solicitud recibida", emoji: true } },
+    {
+      type: "section",
+      fields: [
+        { type: "mrkdwn", text: `*Candidato:*\n${candidateName}` },
+        { type: "mrkdwn", text: `*Puesto:*\n${positionTitle}` },
+        { type: "mrkdwn", text: `*Email:*\n${candidateEmail}` },
+        { type: "mrkdwn", text: `*Empresa:*\n${companyName}` },
+      ],
+    },
+  ];
+  if (dashboardUrl) {
+    blocks.push({
+      type: "actions",
+      elements: [
+        {
+          type: "button",
+          text: { type: "plain_text", text: "📋 Ver candidatura en RecruitAI", emoji: true },
+          url: dashboardUrl,
+          style: "primary",
+        },
+      ],
+    });
+  }
+  blocks.push({ type: "divider" });
+  blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `RecruitAI · ${new Date().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" })}` }] });
+  return { blocks };
 }
 
 function buildAiEvaluationMessage({ candidateName, positionTitle, evaluationType, recommendation, score }) {
@@ -194,7 +206,7 @@ async function application(req, res) {
   if (!admin.apps.length) {
     return res.status(200).json({ success: false, skipped: true, reason: "admin_sdk_not_initialized" });
   }
-  const { processId, candidateName, candidateEmail } = req.body || {};
+  const { processId, applicationId, candidateName, candidateEmail } = req.body || {};
   if (!processId) return res.status(400).json({ error: "Missing processId" });
 
   const db = admin.firestore();
@@ -215,11 +227,20 @@ async function application(req, res) {
   const shouldNotify = notif === undefined || notif === "instant" || notif === "both";
   if (!shouldNotify) return res.status(200).json({ success: true, skipped: true, reason: "preference_off" });
 
+  // Build a deep link into the dashboard. The APP_URL env var is the
+  // production base URL; if missing we fall back to a best-guess from the
+  // process doc. The candidate query param is optional — the dashboard
+  // consumes it to auto-open the evaluation panel for that application.
+  const appUrl = process.env.APP_URL || "https://recruitai-smoky.vercel.app";
+  const candidateParam = applicationId ? `?candidate=app_${applicationId}` : "";
+  const dashboardUrl = `${appUrl}/#process/${processId}${candidateParam}`;
+
   const message = buildNewApplicationMessage({
     candidateName: candidateName || "Candidato",
     candidateEmail: candidateEmail || "",
     positionTitle: getPositionTitle(procData.position),
     companyName: procData.company?.name || "La empresa",
+    dashboardUrl,
   });
   await postToSlack(slackConfig.webhookUrl, message);
   return res.status(200).json({ success: true });
