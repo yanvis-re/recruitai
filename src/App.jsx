@@ -3660,10 +3660,29 @@ function MembersTab({ agency, user, onRefreshAgency }) {
         onConfirm={confirmTransfer}
         icon="⇄"
         title={transferTarget ? `¿Transferir la propiedad a ${transferTarget.displayName || transferTarget.email}?` : ""}
-        description="Tu rol pasa a admin y el suyo a owner. Solo quien sea owner puede borrar la agencia o transferirla de nuevo. Esta acción es reversible solo si el nuevo owner decide transferirtela de vuelta."
-        confirmLabel="Sí, transferir"
+        description="Esta acción cambia quién controla esta agencia."
+        confirmLabel="Sí, transferir la propiedad"
         confirmStyle="bg-gray-900 hover:bg-gray-800"
-      />
+      >
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-left space-y-2">
+          <p className="text-sm font-bold text-amber-900">A partir de ese momento:</p>
+          <ul className="space-y-2 text-sm text-amber-900">
+            <li className="flex gap-2">
+              <span>•</span>
+              <span><strong>Tú bajas a admin.</strong> Pierdes el poder de borrar la agencia, transferir la propiedad otra vez o tocar a otros admins.</span>
+            </li>
+            <li className="flex gap-2">
+              <span>•</span>
+              <span><strong>El nuevo owner tendrá control total.</strong> Podrá borrar la agencia, expulsar a cualquier miembro (tú incluido) o transferir la propiedad a quien quiera.</span>
+            </li>
+            <li className="flex gap-2">
+              <span>•</span>
+              <span><strong>Solo puedes recuperar la propiedad si él acepta devolvértela.</strong> No hay recuperación unilateral.</span>
+            </li>
+          </ul>
+          <p className="text-xs text-amber-700 pt-1">Solo continúa si confías plenamente en esta persona.</p>
+        </div>
+      </ConfirmModal>
 
       <ConfirmModal
         open={!!removeTarget}
