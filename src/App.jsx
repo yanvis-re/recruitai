@@ -3862,11 +3862,20 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user,
           {publicLink && (
             <div className="mt-3 flex items-center justify-between gap-3 bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2.5">
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-bold text-indigo-900">✨ ¿Lo compartes en redes?</p>
-                <p className="text-[11px] text-indigo-700 mt-0.5 leading-snug">Genero posts listos para LinkedIn, Instagram Story y email interno con el tono de tu marca.</p>
+                {publishPosts ? (
+                  <>
+                    <p className="text-xs font-bold text-indigo-900">✅ Publicación lista para redes</p>
+                    <p className="text-[11px] text-indigo-700 mt-0.5 leading-snug">LinkedIn, Instagram Story y email interno — revisa, edita o regenera cuando quieras.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs font-bold text-indigo-900">✨ ¿Lo compartes en redes?</p>
+                    <p className="text-[11px] text-indigo-700 mt-0.5 leading-snug">Genero posts listos para LinkedIn, Instagram Story y email interno con el tono de tu marca.</p>
+                  </>
+                )}
               </div>
               <button onClick={openPublishModal} className="shrink-0 bg-gray-900 text-white text-xs font-bold px-3 py-2 rounded-lg hover:bg-gray-800">
-                Generar publicación →
+                {publishPosts ? "Ver publicación →" : "Generar publicación →"}
               </button>
             </div>
           )}
