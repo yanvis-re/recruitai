@@ -4263,6 +4263,9 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
           <div className="flex items-center gap-2">
             {user?.photoURL && <img src={user.photoURL} alt={user.displayName} className="w-8 h-8 rounded-full border-2 border-gray-200" />}
             <span className="text-sm text-gray-600 hidden sm:block">{firstName}</span>
+            {user?.email === "yanvis@gmail.com" && (
+              <button onClick={() => { window.location.hash = "#admin"; }} className="px-3 py-2 border border-gray-900 bg-gray-900 text-white rounded-xl text-sm hover:bg-gray-800" title="Panel admin">🔐</button>
+            )}
             <button onClick={onOpenSettings} className="px-3 py-2 border border-gray-200 text-gray-500 rounded-xl text-sm hover:bg-gray-50" title="Configuración de agencia">⚙️</button>
             <button onClick={onNew} className="px-5 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800">+ Nuevo proceso</button>
             <button onClick={() => setShowLogoutConfirm(true)}
@@ -4697,6 +4700,274 @@ function FeedbackWidget({ user }) {
   );
 }
 
+// ─── Pending approval screen (new user awaits admin activation) ─────────────
+function PendingApprovalScreen({ user, onLogout }) {
+  return (
+    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 gap-4">
+      <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-8 sm:p-10 max-w-md w-full text-center">
+        <div className="text-6xl mb-4">⏳</div>
+        <h1 className="text-2xl font-black text-gray-900 tracking-tight mb-3">Tu cuenta está en revisión</h1>
+        <p className="text-gray-500 leading-relaxed mb-6">
+          Hola {user?.displayName || user?.email || ""}. RecruitAI es acceso controlado — revisamos cada solicitud manualmente.
+        </p>
+        <div className="bg-gray-50 rounded-2xl p-5 text-left space-y-2 mb-6">
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Qué pasa ahora</p>
+          <p className="text-sm text-gray-700">1. Recibiremos aviso de tu registro.</p>
+          <p className="text-sm text-gray-700">2. Revisaremos tu cuenta (normalmente en 24h).</p>
+          <p className="text-sm text-gray-700">3. Te llegará un email a <strong>{user?.email}</strong> cuando esté activa.</p>
+        </div>
+        <button onClick={onLogout} className="px-6 py-2.5 border border-gray-200 text-gray-700 rounded-xl font-semibold text-sm hover:bg-gray-50">
+          Cerrar sesión
+        </button>
+      </div>
+      <BrandFooter />
+    </div>
+  );
+}
+
+// ─── Suspended account screen (reactivation possible, data preserved) ─────────
+function SuspendedScreen({ user, onLogout }) {
+  return (
+    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 gap-4">
+      <div className="bg-white rounded-3xl border border-gray-200 shadow-sm p-8 sm:p-10 max-w-md w-full text-center">
+        <div className="text-6xl mb-4">🔒</div>
+        <h1 className="text-2xl font-black text-gray-900 tracking-tight mb-3">Tu cuenta está suspendida</h1>
+        <p className="text-gray-500 leading-relaxed mb-6">
+          Hola {user?.displayName || user?.email || ""}. Tu acceso a RecruitAI está temporalmente pausado. <strong>Tus procesos, candidatos y configuración están guardados</strong> — al reactivar encontrarás todo igual.
+        </p>
+        <p className="text-sm text-gray-700 mb-6">
+          Para reactivar, contacta con <a href="mailto:yan@proeliadigital.com" className="text-gray-900 underline font-semibold">yan@proeliadigital.com</a>.
+        </p>
+        <button onClick={onLogout} className="px-6 py-2.5 border border-gray-200 text-gray-700 rounded-xl font-semibold text-sm hover:bg-gray-50">
+          Cerrar sesión
+        </button>
+      </div>
+      <BrandFooter />
+    </div>
+  );
+}
+
+// ─── Admin panel: manage recruiters (approve / suspend / reactivate / delete) ─
+function AdminPanel({ adminUser, onExit, onLogout }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [actionState, setActionState] = useState(null); // { uid, action }
+  const [deleteTarget, setDeleteTarget] = useState(null);
+
+  const authedFetch = async (url, options = {}) => {
+    const token = await auth.currentUser.getIdToken();
+    return fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${token}` } });
+  };
+
+  const load = async () => {
+    setLoading(true); setError("");
+    try {
+      const res = await authedFetch("/api/admin/listUsers");
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error al cargar");
+      setUsers(json.users || []);
+    } catch (e) {
+      setError(e.message);
+    }
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const updateStatus = async (uid, status) => {
+    setActionState({ uid, action: status });
+    try {
+      const res = await authedFetch("/api/admin/updateUserStatus", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uid, status }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error al actualizar");
+      await load();
+    } catch (e) {
+      alert("Error: " + e.message);
+    }
+    setActionState(null);
+  };
+
+  const doDelete = async () => {
+    if (!deleteTarget) return;
+    try {
+      const res = await authedFetch("/api/admin/deleteUser", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ uid: deleteTarget.uid }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Error al eliminar");
+      setDeleteTarget(null);
+      await load();
+    } catch (e) {
+      alert("Error: " + e.message);
+    }
+  };
+
+  const STATUS_META = {
+    pending:   { label: "⏳ Pendiente", cls: "bg-yellow-100 text-yellow-800" },
+    active:    { label: "✅ Activo",    cls: "bg-green-100 text-green-800" },
+    suspended: { label: "🔒 Suspendido", cls: "bg-red-100 text-red-700" },
+  };
+
+  const filtered = users.filter(u => {
+    if (filter !== "all" && u.status !== filter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      if (!(u.email || "").toLowerCase().includes(q) && !(u.displayName || "").toLowerCase().includes(q)) return false;
+    }
+    return true;
+  });
+
+  const counts = {
+    all: users.length,
+    pending: users.filter(u => u.status === "pending").length,
+    active: users.filter(u => u.status === "active").length,
+    suspended: users.filter(u => u.status === "suspended").length,
+  };
+
+  const fmtDate = (d) => d ? new Date(d).toLocaleDateString("es-ES", { day: "numeric", month: "short", year: "numeric" }) : "—";
+
+  return (
+    <div className="min-h-screen bg-gray-50">
+      <div className="bg-white border-b border-gray-100 sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <span className="text-xl font-black text-gray-900 tracking-tight">RecruitAI</span>
+            <span className="text-xs bg-gray-900 text-white px-2 py-0.5 rounded-full font-semibold">🔐 Admin</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={onExit} className="text-xs text-gray-500 hover:text-gray-900 font-medium">← Volver a la app</button>
+            <button onClick={onLogout} className="px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg text-xs hover:bg-gray-50">Cerrar sesión</button>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto p-6">
+        <div className="mb-6">
+          <h1 className="text-2xl font-black text-gray-900 tracking-tight">Panel de administración</h1>
+          <p className="text-sm text-gray-500 mt-1">Gestión de usuarios de RecruitAI. Conectado como <strong>{adminUser.email}</strong>.</p>
+        </div>
+
+        {/* Filter pills + search */}
+        <div className="flex flex-wrap gap-2 items-center mb-4">
+          {[
+            ["all", "Todos", counts.all],
+            ["pending", "⏳ Pendientes", counts.pending],
+            ["active", "✅ Activos", counts.active],
+            ["suspended", "🔒 Suspendidos", counts.suspended],
+          ].map(([k, l, n]) => (
+            <button key={k} onClick={() => setFilter(k)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors ${filter === k ? "bg-gray-900 text-white" : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"}`}>
+              {l} <span className="opacity-60">· {n}</span>
+            </button>
+          ))}
+          <div className="flex-1 min-w-[220px]">
+            <input type="text" value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Buscar por nombre o email..."
+              className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-300" />
+          </div>
+          <button onClick={load} className="px-3 py-1.5 border border-gray-200 text-gray-700 rounded-lg text-xs font-bold hover:bg-gray-50">
+            🔄 Refrescar
+          </button>
+        </div>
+
+        {loading && <div className="bg-white border border-gray-100 rounded-2xl p-10 text-center text-sm text-gray-500">Cargando usuarios...</div>}
+        {error && !loading && <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">⚠️ {error}</div>}
+
+        {!loading && !error && (
+          <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-gray-50 border-b border-gray-100 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                  <th className="text-left px-4 py-3">Usuario</th>
+                  <th className="text-left px-4 py-3">Estado</th>
+                  <th className="text-left px-4 py-3">Registro</th>
+                  <th className="text-left px-4 py-3">Última sesión</th>
+                  <th className="text-center px-4 py-3">Procesos</th>
+                  <th className="text-center px-4 py-3">Candidatos</th>
+                  <th className="text-right px-4 py-3">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.length === 0 && (
+                  <tr><td colSpan={7} className="text-center py-10 text-sm text-gray-400">No hay usuarios que coincidan.</td></tr>
+                )}
+                {filtered.map(u => {
+                  const meta = STATUS_META[u.status] || STATUS_META.active;
+                  const isBusy = actionState?.uid === u.uid;
+                  const isAdminSelf = u.email === adminUser.email;
+                  return (
+                    <tr key={u.uid} className={`border-b border-gray-50 last:border-0 hover:bg-gray-50/40 ${isAdminSelf ? "bg-indigo-50/30" : ""}`}>
+                      <td className="px-4 py-3">
+                        <p className="font-bold text-gray-800">{u.displayName || "(sin nombre)"}</p>
+                        <p className="text-xs text-gray-500">{u.email || "—"}</p>
+                        {isAdminSelf && <p className="text-[10px] text-indigo-700 font-bold mt-1">👑 TÚ (admin)</p>}
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${meta.cls}`}>{meta.label}</span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{fmtDate(u.createdAt)}</td>
+                      <td className="px-4 py-3 text-xs text-gray-500">{fmtDate(u.lastSignInTime)}</td>
+                      <td className="px-4 py-3 text-center font-bold text-gray-800">{u.processCount}</td>
+                      <td className="px-4 py-3 text-center font-bold text-gray-800">{u.candidateCount}</td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex gap-1 justify-end flex-wrap">
+                          {u.status === "pending" && (
+                            <button onClick={() => updateStatus(u.uid, "active")} disabled={isBusy}
+                              className="text-xs bg-green-600 text-white px-2 py-1 rounded font-bold hover:bg-green-700 disabled:opacity-50">
+                              ✓ Aprobar
+                            </button>
+                          )}
+                          {u.status === "active" && !isAdminSelf && (
+                            <button onClick={() => updateStatus(u.uid, "suspended")} disabled={isBusy}
+                              className="text-xs bg-yellow-500 text-white px-2 py-1 rounded font-bold hover:bg-yellow-600 disabled:opacity-50">
+                              🔒 Suspender
+                            </button>
+                          )}
+                          {u.status === "suspended" && (
+                            <button onClick={() => updateStatus(u.uid, "active")} disabled={isBusy}
+                              className="text-xs bg-green-600 text-white px-2 py-1 rounded font-bold hover:bg-green-700 disabled:opacity-50">
+                              ↻ Reactivar
+                            </button>
+                          )}
+                          {!isAdminSelf && (
+                            <button onClick={() => setDeleteTarget(u)} disabled={isBusy}
+                              className="text-xs bg-red-500 text-white px-2 py-1 rounded font-bold hover:bg-red-600 disabled:opacity-50">
+                              🗑 Eliminar
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={doDelete}
+        icon="🗑"
+        title={deleteTarget ? `¿Eliminar a ${deleteTarget.displayName || deleteTarget.email}?` : ""}
+        description="Se borrarán: cuenta de Firebase Auth, su doc privado, todos sus procesos públicos y los candidatos. Esta acción es irreversible."
+        confirmLabel="Sí, eliminar permanentemente"
+        confirmStyle="bg-red-500 hover:bg-red-600"
+      />
+    </div>
+  );
+}
+
 // ─── APP ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [publicProcessId] = useState(() => { const m = window.location.hash.match(/^#apply\/(.+)$/); return m ? m[1] : null; });
@@ -4726,6 +4997,16 @@ export default function App() {
   // Shown only on the first-ever login (!snap.exists()); after that, the user
   // goes straight to the dashboard even if they never finished the wizard.
   const [showOnboarding, setShowOnboarding] = useState(false);
+  // Access gate: 'pending' | 'active' | 'suspended'. Starts null while auth
+  // loads; gates the dashboard render below.
+  const [accountStatus, setAccountStatus] = useState(null);
+  // Route detection for the admin panel.
+  const [adminRoute, setAdminRoute] = useState(() => window.location.hash === "#admin");
+  useEffect(() => {
+    const onHashChange = () => setAdminRoute(window.location.hash === "#admin");
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  }, []);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (u) => {
@@ -4736,13 +5017,42 @@ export default function App() {
           const snap = await getDoc(ref);
           if (snap.exists()) {
             const data = snap.data();
+            // Legacy docs without 'status' are treated as 'active' and
+            // upgraded silently on read so future reads are cheap.
+            const effectiveStatus = data.status || "active";
+            setAccountStatus(effectiveStatus);
+            if (!data.status) {
+              try { await setDoc(ref, { status: "active" }, { merge: true }); } catch {}
+            }
             if (data.processes?.length > 0) setProcesses(data.processes);
             if (data.settings) setAgencySettings(data.settings);
           } else {
-            // First-time user: show onboarding wizard and send welcome email.
-            // After this one shot, they go straight to the dashboard on every
-            // subsequent login, whether or not they completed all 3 steps.
-            setShowOnboarding(true);
+            // First-time user: create doc with pending status + notify admin
+            // + send welcome email. They won't see the onboarding until the
+            // admin flips their status to 'active'.
+            setAccountStatus("pending");
+            try {
+              await setDoc(ref, {
+                status: "pending",
+                statusUpdatedAt: new Date().toISOString(),
+                email: u.email || "",
+                displayName: u.displayName || "",
+                createdAt: new Date().toISOString(),
+              });
+            } catch (e) { console.error("Signup doc create error:", e); }
+
+            // Notify admin about the new signup (fire-and-forget).
+            fetch("/api/notifySignup", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                email: u.email,
+                displayName: u.displayName,
+                uid: u.uid,
+                provider: u.providerData?.[0]?.providerId || "unknown",
+              }),
+            }).catch(e => console.error("Notify signup error:", e));
+
             if (u.email) {
               fetch("/api/sendEmail", {
                 method: "POST",
@@ -4848,7 +5158,7 @@ export default function App() {
   };
 
   const clearAuthState = () => { setEmailError(""); setResetSent(false); };
-  const handleLogout = async () => { await signOut(auth); setProcesses([]); setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setShowOnboarding(false); setPhase("dashboard"); };
+  const handleLogout = async () => { await signOut(auth); setProcesses([]); setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false }); setSettingsLoaded(false); setShowOnboarding(false); setAccountStatus(null); setPhase("dashboard"); };
   const goToDashboard = () => { setPhase("dashboard"); setActiveJob(null); setCandidate(null); setEvaluation(null); setInterview(null); };
   const handlePublish = (jobData) => {
     // Save-only flow: create the process + return to the dashboard without
@@ -4899,6 +5209,16 @@ export default function App() {
     emailError={emailError} resetSent={resetSent}
     onClearAuthState={clearAuthState}
   />;
+  // Admin route: only the configured admin email can see this. Non-admins
+  // get redirected back to the dashboard silently.
+  if (adminRoute) {
+    if (user.email === "yanvis@gmail.com") return <AdminPanel adminUser={user} onExit={() => { window.location.hash = ""; setAdminRoute(false); }} onLogout={handleLogout} />;
+    // Not admin — strip the hash and fall through to normal flow.
+    if (typeof window !== "undefined") window.location.hash = "";
+  }
+  // Access gates: block pending / suspended accounts before they see anything.
+  if (accountStatus === "pending") return <PendingApprovalScreen user={user} onLogout={handleLogout} />;
+  if (accountStatus === "suspended") return <SuspendedScreen user={user} onLogout={handleLogout} />;
   if (showOnboarding) return <OnboardingScreen user={user} onComplete={handleCompleteOnboarding} />;
 
   return (
