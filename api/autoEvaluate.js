@@ -17,6 +17,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import admin from "firebase-admin";
 import { reserveEvaluation } from "./_quota.js";
+import { fetchLoomTranscript } from "./_loom.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -48,24 +49,6 @@ function getPositionTitle(position) {
   if (position.positionType === "otro") return position.customTitle || "Otro";
   const base = POSITION_LABELS[position.positionType] || position.positionType || "Posición";
   return position.specialty ? `${base} — ${position.specialty}` : base;
-}
-
-async function fetchLoomTranscript(loomUrl) {
-  if (!loomUrl) return null;
-  try {
-    const res = await fetch(loomUrl, { headers: { "User-Agent": "Mozilla/5.0 (compatible; RecruitAI/1.0)" } });
-    const html = await res.text();
-    const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
-    if (!match) return null;
-    const data = JSON.parse(match[1]);
-    const sentences =
-      data?.props?.pageProps?.video?.transcript?.sentences ||
-      data?.props?.pageProps?.oembed?.transcript?.sentences;
-    if (!sentences || sentences.length === 0) return null;
-    return sentences.map((s) => s.raw_text || s.text || "").join(" ");
-  } catch (e) {
-    return null;
-  }
 }
 
 function buildExercisePrompt({ exerciseTitle, exerciseDescription, writtenResponse, videoTranscript, position, brandManual, companyName, criteria }) {

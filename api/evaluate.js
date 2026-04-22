@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import admin from "firebase-admin";
 import { reserveEvaluation } from "./_quota.js";
+import { fetchLoomTranscript } from "./_loom.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -10,29 +11,6 @@ const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 if (!admin.apps.length) {
   const raw = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
   if (raw) { try { admin.initializeApp({ credential: admin.credential.cert(JSON.parse(raw)) }); } catch (e) { console.error("firebase-admin init (evaluate):", e.message); } }
-}
-
-// ─── Fetch Loom transcript from URL ───────────────────────────────────────────
-async function fetchLoomTranscript(loomUrl) {
-  try {
-    const res = await fetch(loomUrl, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; RecruitAI/1.0)" },
-    });
-    const html = await res.text();
-    const match = html.match(
-      /<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/
-    );
-    if (!match) return null;
-    const data = JSON.parse(match[1]);
-    const sentences =
-      data?.props?.pageProps?.video?.transcript?.sentences ||
-      data?.props?.pageProps?.oembed?.transcript?.sentences;
-    if (!sentences || sentences.length === 0) return null;
-    return sentences.map((s) => s.raw_text || s.text || "").join(" ");
-  } catch (e) {
-    console.error("Error fetching Loom transcript:", e);
-    return null;
-  }
 }
 
 // ─── Build exercise evaluation prompt ────────────────────────────────────────
@@ -209,13 +187,18 @@ export default async function handler(req, res) {
     let loomTranscript = null;
 
     if (type === "exercise") {
-      // Try to fetch Loom transcript automatically
-      if (data.loomUrl) {
+      // Transcript priority: manual paste (data.videoTranscript) wins over
+      // automatic Loom fetch. When the recruiter pastes a transcript because
+      // the Loom scraper failed, that manual content is authoritative —
+      // don't override it with a stale parser result.
+      if (data.videoTranscript && data.videoTranscript.trim()) {
+        loomTranscript = data.videoTranscript.trim();
+      } else if (data.loomUrl) {
         loomTranscript = await fetchLoomTranscript(data.loomUrl);
       }
       prompt = buildExercisePrompt({
         ...data,
-        videoTranscript: loomTranscript || data.videoTranscript || null,
+        videoTranscript: loomTranscript || null,
       });
     } else if (type === "interview") {
       prompt = buildInterviewPrompt(data);

@@ -2351,7 +2351,11 @@ function CandidatePublicScreen({ processId }) {
         candidateName: candidate?.name || "Candidato",
         candidateEmail: candidate?.email || "",
         companyName: processData?.company?.name || "La empresa",
-        positionTitle: processData?.position?.title || processData?.positionType || "la posición",
+        // Use the same helper the Slack notifier uses — otherwise the email
+        // falls through to the literal "la posición" because position.title
+        // doesn't exist in our data model (we have position.positionType +
+        // position.specialty + optional position.customTitle).
+        positionTitle: getPositionTitle(processData?.position),
         recruiterEmail: processData?.recruiterEmail || "",
         recruiterName: processData?.recruiterName || "Equipo de selección",
       };
@@ -3941,6 +3945,87 @@ const REC_LABELS = {
   CONTRATAR: "🎉 Contratar", SEGUNDA_ENTREVISTA: "🔄 Segunda entrevista", EN_CARTERA: "📁 En cartera",
 };
 
+// Modal that lets the recruiter paste the Loom transcript manually when the
+// automatic scraper fails. Renders one textarea per affected exercise, with
+// the Loom link next to each so the recruiter can open it in a new tab,
+// use Loom's own "Copy transcript" button, and paste it back here.
+function PasteTranscriptModal({ targets, existing, onClose, onSubmit }) {
+  const [values, setValues] = useState(() => {
+    const init = {};
+    targets.forEach(t => { init[t.exerciseId] = existing[t.exerciseId] || ""; });
+    return init;
+  });
+  const [saving, setSaving] = useState(false);
+
+  const update = (id, v) => setValues(vs => ({ ...vs, [id]: v }));
+  const canSubmit = Object.values(values).some(v => (v || "").trim().length > 10);
+
+  const submit = async () => {
+    if (!canSubmit) return;
+    setSaving(true);
+    try {
+      // Only forward non-empty entries so the merge doesn't clobber
+      // previously-pasted transcripts with blanks.
+      const filtered = {};
+      for (const [k, v] of Object.entries(values)) {
+        if ((v || "").trim().length > 10) filtered[k] = v.trim();
+      }
+      await onSubmit(filtered);
+    } catch (e) {
+      console.error("PasteTranscriptModal submit:", e);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+        <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between shrink-0">
+          <h3 className="font-bold text-gray-900">📝 Pegar transcripción manualmente</h3>
+          <button onClick={onClose} disabled={saving} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+        </div>
+        <div className="overflow-y-auto flex-1 px-6 py-5 space-y-4">
+          <div className="bg-gray-50 border border-gray-100 rounded-xl p-3">
+            <p className="text-xs text-gray-700 leading-relaxed">
+              <strong className="text-gray-900">Cómo copiar la transcripción desde Loom:</strong> abre el vídeo → pulsa el icono <span className="font-mono text-[11px] bg-white border border-gray-200 rounded px-1">CC / Transcript</span> en la barra inferior → "Copy transcript". Luego pégalo aquí.
+            </p>
+          </div>
+          {targets.map(t => (
+            <div key={t.exerciseId}>
+              <div className="flex items-center justify-between mb-1.5 gap-2">
+                <label className={lbl + " mb-0"}>
+                  {t.title}
+                </label>
+                <a href={t.loomUrl} target="_blank" rel="noreferrer" className="text-xs font-semibold text-gray-700 hover:text-gray-900 hover:underline shrink-0">
+                  🎥 Abrir Loom ↗
+                </a>
+              </div>
+              <textarea
+                className={inp + " font-mono text-xs"}
+                rows={8}
+                value={values[t.exerciseId] || ""}
+                onChange={e => update(t.exerciseId, e.target.value)}
+                placeholder="Pega aquí la transcripción completa del vídeo..."
+              />
+              <p className="text-xs text-gray-400 mt-1">
+                {(values[t.exerciseId] || "").split(/\s+/).filter(Boolean).length} palabras
+              </p>
+            </div>
+          ))}
+        </div>
+        <div className="px-6 py-4 border-t border-gray-100 flex gap-2 shrink-0">
+          <button onClick={onClose} disabled={saving} className="flex-1 py-2.5 border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50 disabled:opacity-50">
+            Cancelar
+          </button>
+          <button onClick={submit} disabled={!canSubmit || saving} className="flex-1 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 disabled:opacity-50">
+            {saving ? "Reevaluando..." : "Guardar y reevaluar"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdateCandidate, onClose, aiUsage, onEvalConsumed }) {
   const [tab, setTab] = useState("exercise");
   const [evaluatingEx, setEvaluatingEx] = useState(false);
@@ -3951,17 +4036,27 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
   // external-effect actions (sending emails to candidates, wiping evaluations).
   const [pendingDecision, setPendingDecision] = useState(null);
   const [pendingReeval, setPendingReeval] = useState(null); // "exercise" | "interview"
+  // Paste-manual-transcript flow: target = array of { exerciseId, title, loomUrl }
+  // populated when the warning CTA is clicked. Null → modal closed.
+  const [pasteTranscriptTarget, setPasteTranscriptTarget] = useState(null);
 
   const exerciseEval = candidate.exerciseEvaluation;
   const interviewEval = candidate.interviewEvaluation;
   const responses = candidate.responses || [];
   const position = getPositionTitle(process.position);
 
-  const evaluateExercise = async () => {
+  const evaluateExercise = async (overrideTranscripts) => {
     setEvaluatingEx(true); setError(null);
     try {
       const exercises = process.exercises || [];
       if (exercises.length === 0) throw new Error("Este proceso no tiene ejercicios definidos.");
+
+      // manualTranscripts map: { exerciseId → "pegado manualmente" }. Either
+      // the recruiter passed one just-now via the paste modal (overrideTranscripts)
+      // or we pull the last-saved set off the candidate doc. Used below as
+      // videoTranscript in the /api/evaluate call so the server can skip the
+      // Loom scraper entirely.
+      const manualTranscripts = overrideTranscripts || candidate.manualTranscripts || {};
 
       // Evaluate each exercise individually with its own criteria. Running
       // sequentially keeps the Claude API rate comfortable and the UX
@@ -3988,6 +4083,10 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
               criteria: exercise.criteria || [],
               writtenResponse: response.response || "",
               loomUrl: response.loomUrl || "",
+              // If present, this short-circuits the server's Loom scraper
+              // (see api/evaluate.js). Empty string / undefined → scraper
+              // runs as usual.
+              videoTranscript: manualTranscripts[exercise.id] || "",
               position,
               brandManual: agencySettings?.brandManual || "",
               companyName: process.company?.name || "",
@@ -4208,8 +4307,13 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                     const resp = responses.find(r => r.exerciseId === ex.exerciseId);
                     const hasLoomUrl = !!(resp?.loomUrl);
                     const transcriptFetched = !!ex.loomTranscriptFetched;
-                    return hasLoomUrl && !transcriptFetched
-                      ? { title: ex.exerciseTitle || "Ejercicio", loomUrl: resp.loomUrl }
+                    // If the recruiter already pasted a manual transcript
+                    // for this exercise, we treat the warning as resolved —
+                    // the next re-eval will use the paste and the
+                    // loomTranscriptFetched flag will flip to true.
+                    const hasManualTranscript = !!(candidate.manualTranscripts?.[ex.exerciseId]);
+                    return hasLoomUrl && !transcriptFetched && !hasManualTranscript
+                      ? { exerciseId: ex.exerciseId, title: ex.exerciseTitle || "Ejercicio", loomUrl: resp.loomUrl }
                       : null;
                   })
                   .filter(Boolean);
@@ -4219,9 +4323,9 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                     <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
                       <p className="text-xs font-bold text-yellow-900 mb-1">⚠️ La IA no pudo leer la transcripción del Loom</p>
                       <p className="text-xs text-yellow-800 leading-relaxed mb-2">
-                        La evaluación se basa solo en la respuesta escrita. El vídeo puede no haber terminado de procesarse aún (Loom tarda 2-5 min) o la transcripción está desactivada. {loomWarnings.length === 1 ? "Ejercicio afectado:" : `${loomWarnings.length} ejercicios afectados:`}
+                        La evaluación se basa solo en la respuesta escrita. El vídeo puede no haber terminado de procesarse aún (Loom tarda 2-5 min) o nuestro parser no ha podido leerla. {loomWarnings.length === 1 ? "Ejercicio afectado:" : `${loomWarnings.length} ejercicios afectados:`}
                       </p>
-                      <ul className="space-y-1">
+                      <ul className="space-y-1 mb-3">
                         {loomWarnings.map((w, i) => (
                           <li key={i} className="text-xs">
                             <strong className="text-yellow-900">{w.title}</strong> ·{" "}
@@ -4229,9 +4333,18 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                           </li>
                         ))}
                       </ul>
-                      <p className="text-[11px] text-yellow-700 mt-2 leading-relaxed">
-                        Cuando la transcripción esté lista, pulsa "↻ Reevaluar" abajo para correr de nuevo con el vídeo incluido.
-                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPasteTranscriptTarget(loomWarnings)}
+                          className="text-xs font-semibold text-yellow-900 bg-white hover:bg-yellow-100 border border-yellow-300 rounded-lg px-2.5 py-1.5 transition-colors"
+                        >
+                          📝 Pegar transcripción manualmente
+                        </button>
+                        <p className="text-[11px] text-yellow-700 leading-relaxed flex-1 min-w-[200px]">
+                          …o espera 2-5 min a que Loom termine y pulsa <strong>↻ Reevaluar</strong> abajo.
+                        </p>
+                      </div>
                     </div>
                   )}
                   {/* Overall aggregate across all exercises */}
@@ -4482,6 +4595,27 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
         }
         confirmLabel="Sí, empezar de nuevo"
       />
+
+      {/* ── Manual transcript paste ─── */}
+      {pasteTranscriptTarget && (
+        <PasteTranscriptModal
+          targets={pasteTranscriptTarget}
+          existing={candidate.manualTranscripts || {}}
+          onClose={() => setPasteTranscriptTarget(null)}
+          onSubmit={async (newTranscripts) => {
+            // Persist on the candidate doc so re-evaluations later also use
+            // the manual text (no need to paste twice).
+            const merged = { ...(candidate.manualTranscripts || {}), ...newTranscripts };
+            onUpdateCandidate({ ...candidate, manualTranscripts: merged, exerciseEvaluation: null });
+            setPasteTranscriptTarget(null);
+            // Re-run evaluation immediately with the override map. We pass
+            // it explicitly because onUpdateCandidate is async through React
+            // state and the closure inside evaluateExercise would otherwise
+            // still see the stale candidate.manualTranscripts.
+            await evaluateExercise(merged);
+          }}
+        />
+      )}
     </div>
   );
 }
