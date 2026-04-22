@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, getDoc, setDoc, collection, addDoc, getDocs } from "firebase/firestore";
+import { getFirestore, doc, getDoc, setDoc, collection, addDoc, getDocs, deleteDoc, writeBatch } from "firebase/firestore";
 import {
   getAuth,
   GoogleAuthProvider,
@@ -28,7 +28,7 @@ export const auth           = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
 export {
-  doc, getDoc, setDoc, collection, addDoc, getDocs,
+  doc, getDoc, setDoc, collection, addDoc, getDocs, deleteDoc, writeBatch,
   signInWithPopup, signOut, onAuthStateChanged,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,

@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   auth, db, googleProvider,
-  doc, getDoc, setDoc, collection, addDoc, getDocs,
+  doc, getDoc, setDoc, collection, addDoc, getDocs, deleteDoc, writeBatch,
   signInWithPopup, signOut, onAuthStateChanged,
   createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile,
 } from "./firebase.js";
@@ -1370,8 +1370,11 @@ function CountryPhoneInput({ country, localNumber, onChange }) {
   );
 }
 
-function CandidateApplyScreen({ job, onNext }) {
-  const [form, setForm] = useState({
+function CandidateApplyScreen({ job, initial, onNext, onBack }) {
+  // If the candidate came back via "← Volver" from the exercises screen we
+  // rehydrate whatever they already filled in (passed down as `initial`).
+  // Lazy-init so re-mounts don't accidentally wipe the form.
+  const [form, setForm] = useState(() => initial || {
     name: "", email: "", phone: "", country: "ES", localNumber: "",
     linkedin: "", presentation: "",
   });
@@ -1430,7 +1433,12 @@ function CandidateApplyScreen({ job, onNext }) {
             </div>
           </div>
 
-          <div className="flex justify-end items-center mt-5">
+          <div className="flex justify-between items-center mt-5 gap-3">
+            {onBack ? (
+              <button onClick={onBack} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-900 font-medium">
+                ← Volver a la oferta
+              </button>
+            ) : <span />}
             <button onClick={() => onNext(form)} disabled={!valid}
               className="px-6 py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
               Continuar con los ejercicios →
@@ -1442,9 +1450,17 @@ function CandidateApplyScreen({ job, onNext }) {
   );
 }
 
-function ExercisesScreen({ job, candidate, onSubmit, submitting }) {
+function ExercisesScreen({ job, candidate, responses, setResponses, onBack, onSubmit, submitting }) {
   const [idx, setIdx] = useState(0);
-  const [resps, setResps] = useState(job.exercises.map((e) => ({ exerciseId: e.id, response: "", loomUrl: "" })));
+  // responses + setResponses come from the parent so state survives when the
+  // candidate taps "← Volver" to edit their personal data and comes back.
+  // Fallback local state is used in the App-internal preview flow where the
+  // lifted state isn't wired through yet.
+  const [localResps, setLocalResps] = useState(() =>
+    responses || job.exercises.map((e) => ({ exerciseId: e.id, response: "", loomUrl: "" }))
+  );
+  const resps = responses || localResps;
+  const setResps = setResponses || setLocalResps;
   const ex = job.exercises[idx];
   const resp = resps.find((r) => r.exerciseId === ex.id);
   const upR = (f, v) => setResps(rs => rs.map(r => r.exerciseId === ex.id ? { ...r, [f]: v } : r));
@@ -1562,6 +1578,13 @@ function ExercisesScreen({ job, candidate, onSubmit, submitting }) {
             {idx > 0 ? (
               <button onClick={() => setIdx(i => i - 1)} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-900 font-medium">
                 ← Ejercicio anterior
+              </button>
+            ) : onBack ? (
+              // From the first exercise, back-nav takes the candidate to
+              // their personal data screen so they can fix an email/phone
+              // without losing anything they've already typed.
+              <button onClick={onBack} className="px-4 py-2 text-sm text-gray-500 hover:text-gray-900 font-medium">
+                ← Volver a mis datos
               </button>
             ) : <span />}
             {!isLast ? (
@@ -1938,6 +1961,19 @@ function CandidatePublicScreen({ processId }) {
   const [candidate, setCandidate] = useState(null);
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Responses state lives here (not inside ExercisesScreen) so that the
+  // candidate can use the new "← Volver" buttons between phases without
+  // losing their typed answers or uploaded documents on remount.
+  const [responses, setResponses] = useState([]);
+
+  // When the process finishes loading, seed an empty response slot per
+  // exercise so ExercisesScreen is pure and re-mountable. Only seeds once.
+  useEffect(() => {
+    if (processData?.exercises?.length && responses.length === 0) {
+      setResponses(processData.exercises.map(e => ({ exerciseId: e.id, response: "", loomUrl: "" })));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [processData]);
 
   useEffect(() => {
     const load = async () => {
@@ -2074,8 +2110,25 @@ function CandidatePublicScreen({ processId }) {
     );
   }
   if (phase === "preview") return <JobPreviewScreen job={processData} onApply={() => setPhase("apply")} onBack={null} />;
-  if (phase === "apply") return <CandidateApplyScreen job={processData} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />;
-  if (phase === "exercises") return <ExercisesScreen job={processData} candidate={candidate} onSubmit={handleSubmit} submitting={submitting} />;
+  if (phase === "apply") return (
+    <CandidateApplyScreen
+      job={processData}
+      initial={candidate}
+      onNext={(form) => { setCandidate(form); setPhase("exercises"); }}
+      onBack={() => setPhase("preview")}
+    />
+  );
+  if (phase === "exercises") return (
+    <ExercisesScreen
+      job={processData}
+      candidate={candidate}
+      responses={responses}
+      setResponses={setResponses}
+      onBack={() => setPhase("apply")}
+      onSubmit={handleSubmit}
+      submitting={submitting}
+    />
+  );
   return null;
 }
 
@@ -3697,7 +3750,47 @@ const ESTADO_COLORS = { "Pendiente": "bg-gray-100 text-gray-700", "Primera entre
 const PROGRESO_COLORS = { "Ingreso": "bg-purple-100 text-purple-700", "Prueba técnica": "bg-gray-100 text-gray-800", "Entrevista": "bg-indigo-100 text-indigo-700", "Onboarding": "bg-teal-100 text-teal-700", "Descalificado": "bg-red-100 text-red-700", "En cartera": "bg-yellow-100 text-yellow-700", "Desiste": "bg-gray-100 text-gray-800", "Validación prueba técnica": "bg-cyan-100 text-cyan-700", "Entrevista RRHH": "bg-violet-100 text-violet-700" };
 
 // ─── PROCESS DETAIL SCREEN ───────────────────────────────────────────────────
-function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare }) {
+function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDeleteProcess, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare }) {
+  // Delete flow for the entire process — closes the public link, drops any
+  // applications received, and removes the process from the recruiter's
+  // workspace. Two-step (modal) confirmation because it's irreversible.
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDeleteProcess = async () => {
+    setDeleting(true);
+    try {
+      // 1) Batch-delete every application under publicProcesses/{id}/applications.
+      //    We chunk into 500-item batches to stay under the Firestore per-batch
+      //    write limit. For our scale a single batch is almost always enough.
+      const appsSnap = await getDocs(collection(db, "publicProcesses", process.id, "applications"));
+      if (!appsSnap.empty) {
+        const chunks = [];
+        for (let i = 0; i < appsSnap.docs.length; i += 450) chunks.push(appsSnap.docs.slice(i, i + 450));
+        for (const chunk of chunks) {
+          const batch = writeBatch(db);
+          chunk.forEach(d => batch.delete(d.ref));
+          await batch.commit();
+        }
+      }
+      // 2) Kill the public doc itself so the #apply link immediately stops working.
+      //    Use deleteDoc, not setDoc — we want the candidate to hit the branded
+      //    "Este proceso ya no está activo" dead-end, not an empty shell.
+      await deleteDoc(doc(db, "publicProcesses", process.id));
+      // 3) Tell the parent to remove the process from the recruiter's local
+      //    list; the autosave effect will sync the deletion to Firestore.
+      onDeleteProcess?.(process.id);
+      // 4) Navigate back to dashboard. No toast — the process disappearing
+      //    from the list IS the feedback.
+      onBack?.();
+    } catch (e) {
+      console.error("Delete process error:", e);
+      alert("No se pudo borrar el proceso por completo: " + (e.message || "error desconocido") + ". Puede que tengas que desplegar las reglas de Firestore actualizadas.");
+    }
+    setDeleting(false);
+    setShowDeleteConfirm(false);
+  };
+
   // What's required before the user can generate a public link / receive candidates.
   // brandManual + emailConfig are blocking (IA needs context, candidates need confirmations).
   // Slack is considered a nice-to-have, not blocking.
@@ -4020,6 +4113,17 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user,
         confirmStyle="bg-red-500 hover:bg-red-600"
       />
 
+      <ConfirmModal
+        open={showDeleteConfirm}
+        onClose={() => !deleting && setShowDeleteConfirm(false)}
+        onConfirm={handleDeleteProcess}
+        icon="🗑"
+        title={`¿Borrar el proceso "${getPositionTitle(process.position)}"?`}
+        description={`Se cerrará el link público al instante: cualquier candidato que intente entrar verá un mensaje de "proceso ya no activo". Se borrarán las ${candidates.length} candidatura${candidates.length === 1 ? "" : "s"} que has recibido y todas sus respuestas. Esta acción es irreversible.`}
+        confirmLabel={deleting ? "Borrando..." : "Sí, borrar el proceso"}
+        confirmStyle="bg-red-500 hover:bg-red-600"
+      />
+
       {showPublishModal && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => setShowPublishModal(false)}>
           <div className="bg-white rounded-t-3xl sm:rounded-3xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
@@ -4181,6 +4285,13 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, user,
           <div className="w-px h-4 bg-gray-200 shrink-0" />
           <div className="flex-1 min-w-0"><span className="font-bold text-gray-900 text-sm truncate block">{getPositionTitle(process.position)}</span><span className="text-xs text-gray-400">{process.company?.name}</span></div>
           <button onClick={onStartDemo} className="shrink-0 px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg text-xs font-medium hover:bg-gray-50">Ver oferta →</button>
+          <button
+            onClick={() => setShowDeleteConfirm(true)}
+            title="Borrar este proceso de selección"
+            className="shrink-0 px-3 py-1.5 border border-gray-200 text-red-600 rounded-lg text-xs font-medium hover:bg-red-50 hover:border-red-200 transition-colors"
+          >
+            🗑 Borrar
+          </button>
         </div>
       </div>
       <div className="max-w-6xl mx-auto p-6">
@@ -5996,6 +6107,15 @@ export default function App() {
     setProcesses(ps => ps.map(p => p.id === updated.id ? { ...p, ...updated } : p));
     setActiveJob(aj => aj?.id === updated.id ? { ...aj, ...updated } : aj);
   };
+  // The actual deletion of publicProcesses/{id} and its applications happens
+  // inside ProcessDetailScreen (it needs access to Firestore imports + writeBatch).
+  // This callback only fires AFTER that server-side cleanup succeeds — its
+  // job is to drop the local reference and clear activeJob so the autosave
+  // persists the shorter processes list to recruiters/{uid}.
+  const handleDeleteProcess = (id) => {
+    setProcesses(ps => ps.filter(p => p.id !== id));
+    if (activeJob?.id === id) setActiveJob(null);
+  };
   const handleSaveSettings = (newSettings) => { setAgencySettings(s => ({ ...s, ...newSettings })); };
 
   const handleCompleteOnboarding = (newSettings) => {
@@ -6027,7 +6147,7 @@ export default function App() {
       {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} initialSection={settingsInitialSection} />}
       <FeedbackWidget user={user} />
       {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={openSettings} agencySettings={agencySettings} />}
-      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} />; })()}
+      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} onDeleteProcess={handleDeleteProcess} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} />; })()}
       {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onPublishAndShare={handlePublishAndShare} onBack={goToDashboard} />}
       {phase === "preview" && <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />}
       {phase === "apply" && <CandidateApplyScreen job={activeJob} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />}

@@ -56,9 +56,17 @@ service cloud.firestore {
         allow read: if request.auth != null
           && get(/databases/$(database)/documents/publicProcesses/$(processId)).data.recruiterUid == request.auth.uid;
 
-        // Applications are immutable from the client. If you ever need to edit
-        // (e.g. mark status), do it via a Cloud Function with admin SDK instead.
-        allow update, delete: if false;
+        // Applications are immutable from the client — recruiter edits status
+        // in their own recruiters doc, not here.
+        allow update: if false;
+
+        // Delete: only the owner of the parent publicProcess can delete an
+        // application, and only as part of deleting the full process (the UI
+        // runs a batch-delete across the subcollection when the recruiter
+        // removes the process). Symmetric with the read rule: same ownership
+        // check, different verb.
+        allow delete: if request.auth != null
+          && get(/databases/$(database)/documents/publicProcesses/$(processId)).data.recruiterUid == request.auth.uid;
       }
     }
   }
