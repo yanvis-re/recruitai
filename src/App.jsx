@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   auth, db, googleProvider,
   doc, getDoc, setDoc, collection, addDoc, getDocs,
@@ -750,8 +752,36 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                 </div>
                 <div className="mb-3">
                   <label className={lbl}>Enunciado *</label>
-                  <textarea className={inp + " bg-white"} rows={3} value={ex.description} onChange={e => upEx(ex.id, "description", e.target.value)}
-                    placeholder="Describe el reto concreto. Cuanto más específico, mejores respuestas recibirás..." />
+                  <textarea className={inp + " bg-white font-mono text-xs"} rows={8} value={ex.description} onChange={e => upEx(ex.id, "description", e.target.value)}
+                    placeholder={`Describe el reto concreto. Puedes usar Markdown para darle formato:
+
+## Objetivo
+Explica qué debe conseguir el candidato.
+
+### Escenario
+- Contexto 1
+- Contexto 2
+
+### Qué debe incluir
+1. Diagnóstico
+2. Propuesta estratégica
+
+Usa **negrita**, listas con \`-\` o \`1.\`, y \`##\` / \`###\` para secciones.`} />
+                  <div className="flex items-center justify-between mt-2">
+                    <p className="text-xs text-gray-400">
+                      💡 Admite <strong>Markdown</strong> (headings, listas, negrita). El candidato lo verá formateado.
+                    </p>
+                    <button type="button" onClick={() => upEx(ex.id, "_showPreview", !ex._showPreview)}
+                      className="text-xs text-gray-500 hover:text-gray-900 font-medium">
+                      {ex._showPreview ? "Ocultar" : "👀 Ver"} preview
+                    </button>
+                  </div>
+                  {ex._showPreview && ex.description?.trim() && (
+                    <div className="mt-3 bg-gray-50 border border-gray-100 rounded-xl p-4">
+                      <p className="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Preview — así lo verá el candidato</p>
+                      <MarkdownContent>{ex.description}</MarkdownContent>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <div className="flex justify-between items-center mb-2 gap-2 flex-wrap">
@@ -924,10 +954,13 @@ function RecruiterSetupScreen({ onPublish, onBack }) {
                       onChange={e => setExParsePreview(p => ({ ...p, title: e.target.value }))} />
                   </div>
                   <div>
-                    <label className={lbl}>Enunciado</label>
-                    <textarea className={inp} rows={6}
+                    <label className={lbl}>Enunciado (Markdown)</label>
+                    <textarea className={inp + " font-mono text-xs"} rows={10}
                       value={exParsePreview.description}
                       onChange={e => setExParsePreview(p => ({ ...p, description: e.target.value }))} />
+                    <p className="text-xs text-gray-400 mt-1">
+                      💡 Se admite Markdown: <code className="bg-gray-100 px-1 rounded">## Título</code>, <code className="bg-gray-100 px-1 rounded">**negrita**</code>, listas con <code className="bg-gray-100 px-1 rounded">-</code> o <code className="bg-gray-100 px-1 rounded">1.</code>. Mira el preview arriba al cerrar "Ajustar".
+                    </p>
                   </div>
                   <div>
                     <label className={lbl}>Criterios de evaluación</label>
@@ -1282,8 +1315,8 @@ function ExercisesScreen({ job, candidate, onSubmit, submitting }) {
           </div>
 
           <div className="bg-white rounded-3xl border border-gray-200 p-6 sm:p-8 mb-4">
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight mb-2">{ex.title}</h1>
-            <p className="text-gray-500 leading-relaxed mb-5 whitespace-pre-wrap">{ex.description}</p>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight mb-4">{ex.title}</h1>
+            <MarkdownContent className="mb-5">{ex.description}</MarkdownContent>
 
             <div className="bg-gray-50 border border-gray-100 rounded-xl p-4 mb-5">
               <p className="text-xs font-bold text-gray-900 uppercase tracking-wide mb-2">📋 Criterios que se evalúan</p>
@@ -4100,6 +4133,45 @@ function RecruiterDashboard({ processes, onNew, onView, onToggle, user, onLogout
   );
 }
 
+// ─── Markdown renderer with Tailwind-consistent styling ─────────────────────
+// Component overrides are spelled out so no extra typography plugin is needed.
+function MarkdownContent({ children, className = "", tone = "default" }) {
+  // "default": dark text on white/light bg (exercise description, etc.)
+  // "muted": smaller, paler copy (compact previews)
+  const isMuted = tone === "muted";
+  const base = isMuted ? "text-xs text-gray-600" : "text-sm text-gray-700";
+
+  const components = {
+    h1: ({ node, ...props }) => <h1 className="text-xl font-bold text-gray-900 tracking-tight mt-6 mb-3 first:mt-0" {...props} />,
+    h2: ({ node, ...props }) => <h2 className="text-lg font-bold text-gray-900 tracking-tight mt-5 mb-2 first:mt-0" {...props} />,
+    h3: ({ node, ...props }) => <h3 className="text-base font-bold text-gray-900 mt-4 mb-2 first:mt-0" {...props} />,
+    h4: ({ node, ...props }) => <h4 className="text-sm font-bold text-gray-900 mt-3 mb-1.5 first:mt-0" {...props} />,
+    p:  ({ node, ...props }) => <p className={`${base} leading-relaxed mb-3 last:mb-0`} {...props} />,
+    ul: ({ node, ...props }) => <ul className={`${base} list-disc pl-5 space-y-1 mb-3 last:mb-0`} {...props} />,
+    ol: ({ node, ...props }) => <ol className={`${base} list-decimal pl-5 space-y-1 mb-3 last:mb-0`} {...props} />,
+    li: ({ node, ...props }) => <li className="leading-relaxed" {...props} />,
+    strong: ({ node, ...props }) => <strong className="font-bold text-gray-900" {...props} />,
+    em: ({ node, ...props }) => <em className="italic" {...props} />,
+    a: ({ node, ...props }) => <a className="text-gray-900 underline hover:opacity-70" target="_blank" rel="noreferrer" {...props} />,
+    code: ({ node, inline, ...props }) => inline
+      ? <code className="bg-gray-100 text-gray-900 px-1 py-0.5 rounded text-[0.9em] font-mono" {...props} />
+      : <code className="block bg-gray-100 text-gray-900 p-3 rounded-lg text-xs font-mono overflow-x-auto" {...props} />,
+    blockquote: ({ node, ...props }) => <blockquote className={`${base} border-l-4 border-gray-200 pl-4 italic my-3`} {...props} />,
+    hr: () => <hr className="border-gray-200 my-4" />,
+    table: ({ node, ...props }) => <div className="overflow-x-auto my-3"><table className={`${base} border-collapse w-full`} {...props} /></div>,
+    th: ({ node, ...props }) => <th className="border border-gray-200 bg-gray-50 px-2 py-1 text-left font-bold" {...props} />,
+    td: ({ node, ...props }) => <td className="border border-gray-200 px-2 py-1" {...props} />,
+  };
+
+  return (
+    <div className={className}>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+        {children || ""}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 // ─── Faithful preview of how a candidate will see an exercise ────────────────
 // Mirrors the layout of ExercisesScreen without the surrounding chrome so the
 // recruiter can see the actual visual result before committing to add it.
@@ -4109,8 +4181,12 @@ function ExercisePreview({ exercise }) {
       <div className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-600 bg-gray-100 rounded-full px-3 py-1 mb-4">
         <span>👀</span><span>Así lo verá el candidato</span>
       </div>
-      <h3 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight mb-2">{exercise.title || "Sin título"}</h3>
-      <p className="text-gray-500 leading-relaxed mb-4 whitespace-pre-wrap">{exercise.description || <span className="text-gray-300 italic">(Sin enunciado)</span>}</p>
+      <h3 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight mb-3">{exercise.title || "Sin título"}</h3>
+      {exercise.description ? (
+        <MarkdownContent className="mb-4">{exercise.description}</MarkdownContent>
+      ) : (
+        <p className="text-gray-300 italic mb-4">(Sin enunciado)</p>
+      )}
       <div className="bg-gray-50 border border-gray-100 rounded-xl p-4">
         <p className="text-xs font-bold text-gray-900 uppercase tracking-wide mb-2">📋 Criterios que se evalúan</p>
         {(exercise.criteria || []).length > 0 ? (

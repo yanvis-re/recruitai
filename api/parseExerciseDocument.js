@@ -25,36 +25,85 @@ ${text.slice(0, 10000)}
 TAREA: Extrae UN ejercicio (el principal descrito en el documento) y devuélvelo como JSON:
 
 {
-  "title": "",          // Título breve (3-8 palabras). Si el documento lo trae, úsalo; si no, sintetiza uno a partir del contenido.
-  "description": "",    // Enunciado completo que el candidato debe leer para resolver el ejercicio. Texto narrativo, no bullets. Incluye el contexto, la tarea y cualquier restricción (deadline, formato, longitud, etc.)
+  "title": "",          // Título breve (3-8 palabras)
+  "description": "",    // Enunciado formateado en Markdown (ver reglas abajo)
   "criteria": [
-    {
-      "area": "",        // Área evaluada (ej. "Diagnóstico estratégico")
-      "indicators": "",  // Qué se mide concretamente en esa área
-      "maxScore": 5      // Puntuación máxima, generalmente 5 o 10
-    }
+    { "area": "", "indicators": "", "maxScore": 5 }
   ]
 }
 
-REGLAS:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REGLAS DE FORMATO PARA "description" (IMPORTANTE)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. title — si el documento tiene un título propio del ejercicio, cópialo. Si no, genera uno descriptivo y corto.
+El "description" DEBE devolverse en **Markdown estructurado** tal y como el candidato lo va a leer. NO uses texto plano corrido. El documento original suele tener secciones, listas y énfasis — preserva toda esa estructura en Markdown.
 
-2. description — redacta el enunciado completo tal y como un candidato necesitaría leerlo para resolverlo. Conserva el contexto y la tarea. Si hay varias partes o preguntas, inclúyelas. Si el documento tiene secciones ("Contexto", "Tarea", "Entregables"), unifícalas en un texto fluido que siga un orden lógico.
+Usa:
+- \`## Título\` y \`### Subtítulo\` para secciones. Conserva los EMOJIS del documento original cuando aparezcan (ej. \`## 🎯 Objetivo\`).
+- Listas con \`- \` para bullets.
+- Listas numeradas con \`1. \`, \`2. \`, \`3. \`
+- \`**negrita**\` para términos clave (nombres de cliente, ofertas, datos específicos como importes, fechas o porcentajes).
+- Párrafos separados por línea en blanco (salto de línea doble).
+- Sub-bullets con indentación de 2 espacios.
 
-3. criteria — esta es la parte clave:
-   - Si el documento LISTA criterios explícitos de evaluación (rúbrica, "se valorará", "criterios", "qué se evalúa", etc.), EXTRÁELOS TAL CUAL con su area + indicators + maxScore.
-   - Si el documento menciona aspectos evaluables pero SIN formato de rúbrica, estructúralos como criterios con area + indicators coherentes.
-   - Si el documento NO menciona criterios, INFIERE 3-5 criterios razonables basándote en el enunciado (ej. si el ejercicio pide una estrategia de paid media, los criterios pueden incluir "Diagnóstico", "Funnel y táctica", "Métricas", "Riesgos").
-   - maxScore por defecto es 5. Si el documento especifica puntuaciones diferentes (sobre 10, sobre 20…), normaliza a 5 o 10. Si dice "sobre 100", usa 10.
+Ejemplo de salida esperada para un ejercicio de estrategia:
 
-4. Formato: devuelve ÚNICAMENTE el JSON, sin markdown, sin texto adicional.
+## 🎯 Objetivo
 
-Si el documento NO contiene ningún ejercicio (es puramente una oferta de empleo, un CV, un manual de marca, etc.), devuelve:
+Evaluar tu capacidad para analizar una situación compleja y diseñar una estrategia coherente.
+
+## 🧪 Escenario
+
+**Cliente:** Empresa X.
+**Oferta a promocionar:** Formación online premium.
+
+### 🔎 Historial del cliente
+
+1. Máximo referente de su mercado.
+2. Competidores crecientes.
+3. Últimos lanzamientos con caída de ventas.
+
+### 🎯 Objetivos del lanzamiento
+
+- **Inversión en paid media:** 50.000 €
+- **Objetivo de facturación:** 200.000-275.000 €
+- **Precio del producto:** 3.500 €
+
+## 🧩 Qué debe incluir tu propuesta
+
+### 1. Diagnóstico inicial
+
+- ¿Qué modalidad estratégica usarías? Justifícalo.
+- ¿Qué palancas usarías para mantener autoridad?
+
+### 2. Funnel y planificación
+
+- Tipo de funnel...
+- Fases y mensajes...
+
+## 📝 Entrega
+
+Formato libre: vídeo (máx. 10-15 min), PDF o Notion. Estructura por secciones.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OTRAS REGLAS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+1. title: si el documento tiene título propio del ejercicio, cópialo limpio (sin emojis iniciales que sobren). Si no, sintetízalo corto y descriptivo.
+
+2. criteria:
+   - Si el documento lista criterios explícitos de evaluación (rúbrica, "se valorará", "criterios"), extráelos tal cual con area + indicators + maxScore.
+   - Si solo los menciona en prosa, estructúralos.
+   - Si no hay ninguno, infiere 3-5 criterios razonables a partir del enunciado.
+   - maxScore por defecto 5. Si el documento usa otra escala, normaliza a 5 o 10.
+
+3. NO devuelvas markdown en title ni en criteria.area/indicators — solo en description.
+
+4. Formato de salida: solo JSON válido. El valor de "description" es un string normal que contiene markdown (los saltos de línea como \\n, etc.). No uses triple backticks ni otros delimitadores.
+
+Si el documento NO contiene ningún ejercicio (es una oferta de empleo, CV, manual de marca, etc.), devuelve:
 {
-  "title": "",
-  "description": "",
-  "criteria": [],
+  "title": "", "description": "", "criteria": [],
   "error": "El documento no parece contener un ejercicio práctico."
 }`;
 }
