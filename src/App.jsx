@@ -866,16 +866,32 @@ function RecruiterSetupScreen({ onPublish, onPublishAndShare, onBack }) {
                 <div>
                   <div className="flex justify-between items-center mb-2 gap-2 flex-wrap">
                     <label className={lbl}>Criterios de evaluación</label>
-                    <div className="flex gap-3 items-center">
-                      <button type="button" onClick={() => critFileRefs.current[ex.id]?.click()}
-                        className="text-xs text-gray-500 hover:text-gray-900 hover:underline font-medium">
-                        📄 Subir criterios
+                    <div className="flex gap-2 items-center flex-wrap">
+                      {/* Primary action: upload a rubric doc and let the IA
+                          structure it. Styled as a chip (background + border)
+                          so it reads as an actionable button, not a link. */}
+                      <button
+                        type="button"
+                        onClick={() => critFileRefs.current[ex.id]?.click()}
+                        title="Sube un PDF/DOCX/TXT con tu rúbrica y la IA la estructura"
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold text-gray-800 bg-gray-50 hover:bg-gray-100 border border-gray-200 hover:border-gray-300 rounded-lg px-3 py-1.5 transition-colors"
+                      >
+                        <span>📄</span>
+                        <span>Subir criterios</span>
                       </button>
                       <input
                         ref={el => { critFileRefs.current[ex.id] = el; }}
                         type="file" accept=".pdf,.docx,.txt" className="hidden"
                         onChange={e => { handleCriteriaFile(ex.id, e.target.files[0]); e.target.value = ""; }} />
-                      <button type="button" onClick={() => addCr(ex.id)} className="text-xs text-gray-900 hover:underline font-medium">+ Criterio</button>
+                      {/* Secondary action: add a single criterion by hand. */}
+                      <button
+                        type="button"
+                        onClick={() => addCr(ex.id)}
+                        title="Añadir un criterio en blanco para rellenarlo manualmente"
+                        className="text-xs font-semibold text-gray-600 hover:text-gray-900 hover:bg-gray-50 rounded-lg px-2.5 py-1.5 transition-colors"
+                      >
+                        + Criterio
+                      </button>
                     </div>
                   </div>
                   {ex.criteria.map((cr, ci) => (
