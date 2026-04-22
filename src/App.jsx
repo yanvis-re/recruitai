@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   auth, db, googleProvider,
-  doc, getDoc, setDoc, collection, addDoc, getDocs, deleteDoc, writeBatch,
+  doc, getDoc, setDoc, collection, addDoc, getDocs, deleteDoc, writeBatch, runTransaction, updateDoc,
   signInWithPopup, signOut, onAuthStateChanged,
   createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, updateProfile,
 } from "./firebase.js";
@@ -2071,6 +2071,161 @@ function clearApplyDraft(processId) {
   try { localStorage.removeItem(applyDraftKey(processId)); } catch {}
 }
 
+// Invite token generator — 16 alphanumeric chars from a readable alphabet
+// (no 0/O, 1/I/L) so it can be copied by hand without ambiguity.
+const INVITE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+function generateInviteToken() {
+  let out = "";
+  for (let i = 0; i < 16; i++) out += INVITE_ALPHABET[Math.floor(Math.random() * INVITE_ALPHABET.length)];
+  return out;
+}
+
+// Create an agency invitation. Writes agencyInvites/{token} with a 7-day
+// TTL and returns the shareable URL. Caller is responsible for showing
+// the link to the inviter (we don't email — link-based invites keep the
+// flow simple and don't need email deliverability).
+async function createAgencyInvite({ agencyId, agencyName, role, user }) {
+  const token = generateInviteToken();
+  const now = new Date();
+  const expires = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  await setDoc(doc(db, "agencyInvites", token), {
+    token,
+    agencyId,
+    agencyName,
+    role,
+    createdBy: user.uid,
+    createdByEmail: user.email || "",
+    createdAt: now.toISOString(),
+    expiresAt: expires.toISOString(),
+    acceptedBy: null,
+    acceptedAt: null,
+    acceptedEmail: null,
+  });
+  const url = `${window.location.origin}/?agencyInvite=${encodeURIComponent(token)}`;
+  return { token, url, expiresAt: expires.toISOString() };
+}
+
+// Load an invite by token without side effects. Returns { ok, invite, reason }.
+async function loadAgencyInvite(token) {
+  try {
+    const snap = await getDoc(doc(db, "agencyInvites", token));
+    if (!snap.exists()) return { ok: false, reason: "not_found" };
+    const invite = snap.data();
+    if (invite.acceptedBy) return { ok: false, reason: "already_used", invite };
+    if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) {
+      return { ok: false, reason: "expired", invite };
+    }
+    return { ok: true, invite };
+  } catch (e) {
+    console.error("loadAgencyInvite error:", e);
+    return { ok: false, reason: "read_error" };
+  }
+}
+
+// Accept an invite transactionally: adds the user to the agency's members,
+// stamps acceptedBy on the invite, points recruiters/{uid}.agencyId to the
+// new agency. If the user is already a member, just marks the invite used.
+async function acceptAgencyInvite(token, user) {
+  const inviteRef = doc(db, "agencyInvites", token);
+  return await runTransaction(db, async (tx) => {
+    const inviteSnap = await tx.get(inviteRef);
+    if (!inviteSnap.exists()) return { ok: false, reason: "not_found" };
+    const invite = inviteSnap.data();
+    if (invite.acceptedBy) return { ok: false, reason: "already_used" };
+    if (invite.expiresAt && new Date(invite.expiresAt).getTime() < Date.now()) {
+      return { ok: false, reason: "expired" };
+    }
+
+    const agencyRef = doc(db, "agencies", invite.agencyId);
+    const agencySnap = await tx.get(agencyRef);
+    if (!agencySnap.exists()) return { ok: false, reason: "agency_missing" };
+    const agency = agencySnap.data();
+
+    const now = new Date().toISOString();
+    const alreadyMember = (agency.memberUids || []).includes(user.uid);
+
+    if (!alreadyMember) {
+      const newMember = {
+        uid: user.uid,
+        email: user.email || "",
+        displayName: user.displayName || "",
+        role: invite.role || "member",
+        joinedAt: now,
+      };
+      tx.update(agencyRef, {
+        members: [...(agency.members || []), newMember],
+        memberUids: [...(agency.memberUids || []), user.uid],
+      });
+    }
+
+    // Mark the invite as used (even if the user was already a member, so we
+    // don't let the same token accept twice).
+    tx.update(inviteRef, {
+      acceptedBy: user.uid,
+      acceptedAt: now,
+      acceptedEmail: user.email || "",
+    });
+
+    // Point the recruiter at this agency. Only if they weren't already on it
+    // (spares a write and avoids clobbering a pre-existing same-value field).
+    if (!alreadyMember) {
+      tx.set(doc(db, "recruiters", user.uid), { agencyId: invite.agencyId }, { merge: true });
+    }
+
+    return { ok: true, agencyId: invite.agencyId, alreadyMember, agencyName: agency.name };
+  });
+}
+
+// Change a single member's role. Only owners can promote to admin or demote
+// to member. Caller is responsible for gating the UI; rules allow any member
+// to update the agency doc (enforcement is in the caller for v1).
+async function changeMemberRole(agencyId, targetUid, newRole) {
+  const ref = doc(db, "agencies", agencyId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("agency_not_found");
+  const agency = snap.data();
+  const members = (agency.members || []).map(m =>
+    m.uid === targetUid ? { ...m, role: newRole } : m
+  );
+  await updateDoc(ref, { members });
+}
+
+// Remove a member from the agency. Rejects if target is the owner — use
+// transferOwnership first. Cleans both members[] and memberUids[].
+async function removeMemberFromAgency(agencyId, targetUid) {
+  const ref = doc(db, "agencies", agencyId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("agency_not_found");
+  const agency = snap.data();
+  if (agency.ownerUid === targetUid) throw new Error("cannot_remove_owner");
+  const members = (agency.members || []).filter(m => m.uid !== targetUid);
+  const memberUids = (agency.memberUids || []).filter(u => u !== targetUid);
+  await updateDoc(ref, { members, memberUids });
+  // Null the removed user's agencyId so they bootstrap into a fresh solo
+  // agency on their next login. Fails silently if rules deny cross-user
+  // writes — in that case the removed user just sees the orphaned id until
+  // their next login, harmless.
+  try { await updateDoc(doc(db, "recruiters", targetUid), { agencyId: null }); } catch {}
+}
+
+// Transfer ownership to another current member. Flips ownerUid + updates the
+// two affected members' roles (old owner → admin, new owner → owner). Rules
+// enforce that only the current owner can perform this.
+async function transferAgencyOwnership(agencyId, newOwnerUid) {
+  const ref = doc(db, "agencies", agencyId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) throw new Error("agency_not_found");
+  const agency = snap.data();
+  if (!(agency.memberUids || []).includes(newOwnerUid)) throw new Error("not_a_member");
+  const oldOwnerUid = agency.ownerUid;
+  const members = (agency.members || []).map(m => {
+    if (m.uid === newOwnerUid) return { ...m, role: "owner" };
+    if (m.uid === oldOwnerUid) return { ...m, role: "admin" };
+    return m;
+  });
+  await updateDoc(ref, { ownerUid: newOwnerUid, members });
+}
+
 // ─── Agency helpers (multi-tenancy) ──────────────────────────────────────────
 //
 // Every user belongs to exactly one agency. On first login (or the first
@@ -3349,7 +3504,327 @@ function SlackSetupWizard({ slackConfig, onChange }) {
 }
 
 // ─── AGENCY SETTINGS MODAL ───────────────────────────────────────────────────
-function AgencySettingsModal({ settings, onSave, onClose, initialSection = "marca" }) {
+// ─── MEMBERS TAB ──────────────────────────────────────────────────────────────
+// Rendered inside AgencySettingsModal. Shows the members list, their roles,
+// and the actions each role is allowed to perform:
+//   - owner   → invite, change any role, transfer ownership, remove any member
+//   - admin   → invite (as admin or member), remove members (not admins/owner)
+//   - member  → read-only
+function MembersTab({ agency, user, onRefreshAgency }) {
+  const [showInviteModal, setShowInviteModal] = useState(false);
+  const [actionBusy, setActionBusy] = useState(null); // { uid, action }
+  const [transferTarget, setTransferTarget] = useState(null);
+  const [removeTarget, setRemoveTarget] = useState(null);
+  const [error, setError] = useState("");
+
+  if (!agency) {
+    return <p className="text-sm text-gray-500">Cargando miembros de la agencia...</p>;
+  }
+
+  const myMembership = (agency.members || []).find(m => m.uid === user?.uid);
+  const myRole = myMembership?.role || "member";
+  const isOwner = myRole === "owner";
+  const isAdmin = myRole === "admin";
+  const canInvite = isOwner || isAdmin;
+
+  const handleChangeRole = async (targetUid, newRole) => {
+    setError("");
+    setActionBusy({ uid: targetUid, action: "role" });
+    try {
+      await changeMemberRole(agency.id, targetUid, newRole);
+      await onRefreshAgency?.();
+    } catch (e) { setError(e.message || "No se pudo cambiar el rol."); }
+    setActionBusy(null);
+  };
+
+  const confirmTransfer = async () => {
+    if (!transferTarget) return;
+    setError("");
+    setActionBusy({ uid: transferTarget.uid, action: "transfer" });
+    try {
+      await transferAgencyOwnership(agency.id, transferTarget.uid);
+      await onRefreshAgency?.();
+      setTransferTarget(null);
+    } catch (e) { setError(e.message || "No se pudo transferir la propiedad."); }
+    setActionBusy(null);
+  };
+
+  const confirmRemove = async () => {
+    if (!removeTarget) return;
+    setError("");
+    setActionBusy({ uid: removeTarget.uid, action: "remove" });
+    try {
+      await removeMemberFromAgency(agency.id, removeTarget.uid);
+      await onRefreshAgency?.();
+      setRemoveTarget(null);
+    } catch (e) { setError(e.message || "No se pudo eliminar al miembro."); }
+    setActionBusy(null);
+  };
+
+  // Decide which management buttons show next to each row given the viewer's role.
+  const canManage = (target) => {
+    if (target.uid === user?.uid) return { removable: false, roleEditable: false, transferable: false };
+    if (isOwner) {
+      return {
+        removable: target.role !== "owner",
+        roleEditable: target.role !== "owner",
+        transferable: target.role !== "owner",
+      };
+    }
+    if (isAdmin) {
+      return {
+        removable: target.role === "member",
+        roleEditable: false,
+        transferable: false,
+      };
+    }
+    return { removable: false, roleEditable: false, transferable: false };
+  };
+
+  const roleBadge = (role) => {
+    const map = {
+      owner:  { label: "Owner",  cls: "bg-gray-900 text-white" },
+      admin:  { label: "Admin",  cls: "bg-indigo-100 text-indigo-700" },
+      member: { label: "Member", cls: "bg-gray-100 text-gray-700" },
+    };
+    const m = map[role] || map.member;
+    return <span className={`text-[10px] font-semibold uppercase tracking-wide px-2 py-0.5 rounded-full ${m.cls}`}>{m.label}</span>;
+  };
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
+        <div>
+          <p className="text-xs text-gray-500 mb-0.5">Agencia</p>
+          <p className="font-bold text-gray-900">{agency.name}</p>
+        </div>
+        {canInvite && (
+          <button
+            onClick={() => setShowInviteModal(true)}
+            className="px-3 py-2 bg-gray-900 text-white rounded-lg text-xs font-bold hover:bg-gray-800"
+          >
+            + Invitar miembro
+          </button>
+        )}
+      </div>
+
+      {error && (
+        <div className="mb-3 bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg px-3 py-2">{error}</div>
+      )}
+
+      <div className="space-y-2">
+        {(agency.members || []).map(m => {
+          const perm = canManage(m);
+          const busy = actionBusy?.uid === m.uid;
+          const isSelf = m.uid === user?.uid;
+          return (
+            <div key={m.uid} className="flex items-center gap-3 bg-gray-50 border border-gray-100 rounded-xl px-3 py-2.5">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <p className="font-semibold text-gray-900 text-sm truncate">
+                    {m.displayName || m.email || "(sin nombre)"}
+                    {isSelf && <span className="ml-1 text-xs text-gray-400">(tú)</span>}
+                  </p>
+                  {roleBadge(m.role)}
+                </div>
+                <p className="text-xs text-gray-500 truncate">{m.email || "—"}</p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                {perm.roleEditable && (
+                  <select
+                    value={m.role}
+                    onChange={e => handleChangeRole(m.uid, e.target.value)}
+                    disabled={busy}
+                    className="text-xs border border-gray-200 rounded-lg px-2 py-1 bg-white hover:bg-gray-50"
+                    title="Cambiar rol"
+                  >
+                    <option value="admin">Admin</option>
+                    <option value="member">Member</option>
+                  </select>
+                )}
+                {perm.transferable && (
+                  <button
+                    onClick={() => setTransferTarget(m)}
+                    disabled={busy}
+                    className="text-xs px-2 py-1 border border-gray-200 rounded-lg text-gray-700 hover:bg-white"
+                    title="Transferir propiedad de la agencia a este miembro"
+                  >
+                    ⇄
+                  </button>
+                )}
+                {perm.removable && (
+                  <button
+                    onClick={() => setRemoveTarget(m)}
+                    disabled={busy}
+                    className="text-xs px-2 py-1 border border-gray-200 rounded-lg text-red-600 hover:bg-red-50 hover:border-red-200"
+                    title="Eliminar de la agencia"
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="text-xs text-gray-400 mt-4 leading-relaxed">
+        {isOwner && "Como owner puedes invitar, cambiar roles y transferir la propiedad. Eres el único que puede borrar la agencia (fuera de este panel)."}
+        {isAdmin && "Como admin puedes invitar a nuevos miembros y eliminar members. No puedes tocar a otros admins ni al owner."}
+        {!isOwner && !isAdmin && "Como member, puedes ver al equipo pero no gestionarlo. Pide a un admin u owner si necesitas cambios."}
+      </p>
+
+      {showInviteModal && (
+        <InviteMemberModal
+          agency={agency}
+          user={user}
+          onClose={() => setShowInviteModal(false)}
+          onInvited={onRefreshAgency}
+        />
+      )}
+
+      <ConfirmModal
+        open={!!transferTarget}
+        onClose={() => setTransferTarget(null)}
+        onConfirm={confirmTransfer}
+        icon="⇄"
+        title={transferTarget ? `¿Transferir la propiedad a ${transferTarget.displayName || transferTarget.email}?` : ""}
+        description="Tu rol pasa a admin y el suyo a owner. Solo quien sea owner puede borrar la agencia o transferirla de nuevo. Esta acción es reversible solo si el nuevo owner decide transferirtela de vuelta."
+        confirmLabel="Sí, transferir"
+        confirmStyle="bg-gray-900 hover:bg-gray-800"
+      />
+
+      <ConfirmModal
+        open={!!removeTarget}
+        onClose={() => setRemoveTarget(null)}
+        onConfirm={confirmRemove}
+        icon="🗑"
+        title={removeTarget ? `¿Eliminar a ${removeTarget.displayName || removeTarget.email}?` : ""}
+        description="Perderá acceso a la agencia inmediatamente. Los procesos que creó se quedan en la agencia. Puedes volver a invitarle más tarde."
+        confirmLabel="Sí, eliminar"
+        confirmStyle="bg-red-500 hover:bg-red-600"
+      />
+    </div>
+  );
+}
+
+// ─── INVITE MEMBER MODAL ──────────────────────────────────────────────────────
+// Generates a shareable invite link scoped to the current agency + a chosen
+// role. Owner-level invites are NOT possible — ownership is transferred, not
+// granted by invite. Admins can only invite other admins or members.
+function InviteMemberModal({ agency, user, onClose, onInvited }) {
+  const [role, setRole] = useState("member");
+  const [generating, setGenerating] = useState(false);
+  const [generated, setGenerated] = useState(null); // { url, expiresAt }
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState("");
+
+  const generate = async () => {
+    setGenerating(true); setError("");
+    try {
+      const res = await createAgencyInvite({
+        agencyId: agency.id,
+        agencyName: agency.name,
+        role,
+        user,
+      });
+      setGenerated(res);
+      try { await navigator.clipboard.writeText(res.url); setCopied(true); setTimeout(() => setCopied(false), 2500); } catch {}
+      onInvited?.();
+    } catch (e) {
+      console.error("createAgencyInvite error:", e);
+      setError("No se pudo generar la invitación. Reintenta en unos segundos.");
+    }
+    setGenerating(false);
+  };
+
+  const copy = async () => {
+    if (!generated?.url) return;
+    try { await navigator.clipboard.writeText(generated.url); setCopied(true); setTimeout(() => setCopied(false), 2500); } catch {}
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-bold text-gray-900 text-lg">Invitar a la agencia</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl leading-none">×</button>
+        </div>
+
+        {!generated ? (
+          <>
+            <p className="text-sm text-gray-500 mb-4 leading-relaxed">
+              Elige el rol y genera un link único. Cópialo y envíaselo por el canal que prefieras (Slack, email, WhatsApp). Caduca en 7 días.
+            </p>
+            <div className="mb-4">
+              <label className={lbl}>Rol del invitado</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setRole("member")}
+                  className={`p-3 rounded-xl border text-left transition-all ${role === "member" ? "border-gray-900 bg-gray-50" : "border-gray-200 hover:border-gray-400"}`}
+                >
+                  <p className="text-sm font-semibold text-gray-900">Member</p>
+                  <p className="text-xs text-gray-500 mt-1">Crea y gestiona procesos.</p>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRole("admin")}
+                  className={`p-3 rounded-xl border text-left transition-all ${role === "admin" ? "border-gray-900 bg-gray-50" : "border-gray-200 hover:border-gray-400"}`}
+                >
+                  <p className="text-sm font-semibold text-gray-900">Admin</p>
+                  <p className="text-xs text-gray-500 mt-1">Todo lo anterior + gestiona miembros.</p>
+                </button>
+              </div>
+            </div>
+            {error && <p className="text-xs text-red-600 mb-3">{error}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={onClose}
+                className="flex-1 py-2.5 border border-gray-200 rounded-xl text-sm text-gray-500 hover:bg-gray-50"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={generate}
+                disabled={generating}
+                className="flex-1 py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 disabled:opacity-50"
+              >
+                {generating ? "Generando..." : "Generar link"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-gray-500 mb-3">
+              Link generado. Cópialo y envíaselo al invitado como <strong className="text-gray-800">{role === "admin" ? "admin" : "member"}</strong>.
+            </p>
+            <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-xl px-3 py-2 mb-3">
+              <span className="text-xs text-gray-700 font-mono truncate flex-1">{generated.url}</span>
+              <button
+                onClick={copy}
+                className={`text-xs font-semibold px-2.5 py-1 rounded-lg shrink-0 transition-colors ${copied ? "bg-green-100 text-green-700" : "bg-white border border-gray-200 text-gray-700 hover:bg-gray-100"}`}
+              >
+                {copied ? "✓ Copiado" : "Copiar"}
+              </button>
+            </div>
+            <p className="text-xs text-gray-400 leading-relaxed mb-4">
+              Caduca el {new Date(generated.expiresAt).toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric" })}. Si el invitado no lo usa antes, puedes generar otro.
+            </p>
+            <button
+              onClick={onClose}
+              className="w-full py-2.5 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800"
+            >
+              Cerrar
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AgencySettingsModal({ settings, onSave, onClose, initialSection = "marca", agency, user, onRefreshAgency }) {
   const [section, setSection] = useState(initialSection);
   const [brandManual, setBrandManual] = useState(settings?.brandManual || "");
   const [brandTab, setBrandTab] = useState("text");
@@ -3391,7 +3866,7 @@ function AgencySettingsModal({ settings, onSave, onClose, initialSection = "marc
 
         {/* Section tabs */}
         <div className="flex border-b border-gray-100 shrink-0">
-          {[["marca", "🎨 Marca"], ["email", "📧 Email"], ["slack", "🔔 Slack"]].map(([id, label]) => (
+          {[["marca", "🎨 Marca"], ["email", "📧 Email"], ["slack", "🔔 Slack"], ["miembros", "👥 Miembros"]].map(([id, label]) => (
             <button key={id} onClick={() => setSection(id)}
               className={`flex-1 py-3 text-sm font-semibold transition-colors ${section === id ? "border-b-2 border-gray-900 text-gray-900" : "text-gray-400 hover:text-gray-600"}`}>
               {label}
@@ -3447,6 +3922,11 @@ function AgencySettingsModal({ settings, onSave, onClose, initialSection = "marc
           {/* ── SLACK ── */}
           {section === "slack" && (
             <SlackSetupWizard slackConfig={slackConfig} onChange={setSlackConfig} />
+          )}
+
+          {/* ── MIEMBROS ── */}
+          {section === "miembros" && (
+            <MembersTab agency={agency} user={user} onRefreshAgency={onRefreshAgency} />
           )}
         </div>
 
@@ -5612,6 +6092,114 @@ function FeedbackWidget({ user }) {
   );
 }
 
+// ─── Accept agency invite ───────────────────────────────────────────────────
+// Shown when a logged-in active user lands with ?agencyInvite=xxx. Validates
+// the token, shows a clear "¿Unirte a X como Y?" confirmation, and
+// transactionally accepts (see acceptAgencyInvite).
+function AcceptAgencyInviteScreen({ token, user, onAccepted, onDismissed }) {
+  const [state, setState] = useState({ status: "loading" });
+  const [accepting, setAccepting] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const res = await loadAgencyInvite(token);
+      if (res.ok) setState({ status: "ready", invite: res.invite });
+      else setState({ status: "invalid", reason: res.reason, invite: res.invite });
+    })();
+  }, [token]);
+
+  const accept = async () => {
+    setAccepting(true);
+    try {
+      const res = await acceptAgencyInvite(token, user);
+      if (!res?.ok) {
+        setState({ status: "invalid", reason: res?.reason || "error" });
+        setAccepting(false);
+        return;
+      }
+      onAccepted();
+    } catch (e) {
+      console.error("acceptAgencyInvite error:", e);
+      setState({ status: "invalid", reason: "error" });
+      setAccepting(false);
+    }
+  };
+
+  const reasonCopy = {
+    not_found:      "Este link de invitación no existe o ya fue borrado.",
+    already_used:   "Esta invitación ya fue usada. Pide una nueva al owner de la agencia.",
+    expired:        "Esta invitación ha caducado. Pide una nueva al owner de la agencia.",
+    agency_missing: "La agencia asociada ya no existe.",
+    error:          "Ha ocurrido un error al procesar la invitación.",
+    read_error:     "No se pudo leer la invitación. Prueba recargar la página.",
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="max-w-md w-full">
+          <div className="bg-white rounded-3xl border border-gray-200 p-8 shadow-sm text-center">
+            {state.status === "loading" && (
+              <>
+                <div className="text-4xl mb-3">⏳</div>
+                <p className="text-gray-500 text-sm">Validando invitación...</p>
+              </>
+            )}
+
+            {state.status === "ready" && (
+              <>
+                <div className="text-5xl mb-4">🤝</div>
+                <h1 className="text-2xl font-bold text-gray-900 tracking-tight mb-2">
+                  Te han invitado a <span className="whitespace-nowrap">{state.invite.agencyName || "una agencia"}</span>
+                </h1>
+                <p className="text-gray-500 text-sm leading-relaxed mb-2">
+                  Te unirás como <strong className="text-gray-800">{state.invite.role === "admin" ? "administrador" : "miembro"}</strong>.
+                </p>
+                <p className="text-xs text-gray-400 leading-relaxed mb-6">
+                  Al aceptar, perderás acceso a tu agencia actual (si tenías una) y verás los procesos de selección de <strong>{state.invite.agencyName}</strong>.
+                </p>
+                <div className="flex flex-col gap-2">
+                  <button
+                    onClick={accept}
+                    disabled={accepting}
+                    className="w-full py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800 disabled:opacity-50"
+                  >
+                    {accepting ? "Uniéndote..." : `✅ Unirme a ${state.invite.agencyName || "la agencia"}`}
+                  </button>
+                  <button
+                    onClick={onDismissed}
+                    disabled={accepting}
+                    className="w-full py-2.5 border border-gray-200 text-gray-500 rounded-xl text-sm font-semibold hover:bg-gray-50"
+                  >
+                    Ahora no
+                  </button>
+                </div>
+              </>
+            )}
+
+            {state.status === "invalid" && (
+              <>
+                <div className="text-5xl mb-4">⚠️</div>
+                <h1 className="text-xl font-bold text-gray-900 mb-2">Invitación no válida</h1>
+                <p className="text-gray-500 text-sm leading-relaxed mb-6">
+                  {reasonCopy[state.reason] || "No hemos podido procesar esta invitación."}
+                </p>
+                <button
+                  onClick={onDismissed}
+                  className="w-full py-3 bg-gray-900 text-white rounded-xl text-sm font-bold hover:bg-gray-800"
+                >
+                  Ir al dashboard
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+      <BrandFooter />
+    </div>
+  );
+}
+
 // ─── Pending approval screen (new user awaits admin activation) ─────────────
 function PendingApprovalScreen({ user, onLogout }) {
   return (
@@ -6205,6 +6793,29 @@ export default function App() {
   const [publicProcessId] = useState(() => { const m = window.location.hash.match(/^#apply\/(.+)$/); return m ? m[1] : null; });
   if (publicProcessId) return <CandidatePublicScreen processId={publicProcessId} />;
 
+  // Detect agency invite token from the URL and stash it in sessionStorage
+  // so the accept flow survives login / signup round-trips. Clean the URL
+  // immediately so we don't re-detect on every render. This is done at
+  // render time (not in an effect) because useState below also reads from
+  // sessionStorage as its initial value — we need the stash done first.
+  try {
+    const qp = new URL(window.location.href).searchParams;
+    const tok = qp.get("agencyInvite");
+    if (tok) {
+      sessionStorage.setItem("recruitai_pending_agency_invite", tok);
+      qp.delete("agencyInvite");
+      const cleaned = `${window.location.pathname}${qp.toString() ? "?" + qp.toString() : ""}${window.location.hash}`;
+      window.history.replaceState({}, "", cleaned);
+    }
+  } catch { /* SSR / private mode — not critical */ }
+  const [pendingAgencyInvite, setPendingAgencyInvite] = useState(() => {
+    try { return sessionStorage.getItem("recruitai_pending_agency_invite"); } catch { return null; }
+  });
+  const clearPendingAgencyInvite = () => {
+    try { sessionStorage.removeItem("recruitai_pending_agency_invite"); } catch {}
+    setPendingAgencyInvite(null);
+  };
+
   const [phase, setPhase] = useState("dashboard");
   const [processes, setProcesses] = useState([]);
   const [activeJob, setActiveJob] = useState(null);
@@ -6228,6 +6839,10 @@ export default function App() {
   // scoped to this id. Null until auth + migration complete; the autosave
   // effect is gated on this to avoid writing to the wrong collection.
   const [agencyId, setAgencyId] = useState(null);
+  // Agency metadata (name, members, ownerUid) — the "who" of the workspace,
+  // not its settings or processes. Loaded alongside agencyId. The settings
+  // modal's Members tab reads this directly.
+  const [agency, setAgency] = useState(null);
   const [showSettings, setShowSettings] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState("marca");
   const openSettings = (section) => {
@@ -6295,6 +6910,17 @@ export default function App() {
                   setProcesses(ag.processes || []);
                   if (ag.settings) setAgencySettings(ag.settings);
                   if (!ag.settings?.onboardingCompleted) setShowOnboarding(true);
+                  // Cache the membership metadata separately — the Members
+                  // tab reads this without re-fetching the doc on every
+                  // open, and it gets refreshed after any mutation.
+                  setAgency({
+                    id: ag.id || resolvedAgencyId,
+                    name: ag.name || "",
+                    ownerUid: ag.ownerUid,
+                    members: ag.members || [],
+                    memberUids: ag.memberUids || [],
+                    createdAt: ag.createdAt || null,
+                  });
                 }
               } catch (e) { console.error("Agency load error:", e); }
             } else {
@@ -6518,6 +7144,7 @@ export default function App() {
     setProcesses([]);
     setAgencySettings({ brandManual: "", emailConfig: { provider: "app" }, slackConfig: { webhookUrl: "" }, onboardingCompleted: false });
     setAgencyId(null);
+    setAgency(null);
     setAiUsage({});
     setShowOnboarding(false);
     setAccountStatus(null);
@@ -6609,6 +7236,29 @@ export default function App() {
       }
     } catch (e) { /* silent — non-critical */ }
   };
+
+  // Refresh just the agency's membership metadata (name, members, roles).
+  // Called after invite-accept / role-change / ownership-transfer / member
+  // removal so the Members tab reflects the latest state without waiting
+  // for a full page reload. Keeps processes + settings state untouched —
+  // those mutate via the normal autosave path.
+  const refreshAgency = async () => {
+    if (!agencyId) return;
+    try {
+      const snap = await getDoc(doc(db, "agencies", agencyId));
+      if (snap.exists()) {
+        const ag = snap.data();
+        setAgency({
+          id: ag.id || agencyId,
+          name: ag.name || "",
+          ownerUid: ag.ownerUid,
+          members: ag.members || [],
+          memberUids: ag.memberUids || [],
+          createdAt: ag.createdAt || null,
+        });
+      }
+    } catch (e) { /* silent */ }
+  };
   const handleSaveSettings = (newSettings) => { setAgencySettings(s => ({ ...s, ...newSettings })); };
 
   const handleCompleteOnboarding = (newSettings) => {
@@ -6633,11 +7283,31 @@ export default function App() {
   // Access gates: block pending / suspended accounts before they see anything.
   if (accountStatus === "pending") return <PendingApprovalScreen user={user} onLogout={handleLogout} />;
   if (accountStatus === "suspended") return <SuspendedScreen user={user} onLogout={handleLogout} />;
+
+  // Agency invite landing: a logged-in active user who arrived (or returned)
+  // with an ?agencyInvite=xxx token sees the accept screen BEFORE anything
+  // else, so they can't accidentally start working in their old agency
+  // while an invite is pending.
+  if (pendingAgencyInvite) {
+    return <AcceptAgencyInviteScreen
+      token={pendingAgencyInvite}
+      user={user}
+      onAccepted={() => {
+        clearPendingAgencyInvite();
+        // Full reload so the entire app bootstraps against the new agency
+        // (agencyId, processes, settings, usage). Simpler + bulletproof
+        // than trying to re-hydrate every piece of state in place.
+        window.location.href = window.location.pathname;
+      }}
+      onDismissed={() => { clearPendingAgencyInvite(); }}
+    />;
+  }
+
   if (showOnboarding) return <OnboardingScreen user={user} onComplete={handleCompleteOnboarding} />;
 
   return (
     <>
-      {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} initialSection={settingsInitialSection} />}
+      {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} initialSection={settingsInitialSection} agency={agency} user={user} onRefreshAgency={refreshAgency} />}
       <FeedbackWidget user={user} />
       {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={openSettings} agencySettings={agencySettings} aiUsage={aiUsage} onRefreshUsage={refreshAiUsage} />}
       {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} onDeleteProcess={handleDeleteProcess} onToggleStatus={handleToggle} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} aiUsage={aiUsage} onEvalConsumed={bumpAiUsage} agencyId={agencyId} />; })()}

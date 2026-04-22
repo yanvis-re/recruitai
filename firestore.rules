@@ -152,8 +152,35 @@ service cloud.firestore {
       }
     }
 
-    // NOTE: agencyInvites/{token} rules land in Commit C (invite flow). Until
-    // then the collection is default-deny on the client, which is fine —
-    // no code touches it yet.
+    // ── Agency invites (tokenised, shareable links) ────────────────────────
+    // Shape: { token, agencyId, agencyName, role: 'admin'|'member',
+    //          createdBy, createdByEmail, createdAt, expiresAt,
+    //          acceptedBy, acceptedAt, acceptedEmail }
+    //
+    // Security model: the token itself IS the secret (unguessable random),
+    // so reads are intentionally wide. Writes are tightly scoped:
+    //   - create: only agency members
+    //   - update: only the invitee, and only to stamp acceptedBy = self
+    //   - delete: only agency members (revoke / cleanup)
+    match /agencyInvites/{token} {
+      allow read: if true;
+
+      allow create: if isAuthed()
+        && 'agencyId' in request.resource.data
+        && isAgencyMember(request.resource.data.agencyId)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.acceptedBy == null
+        && (request.resource.data.role == 'admin' || request.resource.data.role == 'member');
+
+      // Accept: flip acceptedBy/acceptedAt to self, nothing else mutates.
+      allow update: if isAuthed()
+        && resource.data.acceptedBy == null
+        && request.resource.data.acceptedBy == request.auth.uid
+        && request.resource.data.agencyId == resource.data.agencyId
+        && request.resource.data.role == resource.data.role;
+
+      allow delete: if isAuthed()
+        && isAgencyMember(resource.data.agencyId);
+    }
   }
 }
