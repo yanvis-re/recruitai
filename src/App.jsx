@@ -1995,8 +1995,20 @@ function CandidatePublicScreen({ processId }) {
     const load = async () => {
       try {
         const snap = await getDoc(doc(db, "publicProcesses", processId));
-        if (snap.exists()) setProcessData(snap.data());
-        else setError("Este proceso no está disponible o el link ha expirado.");
+        if (!snap.exists()) {
+          setError("Este proceso no está disponible o el link ha expirado.");
+        } else {
+          const data = snap.data();
+          // Archived = recruiter closed the process from their dashboard.
+          // The doc is still alive (so when they reopen it the link works
+          // again with no re-publish needed), but candidates see the same
+          // branded dead-end as if the process was deleted.
+          if (data.archived) {
+            setError("Este proceso no está disponible o el link ha expirado.");
+          } else {
+            setProcessData(data);
+          }
+        }
       } catch (e) { setError("No se pudo cargar el proceso."); }
       setLoading(false);
     };
@@ -3766,7 +3778,7 @@ const ESTADO_COLORS = { "Pendiente": "bg-gray-100 text-gray-700", "Primera entre
 const PROGRESO_COLORS = { "Ingreso": "bg-purple-100 text-purple-700", "Prueba técnica": "bg-gray-100 text-gray-800", "Entrevista": "bg-indigo-100 text-indigo-700", "Onboarding": "bg-teal-100 text-teal-700", "Descalificado": "bg-red-100 text-red-700", "En cartera": "bg-yellow-100 text-yellow-700", "Desiste": "bg-gray-100 text-gray-800", "Validación prueba técnica": "bg-cyan-100 text-cyan-700", "Entrevista RRHH": "bg-violet-100 text-violet-700" };
 
 // ─── PROCESS DETAIL SCREEN ───────────────────────────────────────────────────
-function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDeleteProcess, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare }) {
+function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDeleteProcess, onToggleStatus, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare }) {
   // Delete flow for the entire process — closes the public link, drops any
   // applications received, and removes the process from the recruiter's
   // workspace. Two-step (modal) confirmation because it's irreversible.
@@ -3818,6 +3830,12 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDel
   ].filter(Boolean);
   const [showMissingConfigModal, setShowMissingConfigModal] = useState(false);
   const [candidates, setCandidates] = useState((process.candidates || []).map(c => ({ estado: "Pendiente", progreso: "Ingreso", entrevistador: "", notas: "", ...c })));
+  // Candidate list filters — client-side, applied to the rendered rows only.
+  // estadoFilter: "all" or one of ESTADO_OPTIONS. iaFilter: "all" | "AVANZAR"
+  // | "REVISAR" | "DESCARTAR" | "pending" (no evaluation yet).
+  const [searchCandidate, setSearchCandidate] = useState("");
+  const [estadoFilter, setEstadoFilter] = useState("all");
+  const [iaFilter, setIaFilter] = useState("all");
   const [showAddForm, setShowAddForm] = useState(false);
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
@@ -4301,6 +4319,15 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDel
           <div className="w-px h-4 bg-gray-200 shrink-0" />
           <div className="flex-1 min-w-0"><span className="font-bold text-gray-900 text-sm truncate block">{getPositionTitle(process.position)}</span><span className="text-xs text-gray-400">{process.company?.name}</span></div>
           <button onClick={onStartDemo} className="shrink-0 px-3 py-1.5 border border-gray-200 text-gray-500 rounded-lg text-xs font-medium hover:bg-gray-50">Ver oferta →</button>
+          {onToggleStatus && process.publishedAt && (
+            <button
+              onClick={() => onToggleStatus(process.id)}
+              title={process.status === "active" ? "Cierra el link público. Los candidatos no podrán aplicar hasta que reabras." : "Reabre el link público."}
+              className={`shrink-0 px-3 py-1.5 border rounded-lg text-xs font-medium transition-colors ${process.status === "active" ? "border-gray-200 text-gray-700 hover:bg-gray-50" : "border-green-200 text-green-700 hover:bg-green-50"}`}
+            >
+              {process.status === "active" ? "🔒 Cerrar link" : "🔓 Reabrir link"}
+            </button>
+          )}
           <button
             onClick={() => setShowDeleteConfirm(true)}
             title="Borrar este proceso de selección"
@@ -4457,38 +4484,105 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDel
           )}
           {candidates.length === 0 ? (
             <div className="text-center py-14"><p className="text-4xl mb-3">👥</p><p className="text-gray-400 text-sm font-medium">No hay candidatos en este proceso.</p><button onClick={() => setShowAddForm(true)} className="mt-3 text-gray-900 text-sm hover:underline">+ Añadir el primero</button></div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead><tr className="bg-gray-50 border-b border-gray-100">
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "160px" }}>Candidato</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "170px" }}>Estado</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "190px" }}>Progreso</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "140px" }}>Entrevistador</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "180px" }}>Notas</th>
-                  <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "80px" }}>IA</th>
-                  <th className="px-4 py-3 w-8"></th>
-                </tr></thead>
-                <tbody>
-                  {candidates.map((c, i) => (
-                    <tr key={c.id} className={`border-b border-gray-50 hover:bg-gray-50/20 transition-colors ${i % 2 === 1 ? "bg-gray-50/30" : ""}`}>
-                      <td className="px-4 py-3"><p className="font-semibold text-gray-800 leading-tight">{c.name}</p>{c.email && <p className="text-xs text-gray-400 mt-0.5">{c.email}</p>}</td>
-                      <td className="px-4 py-3"><select value={c.estado || "Pendiente"} onChange={e => updateCandidate(c.id, "estado", e.target.value)} className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300 ${ESTADO_COLORS[c.estado || "Pendiente"] || "bg-gray-100 text-gray-700"}`} style={{ maxWidth: "155px" }}>{ESTADO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
-                      <td className="px-4 py-3"><select value={c.progreso || "Ingreso"} onChange={e => updateCandidate(c.id, "progreso", e.target.value)} className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300 ${PROGRESO_COLORS[c.progreso || "Ingreso"] || "bg-gray-100 text-gray-700"}`} style={{ maxWidth: "185px" }}>{PROGRESO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
-                      <td className="px-4 py-3"><input type="text" value={c.entrevistador || ""} onChange={e => updateCandidate(c.id, "entrevistador", e.target.value)} placeholder="Asignar..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-300 bg-transparent" /></td>
-                      <td className="px-4 py-3"><input type="text" value={c.notas || ""} onChange={e => updateCandidate(c.id, "notas", e.target.value)} placeholder="Añadir nota..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-300 bg-transparent" /></td>
-                      <td className="px-4 py-3 text-center">
-                        <button onClick={() => setEvalCandidate(c)} className={`text-xs font-semibold px-2 py-1 rounded-lg transition-colors ${c.exerciseEvaluation || c.interviewEvaluation ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>
-                          {c.exerciseEvaluation && c.interviewEvaluation ? "✅ Ver" : c.exerciseEvaluation ? "🎤 Entrev." : "🤖 Evaluar"}
-                        </button>
-                      </td>
-                      <td className="px-4 py-3 text-center"><button onClick={() => requestRemoveCandidate(c)} className="text-gray-300 hover:text-red-400 text-xl leading-none" title={`Eliminar a ${c.name || "candidato"}`}>×</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          ) : (() => {
+            // Apply search + estado filter + IA recommendation filter in order.
+            // Search is case-insensitive across name, email and LinkedIn.
+            const q = searchCandidate.trim().toLowerCase();
+            const filtered = candidates.filter(c => {
+              if (q && !([c.name, c.email, c.linkedin].filter(Boolean).join(" ").toLowerCase().includes(q))) return false;
+              if (estadoFilter !== "all" && (c.estado || "Pendiente") !== estadoFilter) return false;
+              if (iaFilter !== "all") {
+                const rec = c.exerciseEvaluation?.recommendation || c.interviewEvaluation?.recommendation;
+                if (iaFilter === "pending") {
+                  if (rec) return false;
+                } else if (rec !== iaFilter) return false;
+              }
+              return true;
+            });
+            const hasFilters = q || estadoFilter !== "all" || iaFilter !== "all";
+            return (
+              <>
+                <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 flex flex-wrap items-center gap-2">
+                  <div className="relative flex-1 min-w-[180px]">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm pointer-events-none">🔍</span>
+                    <input
+                      type="text"
+                      value={searchCandidate}
+                      onChange={e => setSearchCandidate(e.target.value)}
+                      placeholder="Buscar por nombre, email o LinkedIn..."
+                      className="w-full pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-300 bg-white"
+                    />
+                  </div>
+                  <select
+                    value={estadoFilter}
+                    onChange={e => setEstadoFilter(e.target.value)}
+                    className="text-xs font-semibold px-3 py-2 border border-gray-200 rounded-lg bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300"
+                    title="Filtrar por estado del pipeline"
+                  >
+                    <option value="all">Todos los estados</option>
+                    {ESTADO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                  <select
+                    value={iaFilter}
+                    onChange={e => setIaFilter(e.target.value)}
+                    className="text-xs font-semibold px-3 py-2 border border-gray-200 rounded-lg bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300"
+                    title="Filtrar por recomendación IA"
+                  >
+                    <option value="all">IA: todos</option>
+                    <option value="AVANZAR">✅ AVANZAR</option>
+                    <option value="REVISAR">⚠️ REVISAR</option>
+                    <option value="DESCARTAR">❌ DESCARTAR</option>
+                    <option value="pending">⏳ Sin evaluar</option>
+                  </select>
+                  {hasFilters && (
+                    <button
+                      onClick={() => { setSearchCandidate(""); setEstadoFilter("all"); setIaFilter("all"); }}
+                      className="text-xs font-semibold text-gray-500 hover:text-gray-900 px-2"
+                    >
+                      Limpiar
+                    </button>
+                  )}
+                  <span className="text-xs text-gray-400 ml-auto">
+                    {hasFilters ? `${filtered.length} de ${candidates.length}` : `${candidates.length} candidato${candidates.length === 1 ? "" : "s"}`}
+                  </span>
+                </div>
+                {filtered.length === 0 ? (
+                  <div className="text-center py-14"><p className="text-3xl mb-3">🔍</p><p className="text-gray-400 text-sm">Ningún candidato coincide con los filtros.</p></div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead><tr className="bg-gray-50 border-b border-gray-100">
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "160px" }}>Candidato</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "170px" }}>Estado</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "190px" }}>Progreso</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "140px" }}>Entrevistador</th>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "180px" }}>Notas</th>
+                        <th className="px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" style={{ minWidth: "80px" }}>IA</th>
+                        <th className="px-4 py-3 w-8"></th>
+                      </tr></thead>
+                      <tbody>
+                        {filtered.map((c, i) => (
+                          <tr key={c.id} className={`border-b border-gray-50 hover:bg-gray-50/20 transition-colors ${i % 2 === 1 ? "bg-gray-50/30" : ""}`}>
+                            <td className="px-4 py-3"><p className="font-semibold text-gray-800 leading-tight">{c.name}</p>{c.email && <p className="text-xs text-gray-400 mt-0.5">{c.email}</p>}</td>
+                            <td className="px-4 py-3"><select value={c.estado || "Pendiente"} onChange={e => updateCandidate(c.id, "estado", e.target.value)} className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300 ${ESTADO_COLORS[c.estado || "Pendiente"] || "bg-gray-100 text-gray-700"}`} style={{ maxWidth: "155px" }}>{ESTADO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
+                            <td className="px-4 py-3"><select value={c.progreso || "Ingreso"} onChange={e => updateCandidate(c.id, "progreso", e.target.value)} className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300 ${PROGRESO_COLORS[c.progreso || "Ingreso"] || "bg-gray-100 text-gray-700"}`} style={{ maxWidth: "185px" }}>{PROGRESO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
+                            <td className="px-4 py-3"><input type="text" value={c.entrevistador || ""} onChange={e => updateCandidate(c.id, "entrevistador", e.target.value)} placeholder="Asignar..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-300 bg-transparent" /></td>
+                            <td className="px-4 py-3"><input type="text" value={c.notas || ""} onChange={e => updateCandidate(c.id, "notas", e.target.value)} placeholder="Añadir nota..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-300 bg-transparent" /></td>
+                            <td className="px-4 py-3 text-center">
+                              <button onClick={() => setEvalCandidate(c)} className={`text-xs font-semibold px-2 py-1 rounded-lg transition-colors ${c.exerciseEvaluation || c.interviewEvaluation ? "bg-indigo-100 text-indigo-700 hover:bg-indigo-200" : "bg-gray-100 text-gray-500 hover:bg-gray-200"}`}>
+                                {c.exerciseEvaluation && c.interviewEvaluation ? "✅ Ver" : c.exerciseEvaluation ? "🎤 Entrev." : "🤖 Evaluar"}
+                              </button>
+                            </td>
+                            <td className="px-4 py-3 text-center"><button onClick={() => requestRemoveCandidate(c)} className="text-gray-300 hover:text-red-400 text-xl leading-none" title={`Eliminar a ${c.name || "candidato"}`}>×</button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </div>
       </div>
     </div>
@@ -4513,7 +4607,13 @@ function ProcessCard({ process, onView, onToggle }) {
           <h3 className="font-bold text-gray-900 leading-tight">{getPositionTitle(process.position)}</h3>
           <p className="text-xs text-gray-400 mt-0.5">{process.company?.name} · {process.company?.location}</p>
         </div>
-        <button onClick={() => onToggle(process.id)} className={`ml-3 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${isActive ? "border-gray-200 text-gray-900 hover:bg-gray-50" : "border-green-200 text-green-600 hover:bg-green-50"}`}>{isActive ? "⏸ Pausar" : "▶ Activar"}</button>
+        <button
+          onClick={() => onToggle(process.id)}
+          title={isActive ? "Cierra el link público. Los candidatos no podrán aplicar hasta que reabras." : "Reabre el link público."}
+          className={`ml-3 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${isActive ? "border-gray-200 text-gray-900 hover:bg-gray-50" : "border-green-200 text-green-600 hover:bg-green-50"}`}
+        >
+          {isActive ? "🔒 Cerrar link" : "🔓 Reabrir link"}
+        </button>
       </div>
       <div className="grid grid-cols-6 gap-1 mb-4">
         {byEstado.map((s, i) => <div key={s.label} className={`rounded-lg p-1.5 text-center ${["bg-gray-50", "bg-gray-50", "bg-indigo-50", "bg-yellow-50", "bg-red-50", "bg-green-50"][i]}`}><p className="text-base font-black leading-none text-gray-800">{s.val}</p><p className="text-xs text-gray-400 mt-0.5 leading-tight hidden sm:block" style={{ fontSize: "9px" }}>{s.label}</p></div>)}
@@ -6110,7 +6210,21 @@ export default function App() {
     setAutoShareOnEntry(true);
     setPhase("process_detail");
   };
-  const handleToggle = (id) => setProcesses(ps => ps.map(p => p.id === id ? { ...p, status: p.status === "active" ? "paused" : "active" } : p));
+  // Toggle pause ↔ active. Previously this only flipped a local label and the
+  // public link stayed open — candidates could still apply to a "paused"
+  // process. Now it mirrors the state to publicProcesses/{id}.archived so the
+  // candidate-facing screen gates access. Only touches the public doc if the
+  // process was actually published (publishedAt stamped).
+  const handleToggle = async (id) => {
+    const current = processes.find(x => x.id === id);
+    if (!current) return;
+    const nextStatus = current.status === "active" ? "paused" : "active";
+    setProcesses(ps => ps.map(p => p.id === id ? { ...p, status: nextStatus } : p));
+    if (current.publishedAt) {
+      try { await setDoc(doc(db, "publicProcesses", id), { archived: nextStatus === "paused" }, { merge: true }); }
+      catch (e) { console.error("Toggle archive failed:", e); }
+    }
+  };
   const handleViewProcess = (process) => { setActiveJob(process); setPhase("process_detail"); };
   const handleStartDemo = (process) => { setActiveJob(process); setPhase("preview"); };
   const handleUpdateCandidates = (processId, updatedCandidates) => {
@@ -6163,7 +6277,7 @@ export default function App() {
       {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} initialSection={settingsInitialSection} />}
       <FeedbackWidget user={user} />
       {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={openSettings} agencySettings={agencySettings} />}
-      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} onDeleteProcess={handleDeleteProcess} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} />; })()}
+      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} onDeleteProcess={handleDeleteProcess} onToggleStatus={handleToggle} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} />; })()}
       {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onPublishAndShare={handlePublishAndShare} onBack={goToDashboard} />}
       {phase === "preview" && <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />}
       {phase === "apply" && <CandidateApplyScreen job={activeJob} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />}
