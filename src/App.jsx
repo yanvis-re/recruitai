@@ -4197,8 +4197,43 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                 </>
               )}
 
-              {exerciseEval && (
+              {exerciseEval && (() => {
+                // Detect exercises where the candidate provided a Loom URL but
+                // we couldn't fetch the transcript (Loom still processing,
+                // private video, parser breakage…). The evaluation in that
+                // case was based on the written answer only — the recruiter
+                // needs to know so they can manually watch the video.
+                const loomWarnings = (exerciseEval.exercises || [])
+                  .map(ex => {
+                    const resp = responses.find(r => r.exerciseId === ex.exerciseId);
+                    const hasLoomUrl = !!(resp?.loomUrl);
+                    const transcriptFetched = !!ex.loomTranscriptFetched;
+                    return hasLoomUrl && !transcriptFetched
+                      ? { title: ex.exerciseTitle || "Ejercicio", loomUrl: resp.loomUrl }
+                      : null;
+                  })
+                  .filter(Boolean);
+                return (
                 <div className="space-y-3">
+                  {loomWarnings.length > 0 && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-3">
+                      <p className="text-xs font-bold text-yellow-900 mb-1">⚠️ La IA no pudo leer la transcripción del Loom</p>
+                      <p className="text-xs text-yellow-800 leading-relaxed mb-2">
+                        La evaluación se basa solo en la respuesta escrita. El vídeo puede no haber terminado de procesarse aún (Loom tarda 2-5 min) o la transcripción está desactivada. {loomWarnings.length === 1 ? "Ejercicio afectado:" : `${loomWarnings.length} ejercicios afectados:`}
+                      </p>
+                      <ul className="space-y-1">
+                        {loomWarnings.map((w, i) => (
+                          <li key={i} className="text-xs">
+                            <strong className="text-yellow-900">{w.title}</strong> ·{" "}
+                            <a href={w.loomUrl} target="_blank" rel="noreferrer" className="text-yellow-900 underline hover:text-yellow-950">Ver vídeo</a>
+                          </li>
+                        ))}
+                      </ul>
+                      <p className="text-[11px] text-yellow-700 mt-2 leading-relaxed">
+                        Cuando la transcripción esté lista, pulsa "↻ Reevaluar" abajo para correr de nuevo con el vídeo incluido.
+                      </p>
+                    </div>
+                  )}
                   {/* Overall aggregate across all exercises */}
                   <div className="flex items-center justify-between bg-indigo-50 rounded-xl p-4">
                     <div className="min-w-0 flex-1 pr-3">
@@ -4261,9 +4296,10 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
 
                   {exerciseEval.strengths?.length > 0 && <div className="bg-green-50 rounded-xl p-3"><p className="text-xs font-bold text-green-700 mb-1">✅ Puntos fuertes</p>{exerciseEval.strengths.map((s, i) => <p key={i} className="text-xs text-green-600">· {s}</p>)}</div>}
                   {exerciseEval.gaps?.length > 0 && <div className="bg-gray-50 rounded-xl p-3"><p className="text-xs font-bold text-gray-800 mb-1">⚠️ Áreas de mejora</p>{exerciseEval.gaps.map((s, i) => <p key={i} className="text-xs text-gray-900">· {s}</p>)}</div>}
-                  <button onClick={() => setPendingReeval("exercise")} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">Reevaluar</button>
+                  <button onClick={() => setPendingReeval("exercise")} className="text-xs text-gray-400 hover:text-gray-600 hover:underline">↻ Reevaluar</button>
                 </div>
-              )}
+                );
+              })()}
             </div>
           )}
 
@@ -4457,7 +4493,7 @@ const ESTADO_COLORS = { "Pendiente": "bg-gray-100 text-gray-700", "Primera entre
 const PROGRESO_COLORS = { "Ingreso": "bg-purple-100 text-purple-700", "Prueba técnica": "bg-gray-100 text-gray-800", "Entrevista": "bg-indigo-100 text-indigo-700", "Onboarding": "bg-teal-100 text-teal-700", "Descalificado": "bg-red-100 text-red-700", "En cartera": "bg-yellow-100 text-yellow-700", "Desiste": "bg-gray-100 text-gray-800", "Validación prueba técnica": "bg-cyan-100 text-cyan-700", "Entrevista RRHH": "bg-violet-100 text-violet-700" };
 
 // ─── PROCESS DETAIL SCREEN ───────────────────────────────────────────────────
-function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDeleteProcess, onToggleStatus, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare, aiUsage, onEvalConsumed, agencyId }) {
+function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDeleteProcess, onToggleStatus, user, onStartDemo, agencySettings, onOpenSettings, autoShareOnEntry, clearAutoShare, aiUsage, onEvalConsumed, agencyId, agency }) {
   // Delete flow for the entire process — closes the public link, drops any
   // applications received, and removes the process from the recruiter's
   // workspace. Two-step (modal) confirmation because it's irreversible.
@@ -5304,7 +5340,37 @@ function ProcessDetailScreen({ process, onBack, onUpdate, onUpdateProcess, onDel
                             <td className="px-4 py-3"><p className="font-semibold text-gray-800 leading-tight">{c.name}</p>{c.email && <p className="text-xs text-gray-400 mt-0.5">{c.email}</p>}</td>
                             <td className="px-4 py-3"><select value={c.estado || "Pendiente"} onChange={e => updateCandidate(c.id, "estado", e.target.value)} className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300 ${ESTADO_COLORS[c.estado || "Pendiente"] || "bg-gray-100 text-gray-700"}`} style={{ maxWidth: "155px" }}>{ESTADO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
                             <td className="px-4 py-3"><select value={c.progreso || "Ingreso"} onChange={e => updateCandidate(c.id, "progreso", e.target.value)} className={`text-xs font-semibold rounded-lg px-2.5 py-1.5 border border-transparent cursor-pointer focus:outline-none focus:ring-2 focus:ring-gray-300 ${PROGRESO_COLORS[c.progreso || "Ingreso"] || "bg-gray-100 text-gray-700"}`} style={{ maxWidth: "185px" }}>{PROGRESO_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
-                            <td className="px-4 py-3"><input type="text" value={c.entrevistador || ""} onChange={e => updateCandidate(c.id, "entrevistador", e.target.value)} placeholder="Asignar..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-300 bg-transparent" /></td>
+                            <td className="px-4 py-3">{(() => {
+                              // Dropdown of current agency members. Assigning
+                              // an interviewer is a per-candidate task, NOT a
+                              // permission grant — any member (or admin or
+                              // owner) can be assigned. Stores the member's
+                              // displayName as a string for CSV readability;
+                              // legacy free-text values still render via the
+                              // fallback <option> below so nothing breaks
+                              // post-migration.
+                              const memberOptions = (agency?.members || [])
+                                .map(m => ({ uid: m.uid, label: m.displayName || m.email || "(sin nombre)" }))
+                                .filter(o => o.label);
+                              const currentValue = c.entrevistador || "";
+                              const isLegacyFreeText = currentValue && !memberOptions.some(o => o.label === currentValue);
+                              return (
+                                <select
+                                  value={currentValue}
+                                  onChange={e => updateCandidate(c.id, "entrevistador", e.target.value)}
+                                  className="w-full text-xs border border-gray-200 rounded-lg px-2 py-1.5 bg-transparent focus:outline-none focus:ring-2 focus:ring-gray-300"
+                                  title="Elige un miembro del equipo"
+                                >
+                                  <option value="">Sin asignar</option>
+                                  {memberOptions.map(o => (
+                                    <option key={o.uid} value={o.label}>{o.label}</option>
+                                  ))}
+                                  {isLegacyFreeText && (
+                                    <option value={currentValue}>{currentValue} (no es miembro)</option>
+                                  )}
+                                </select>
+                              );
+                            })()}</td>
                             <td className="px-4 py-3"><input type="text" value={c.notas || ""} onChange={e => updateCandidate(c.id, "notas", e.target.value)} placeholder="Añadir nota..." className="w-full text-xs border border-gray-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-gray-300 bg-transparent" /></td>
                             <td className="px-4 py-3 text-center">
                               {/* Detect "auto-eval likely in progress" for rows that came from the
@@ -7626,7 +7692,7 @@ export default function App() {
       {showSettings && <AgencySettingsModal settings={agencySettings} onSave={handleSaveSettings} onClose={() => setShowSettings(false)} initialSection={settingsInitialSection} agency={agency} user={user} onRefreshAgency={refreshAgency} />}
       <FeedbackWidget user={user} />
       {phase === "dashboard" && <RecruiterDashboard processes={processes} onNew={() => setPhase("setup")} onView={handleViewProcess} onToggle={handleToggle} user={user} onLogout={handleLogout} onOpenSettings={openSettings} agencySettings={agencySettings} aiUsage={aiUsage} onRefreshUsage={refreshAiUsage} />}
-      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} onDeleteProcess={handleDeleteProcess} onToggleStatus={handleToggle} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} aiUsage={aiUsage} onEvalConsumed={bumpAiUsage} agencyId={agencyId} />; })()}
+      {phase === "process_detail" && (() => { const lp = processes.find(p => p.id === activeJob?.id) || activeJob; return <ProcessDetailScreen process={lp} onBack={goToDashboard} onUpdate={handleUpdateCandidates} onUpdateProcess={handleUpdateProcess} onDeleteProcess={handleDeleteProcess} onToggleStatus={handleToggle} user={user} onStartDemo={() => handleStartDemo(lp)} agencySettings={agencySettings} onOpenSettings={openSettings} autoShareOnEntry={autoShareOnEntry} clearAutoShare={() => setAutoShareOnEntry(false)} aiUsage={aiUsage} onEvalConsumed={bumpAiUsage} agencyId={agencyId} agency={agency} />; })()}
       {phase === "setup" && <RecruiterSetupScreen onPublish={handlePublish} onPublishAndShare={handlePublishAndShare} onBack={goToDashboard} />}
       {phase === "preview" && <JobPreviewScreen job={activeJob} onApply={() => setPhase("apply")} onBack={goToDashboard} />}
       {phase === "apply" && <CandidateApplyScreen job={activeJob} onNext={(form) => { setCandidate(form); setPhase("exercises"); }} />}
