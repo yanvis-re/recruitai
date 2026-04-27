@@ -4203,10 +4203,15 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
               criteria: exercise.criteria || [],
               writtenResponse: response.response || "",
               loomUrl: response.loomUrl || "",
-              // If present, this short-circuits the server's Loom scraper
-              // (see api/evaluate.js). Empty string / undefined → scraper
-              // runs as usual.
-              videoTranscript: manualTranscripts[exercise.id] || "",
+              // Transcript priority chain on the server (api/evaluate.js):
+              //   1. videoMp4Url (Drive/Dropbox) → AssemblyAI rich
+              //   2. videoTranscript (manual paste OR candidate-pasted)
+              //   3. nothing
+              // Manual-paste overrides take precedence here so a recruiter
+              // who hand-pasted a transcript on a candidate isn't quietly
+              // overridden by AssemblyAI on every re-eval.
+              videoMp4Url: manualTranscripts[exercise.id] ? "" : (response.videoMp4Url || ""),
+              videoTranscript: manualTranscripts[exercise.id] || response.videoTranscript || "",
               position,
               brandManual: agencySettings?.brandManual || "",
               companyName: process.company?.name || "",
@@ -4226,6 +4231,10 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
           exerciseId: exercise.id,
           exerciseTitle: exercise.title,
           loomTranscriptFetched: !!json.loomTranscriptFetched,
+          // F4: paralinguistic metadata from AssemblyAI when the candidate
+          // uploaded an MP4 to Drive/Dropbox. Null otherwise. Surfaced by
+          // the source badge + expandable section in the panel.
+          videoMetadata: json.videoMetadata || null,
           ...json.evaluation,
         });
       }
@@ -4507,6 +4516,103 @@ function CandidateEvaluationPanel({ candidate, process, agencySettings, onUpdate
                       </div>
                     </div>
                   )}
+                  {/*
+                    Source badge + paralinguistic panel.
+                    Reads from per-exercise videoMetadata (set by F2 in
+                    evaluate.js + autoEvaluate.js) and summarises across all
+                    exercises. Three states:
+                      - 🎙️ Análisis con audio (AssemblyAI)  → has metadata
+                      - 📝 Análisis con transcripción manual → has transcript text only
+                      - (nothing rendered)                    → no transcript at all
+                  */}
+                  {(() => {
+                    const exercisesWithMetadata = (exerciseEval.exercises || []).filter(e => e.videoMetadata);
+                    const hasAudioAnalysis = exercisesWithMetadata.length > 0;
+                    const hasAnyTranscript = (exerciseEval.exercises || []).some(e => e.loomTranscriptFetched);
+                    if (!hasAnyTranscript) return null;
+
+                    return (
+                      <div className={`rounded-xl p-3 border ${hasAudioAnalysis ? "bg-purple-50 border-purple-100" : "bg-blue-50 border-blue-100"}`}>
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div className="flex items-center gap-2">
+                            <span className="text-base">{hasAudioAnalysis ? "🎙️" : "📝"}</span>
+                            <div>
+                              <p className={`text-xs font-bold ${hasAudioAnalysis ? "text-purple-900" : "text-blue-900"}`}>
+                                {hasAudioAnalysis ? "Evaluación con análisis de audio" : "Evaluación con transcripción manual"}
+                              </p>
+                              <p className={`text-[11px] ${hasAudioAnalysis ? "text-purple-700" : "text-blue-700"}`}>
+                                {hasAudioAnalysis
+                                  ? `AssemblyAI procesó el audio del candidato (${exercisesWithMetadata.length} ejercicio${exercisesWithMetadata.length > 1 ? "s" : ""})`
+                                  : "La IA evaluó con la transcripción pegada (sin análisis paralingüístico)"}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {hasAudioAnalysis && (
+                          <details className="mt-2.5 group">
+                            <summary className="text-xs font-semibold text-purple-900 cursor-pointer hover:text-purple-700">
+                              Ver análisis paralingüístico ↓
+                            </summary>
+                            <div className="mt-2 space-y-2.5">
+                              {exercisesWithMetadata.map((ex, i) => {
+                                const m = ex.videoMetadata || {};
+                                // Sentiment rollup
+                                const counts = { POSITIVE: 0, NEUTRAL: 0, NEGATIVE: 0 };
+                                if (Array.isArray(m.sentimentAnalysis)) {
+                                  for (const s of m.sentimentAnalysis) if (counts[s.sentiment] !== undefined) counts[s.sentiment]++;
+                                }
+                                const total = counts.POSITIVE + counts.NEUTRAL + counts.NEGATIVE;
+                                const pct = (n) => total > 0 ? Math.round((n / total) * 100) : 0;
+                                // Highlights (top 6)
+                                const highlights = (Array.isArray(m.autoHighlights) ? m.autoHighlights : [])
+                                  .sort((a, b) => (b.rank || 0) - (a.rank || 0))
+                                  .slice(0, 6)
+                                  .map(h => h.text)
+                                  .filter(Boolean);
+                                // Confidence + duration
+                                const conf = typeof m.confidence === "number" ? Math.round(m.confidence * 100) : null;
+                                const dur = typeof m.audioDuration === "number" ? Math.round(m.audioDuration) : null;
+                                return (
+                                  <div key={i} className="bg-white border border-purple-100 rounded-lg p-2.5">
+                                    <p className="text-[11px] font-bold text-purple-900 mb-1.5">{ex.exerciseTitle || `Ejercicio ${i + 1}`}</p>
+                                    {total > 0 && (
+                                      <div className="flex items-center gap-2 mb-1.5">
+                                        <span className="text-[10px] text-gray-500 uppercase tracking-wide font-bold">Sentimiento</span>
+                                        <div className="flex-1 flex h-1.5 rounded-full overflow-hidden bg-gray-100">
+                                          <div className="bg-green-500" style={{ width: `${pct(counts.POSITIVE)}%` }} />
+                                          <div className="bg-gray-300" style={{ width: `${pct(counts.NEUTRAL)}%` }} />
+                                          <div className="bg-red-400" style={{ width: `${pct(counts.NEGATIVE)}%` }} />
+                                        </div>
+                                        <span className="text-[10px] text-gray-500">
+                                          {pct(counts.POSITIVE)}% · {pct(counts.NEUTRAL)}% · {pct(counts.NEGATIVE)}%
+                                        </span>
+                                      </div>
+                                    )}
+                                    {highlights.length > 0 && (
+                                      <div className="mb-1.5">
+                                        <span className="text-[10px] text-gray-500 uppercase tracking-wide font-bold block mb-0.5">Temas detectados</span>
+                                        <div className="flex flex-wrap gap-1">
+                                          {highlights.map((h, j) => (
+                                            <span key={j} className="text-[10px] bg-purple-100 text-purple-800 rounded-full px-2 py-0.5">{h}</span>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    )}
+                                    <div className="flex items-center gap-3 text-[10px] text-gray-500">
+                                      {conf !== null && <span><strong className="text-gray-700">Claridad:</strong> {conf}%</span>}
+                                      {dur !== null && <span><strong className="text-gray-700">Duración:</strong> {dur}s</span>}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </details>
+                        )}
+                      </div>
+                    );
+                  })()}
+
                   {/* Overall aggregate across all exercises */}
                   <div className="flex items-center justify-between bg-indigo-50 rounded-xl p-4">
                     <div className="min-w-0 flex-1 pr-3">
