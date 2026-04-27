@@ -1528,14 +1528,25 @@ function ExercisesScreen({ job, candidate, responses, setResponses, onBack, onSu
   // Fallback local state is used in the App-internal preview flow where the
   // lifted state isn't wired through yet.
   const [localResps, setLocalResps] = useState(() =>
-    responses || job.exercises.map((e) => ({ exerciseId: e.id, response: "", loomUrl: "" }))
+    responses || job.exercises.map((e) => ({ exerciseId: e.id, response: "", loomUrl: "", videoTranscript: "", videoMp4Url: "" }))
   );
   const resps = responses || localResps;
   const setResps = setResponses || setLocalResps;
   const ex = job.exercises[idx];
   const resp = resps.find((r) => r.exerciseId === ex.id);
   const upR = (f, v) => setResps(rs => rs.map(r => r.exerciseId === ex.id ? { ...r, [f]: v } : r));
-  const canNext = resp?.response?.trim().length > 30 && resp?.loomUrl?.trim().length > 5;
+  // Validación para avanzar al siguiente ejercicio:
+  //   - Respuesta escrita > 30 chars (igual que antes)
+  //   - URL de Loom válida (regex permisivo: share/embed + cualquier id alfanumérico)
+  //   - Transcripción del vídeo >= 200 chars (mínimo razonable para que la IA tenga
+  //     algo con lo que evaluar la defensa oral)
+  //   - videoMp4Url es opcional pero si se rellena, debe ser de Drive o Dropbox
+  const loomUrlValid = /^https?:\/\/(www\.)?loom\.com\/(share|embed)\/[a-zA-Z0-9_-]+/i.test(resp?.loomUrl || "");
+  const transcriptValid = (resp?.videoTranscript || "").trim().length >= 200;
+  const mp4UrlRaw = (resp?.videoMp4Url || "").trim();
+  const mp4UrlValid = !mp4UrlRaw
+    || /drive\.google\.com|dropbox\.com/i.test(mp4UrlRaw); // opcional, validamos solo si presente
+  const canNext = (resp?.response?.trim().length > 30) && loomUrlValid && transcriptValid && mp4UrlValid;
   const isLast = idx === job.exercises.length - 1;
 
   // Per-exercise upload state: {status: "parsing"|"error", fileName, error}.
@@ -1633,14 +1644,118 @@ function ExercisesScreen({ job, candidate, responses, setResponses, onBack, onSu
                 )}
                 <p className="text-xs text-gray-400 mt-1.5">{(resp?.response || "").split(/\s+/).filter(Boolean).length} palabras</p>
               </div>
-              <div>
-                <label className={lbl}>Enlace de Loom — Vídeo de defensa *</label>
-                <input className={inp} type="url" value={resp?.loomUrl || ""} onChange={e => upR("loomUrl", e.target.value)}
-                  placeholder="https://www.loom.com/share/..." />
-                <p className="text-xs text-gray-500 mt-1.5 flex items-start gap-1.5">
-                  <span className="shrink-0">🎥</span>
-                  <span>Graba un vídeo en <a href="https://loom.com" target="_blank" rel="noreferrer" className="text-gray-900 underline font-medium">Loom</a> (máx. 5 min) defendiendo tu propuesta y pega el enlace aquí. La IA también analiza la transcripción del vídeo.</span>
-                </p>
+              {/*
+                ROADMAP: Este bloque será reemplazado por <InternalVideoRecorder />
+                en v2 (grabación in-app nativa). La interfaz VideoSource queda
+                preparada en api/evaluate.js para que el cambio sea no-disruptivo:
+                el evaluador opera sobre {videoTranscript, videoMp4Url, videoMetadata},
+                no sobre loomUrl directo. Cuando llegue v2, basta con un nuevo type
+                "internal_recording" + pipeline propia de transcripción.
+              */}
+              <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 sm:p-5 space-y-4">
+                <div>
+                  <h3 className="font-bold text-gray-900 text-sm sm:text-base mb-1">🎥 Vídeo de defensa</h3>
+                  <p className="text-xs text-gray-500 leading-relaxed">
+                    Necesitamos 3 cosas para que la IA evalúe tu defensa con la máxima precisión.
+                    La 3ª es opcional pero marca una diferencia clara en la evaluación.
+                  </p>
+                </div>
+
+                {/* 1 — Loom URL */}
+                <div>
+                  <div className="flex items-start gap-2 mb-1.5">
+                    <span className="shrink-0 w-5 h-5 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">1</span>
+                    <div className="flex-1">
+                      <label className={lbl + " mb-0"}>Enlace de Loom *</label>
+                      <p className="text-[11px] text-gray-500 mt-0.5">Graba en <a href="https://loom.com" target="_blank" rel="noreferrer" className="text-gray-900 underline font-medium">Loom</a> (máx. 5 min) defendiendo tu propuesta y pega el enlace aquí.</p>
+                    </div>
+                  </div>
+                  <input
+                    className={inp}
+                    type="url"
+                    value={resp?.loomUrl || ""}
+                    onChange={e => upR("loomUrl", e.target.value)}
+                    placeholder="https://www.loom.com/share/..."
+                  />
+                  {(resp?.loomUrl || "").length > 0 && !loomUrlValid && (
+                    <p className="text-xs text-red-600 mt-1">Pega un enlace válido de Loom (formato: loom.com/share/...).</p>
+                  )}
+                </div>
+
+                {/* 2 — Transcripción */}
+                <div>
+                  <div className="flex items-start gap-2 mb-1.5">
+                    <span className="shrink-0 w-5 h-5 rounded-full bg-gray-900 text-white text-[11px] font-bold flex items-center justify-center mt-0.5">2</span>
+                    <div className="flex-1">
+                      <label className={lbl + " mb-0"}>Transcripción del vídeo *</label>
+                      <details className="mt-1 group">
+                        <summary className="text-[11px] text-gray-700 cursor-pointer hover:text-gray-900 font-medium">
+                          📝 Cómo conseguir la transcripción en 10 segundos
+                        </summary>
+                        <ol className="text-[11px] text-gray-600 mt-2 space-y-0.5 pl-4 leading-relaxed">
+                          <li>1. Abre tu vídeo en Loom</li>
+                          <li>2. Click en el botón <strong>CC</strong> (subtítulos) en la barra inferior del reproductor</li>
+                          <li>3. Click en <strong>Copy transcript</strong></li>
+                          <li>4. Pega aquí debajo</li>
+                        </ol>
+                      </details>
+                    </div>
+                  </div>
+                  <textarea
+                    className={inp + " font-mono text-xs"}
+                    rows={6}
+                    value={resp?.videoTranscript || ""}
+                    onChange={e => upR("videoTranscript", e.target.value)}
+                    placeholder="Pega aquí la transcripción completa de tu Loom..."
+                  />
+                  <div className="flex items-center justify-between mt-1">
+                    <p className={`text-[11px] ${transcriptValid ? "text-green-700" : "text-gray-400"}`}>
+                      {(resp?.videoTranscript || "").length} / 200 caracteres mínimo
+                      {transcriptValid && " ✓"}
+                    </p>
+                  </div>
+                  {(resp?.videoTranscript || "").length > 0 && !transcriptValid && (
+                    <p className="text-xs text-red-600 mt-1">La transcripción debe tener al menos 200 caracteres. Cópiala completa desde Loom (CC → Copy transcript).</p>
+                  )}
+                </div>
+
+                {/* 3 — MP4 (opcional) */}
+                <div>
+                  <div className="flex items-start gap-2 mb-1.5">
+                    <span className="shrink-0 w-5 h-5 rounded-full bg-indigo-100 text-indigo-700 text-[11px] font-bold flex items-center justify-center mt-0.5">3</span>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <label className={lbl + " mb-0"}>Vídeo completo en Drive o Dropbox</label>
+                        <span className="text-[10px] font-bold text-indigo-700 bg-indigo-50 border border-indigo-100 rounded-full px-1.5 py-0.5">OPCIONAL — RECOMENDADO</span>
+                      </div>
+                      <p className="text-[11px] text-gray-500 mt-0.5 leading-relaxed">
+                        Sube tu Loom como MP4 a Google Drive o Dropbox <strong>(con permiso de visualización pública)</strong> y pega el enlace aquí.
+                        Nos permite analizar también <strong>cómo</strong> comunicas: ritmo, claridad, energía, confianza. Es el campo que más valoran los reclutadores para puestos comerciales y de cara al cliente.
+                      </p>
+                      <details className="mt-1 group">
+                        <summary className="text-[11px] text-gray-700 cursor-pointer hover:text-gray-900 font-medium">
+                          🚀 Cómo descargar tu Loom y subirlo a Drive/Dropbox
+                        </summary>
+                        <ol className="text-[11px] text-gray-600 mt-2 space-y-0.5 pl-4 leading-relaxed">
+                          <li>1. En Loom (plan gratuito): vídeos cortos (&lt;5 min) se pueden descargar como MP4 desde el menú "..." del vídeo</li>
+                          <li>2. Sube el MP4 a Google Drive o Dropbox</li>
+                          <li>3. Click derecho → "Compartir" → "Cualquiera con el enlace puede ver"</li>
+                          <li>4. Copia el enlace y pégalo aquí</li>
+                        </ol>
+                      </details>
+                    </div>
+                  </div>
+                  <input
+                    className={inp}
+                    type="url"
+                    value={resp?.videoMp4Url || ""}
+                    onChange={e => upR("videoMp4Url", e.target.value)}
+                    placeholder="https://drive.google.com/file/d/... o https://www.dropbox.com/..."
+                  />
+                  {!!mp4UrlRaw && !mp4UrlValid && (
+                    <p className="text-xs text-red-600 mt-1">El enlace debe ser de Google Drive o Dropbox.</p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
@@ -2270,7 +2385,7 @@ function CandidatePublicScreen({ processId }) {
   useEffect(() => {
     if (!processData?.exercises?.length) return;
     const draft = loadApplyDraft(processId);
-    const emptyResponses = processData.exercises.map(e => ({ exerciseId: e.id, response: "", loomUrl: "" }));
+    const emptyResponses = processData.exercises.map(e => ({ exerciseId: e.id, response: "", loomUrl: "", videoTranscript: "", videoMp4Url: "" }));
 
     if (draft) {
       const merged = emptyResponses.map(empty => {
