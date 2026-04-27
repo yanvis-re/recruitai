@@ -272,6 +272,53 @@ async function tryHtmlScrape(loomUrl) {
   }
 }
 
+// Strategy 4: fetch the /embed/{id} page (the URL Loom's oEmbed iframe
+// loads from). Embed pages sometimes SSR more transcript-related data than
+// the share page because the player needs to be self-contained on third-
+// party sites that may not run the same auth.
+async function tryEmbedPage(videoId) {
+  if (!videoId) return null;
+  try {
+    const url = `https://www.loom.com/embed/${videoId}`;
+    const res = await fetch(url, { headers: BROWSER_HEADERS });
+    console.warn(`[loom] embed fetch ${res.status} ${url}`);
+    if (!res.ok) return null;
+    const html = await res.text();
+    console.warn(`[loom] embed html length: ${html.length}`);
+
+    // Try __NEXT_DATA__ + recursive walk + inline JSON in this page too.
+    const nextMatch = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+    if (nextMatch) {
+      try {
+        const data = JSON.parse(nextMatch[1]);
+        console.warn(`[loom] embed __NEXT_DATA__ pageProps keys: ${Object.keys(data?.props?.pageProps || {}).join(", ") || "(empty)"}`);
+        const walked = walkForTranscript(data);
+        if (walked) {
+          console.warn(`[loom] transcript found via embed __NEXT_DATA__`);
+          return walked;
+        }
+      } catch (e) { console.warn(`[loom] embed __NEXT_DATA__ parse failed: ${e.message}`); }
+    }
+    const jsonScripts = html.match(/<script[^>]*>\s*(\{[\s\S]*?\})\s*<\/script>/g) || [];
+    console.warn(`[loom] embed inline json scripts: ${jsonScripts.length}`);
+    for (const raw of jsonScripts) {
+      const inner = raw.replace(/<script[^>]*>\s*/, "").replace(/\s*<\/script>$/, "");
+      try {
+        const data = JSON.parse(inner);
+        const hit = walkForTranscript(data);
+        if (hit) {
+          console.warn(`[loom] transcript found via embed inline json`);
+          return hit;
+        }
+      } catch { /* skip non-JSON */ }
+    }
+    return null;
+  } catch (e) {
+    console.warn(`[loom] embed error: ${e.message}`);
+    return null;
+  }
+}
+
 export async function fetchLoomTranscript(loomUrl) {
   if (!loomUrl) return null;
   const videoId = extractVideoId(loomUrl);
@@ -290,6 +337,12 @@ export async function fetchLoomTranscript(loomUrl) {
   // session params don't push us into a stripped SSR variant.
   const html = await tryHtmlScrape(canonical);
   if (html) return html;
+
+  // Strategy 4: try the /embed/{id} variant. Embeds sometimes carry more
+  // SSR'd data because they need to play on third-party sites without
+  // the auth cookies the /share/ player relies on.
+  const embed = await tryEmbedPage(videoId);
+  if (embed) return embed;
 
   console.warn(`[loom] all strategies failed for ${canonical}`);
   return null;
