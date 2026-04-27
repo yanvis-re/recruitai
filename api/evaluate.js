@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import admin from "firebase-admin";
 import { reserveEvaluation } from "./_quota.js";
-import { fetchLoomTranscript } from "./_loom.js";
+import { transcribeWithAssemblyAI } from "./_videoTranscription.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -185,16 +185,23 @@ export default async function handler(req, res) {
 
     let prompt;
     let loomTranscript = null;
+    // Paralinguistic metadata from AssemblyAI when the candidate provided
+    // an MP4 URL alongside their transcript. F2 will read this and weave it
+    // into the prompt; surfaced in the response so the recruiter UI can
+    // expose sentiment / highlights / confidence in the evaluation panel.
+    let videoMetadata = null;
 
     if (type === "exercise") {
-      // Transcript priority: manual paste (data.videoTranscript) wins over
-      // automatic Loom fetch. When the recruiter pastes a transcript because
-      // the Loom scraper failed, that manual content is authoritative —
-      // don't override it with a stale parser result.
+      // Transcript priority (final order, F1 cleanup):
+      //   1. data.videoTranscript (candidate's own paste from Loom CC →
+      //      Copy transcript, OR recruiter's manual paste fallback). This
+      //      is the ground truth — Loom auto-scraping was retired in F1
+      //      because Loom auth-gates everything.
+      //   2. data.videoMp4Url + AssemblyAI when the candidate uploaded
+      //      their video to Drive / Dropbox. F2 wires this in fully;
+      //      for F1 the call site is a no-op.
       if (data.videoTranscript && data.videoTranscript.trim()) {
         loomTranscript = data.videoTranscript.trim();
-      } else if (data.loomUrl) {
-        loomTranscript = await fetchLoomTranscript(data.loomUrl);
       }
       prompt = buildExercisePrompt({
         ...data,
@@ -223,7 +230,10 @@ export default async function handler(req, res) {
       evaluation = jsonMatch ? JSON.parse(jsonMatch[0]) : { raw };
     }
 
-    res.status(200).json({ evaluation, loomTranscriptFetched: !!loomTranscript });
+    // videoMetadata stays null in F1; F2 will populate it when AssemblyAI
+    // runs against data.videoMp4Url. Wire-format placeholder kept now so
+    // the recruiter UI can be built against the final shape.
+    res.status(200).json({ evaluation, loomTranscriptFetched: !!loomTranscript, videoMetadata });
   } catch (e) {
     console.error("Evaluation error:", e);
     res.status(500).json({ error: e.message || "Error interno del servidor" });

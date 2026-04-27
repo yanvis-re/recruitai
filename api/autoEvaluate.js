@@ -17,7 +17,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import admin from "firebase-admin";
 import { reserveEvaluation } from "./_quota.js";
-import { fetchLoomTranscript } from "./_loom.js";
+import { transcribeWithAssemblyAI } from "./_videoTranscription.js";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -201,14 +201,20 @@ export default async function handler(req, res) {
       }
 
       const response = responses.find(r => r.exerciseId === exercise.id) || {};
-      const loomTranscript = response.loomUrl ? await fetchLoomTranscript(response.loomUrl) : null;
+      // Transcript priority — same order as the manual /api/evaluate path:
+      //   1. response.videoTranscript pasted by the candidate (F3 will
+      //      ensure this is always present).
+      //   2. response.videoMp4Url + AssemblyAI (paralinguistic features
+      //      wired up in F2).
+      //   3. null — IA evaluates with the written answer only.
+      const videoTranscript = response.videoTranscript?.trim() || null;
 
       const evaluation = await evaluateOneExercise({
         exerciseTitle: exercise.title || "Ejercicio",
         exerciseDescription: exercise.description || "",
         criteria: exercise.criteria || [],
         writtenResponse: response.response || "",
-        videoTranscript: loomTranscript,
+        videoTranscript,
         position,
         brandManual,
         companyName,
@@ -216,7 +222,12 @@ export default async function handler(req, res) {
       perExercise.push({
         exerciseId: exercise.id,
         exerciseTitle: exercise.title,
-        loomTranscriptFetched: !!loomTranscript,
+        // Renamed from `loomTranscriptFetched` — it now means "we had any
+        // transcript at all to feed the IA", regardless of source. Kept the
+        // legacy field name temporarily so existing UI badges keep rendering
+        // until F4 introduces the source-aware indicator.
+        loomTranscriptFetched: !!videoTranscript,
+        videoMetadata: null, // F2 will populate from AssemblyAI when available
         ...evaluation,
       });
     }
