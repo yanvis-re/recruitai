@@ -13,11 +13,71 @@ if (!admin.apps.length) {
   if (raw) { try { admin.initializeApp({ credential: admin.credential.cert(JSON.parse(raw)) }); } catch (e) { console.error("firebase-admin init (evaluate):", e.message); } }
 }
 
+// Build the paralinguistic context block for the prompt. Only fires when
+// videoMetadata is present — i.e. the candidate uploaded an MP4 to Drive /
+// Dropbox and AssemblyAI returned sentiment + highlights + confidence.
+// Returns "" when there's nothing extra to add (so the prompt stays
+// identical to the legacy text-only evaluation in that case).
+function buildParalinguisticBlock(videoMetadata) {
+  if (!videoMetadata) return "";
+
+  const { sentimentAnalysis, autoHighlights, confidence, audioDuration } = videoMetadata;
+
+  // Sentiment: AssemblyAI returns a sentence-level array. Roll it up to
+  // percentages so the prompt is concise and the IA doesn't drown in detail.
+  let sentimentLine = "";
+  if (Array.isArray(sentimentAnalysis) && sentimentAnalysis.length > 0) {
+    const counts = { POSITIVE: 0, NEUTRAL: 0, NEGATIVE: 0 };
+    for (const s of sentimentAnalysis) if (counts[s.sentiment] !== undefined) counts[s.sentiment]++;
+    const total = counts.POSITIVE + counts.NEUTRAL + counts.NEGATIVE;
+    if (total > 0) {
+      const pct = (n) => Math.round((n / total) * 100);
+      sentimentLine = `- Sentimiento general detectado en la voz: ${pct(counts.POSITIVE)}% positivo · ${pct(counts.NEUTRAL)}% neutro · ${pct(counts.NEGATIVE)}% negativo.`;
+    }
+  }
+
+  // Highlights: keyword-style bullets AssemblyAI extracts as recurring topics.
+  let highlightsLine = "";
+  if (Array.isArray(autoHighlights) && autoHighlights.length > 0) {
+    const topPhrases = autoHighlights
+      .sort((a, b) => (b.rank || 0) - (a.rank || 0))
+      .slice(0, 6)
+      .map(h => h.text)
+      .filter(Boolean);
+    if (topPhrases.length) highlightsLine = `- Temas/conceptos clave detectados: ${topPhrases.join(", ")}.`;
+  }
+
+  let confidenceLine = "";
+  if (typeof confidence === "number") {
+    const pct = Math.round(confidence * 100);
+    const label = pct >= 90 ? "muy clara" : pct >= 75 ? "clara" : pct >= 60 ? "aceptable" : "baja";
+    confidenceLine = `- Claridad de dicción (confianza promedio del transcriptor): ${pct}% (${label}).`;
+  }
+
+  let durationLine = "";
+  if (typeof audioDuration === "number" && audioDuration > 0) {
+    durationLine = `- Duración del vídeo: ${Math.round(audioDuration)} segundos.`;
+  }
+
+  const lines = [sentimentLine, highlightsLine, confidenceLine, durationLine].filter(Boolean);
+  if (!lines.length) return "";
+
+  return `\nANÁLISIS PARALINGÜÍSTICO DEL VÍDEO (disponible solo cuando el candidato subió el archivo de vídeo):
+${lines.join("\n")}
+
+Cuando tengas estos datos, evalúa también CÓMO comunica el candidato — no solo qué dice:
+- Claridad y ritmo del discurso
+- Energía, convicción y confianza transmitidas
+- Coherencia entre el contenido (qué dice) y la entrega (cómo lo dice)
+Pondera estos aspectos especialmente para puestos comerciales o de cara al cliente.
+`;
+}
+
 // ─── Build exercise evaluation prompt ────────────────────────────────────────
 // Criteria list comes from the process's exercise definition — each recruiter
 // defines their own {area, indicators, maxScore} list when designing the
 // process. The IA now evaluates against THOSE, not the old hardcoded six.
-function buildExercisePrompt({ exerciseTitle, exerciseDescription, writtenResponse, videoTranscript, position, brandManual, companyName, criteria }) {
+function buildExercisePrompt({ exerciseTitle, exerciseDescription, writtenResponse, videoTranscript, position, brandManual, companyName, criteria, videoMetadata }) {
   const rubric = Array.isArray(criteria) && criteria.length > 0
     ? criteria.map((c, i) => `${i + 1}. **${c.area || `Criterio ${i + 1}`}** (máx. ${c.maxScore || 5} puntos) — ${c.indicators || "Sin indicadores definidos."}`).join("\n")
     : `1. **Claridad y estructura** (máx. 5) — La respuesta está bien organizada y es fácil de seguir.
@@ -43,7 +103,7 @@ ${writtenResponse || "No proporcionada."}
 
 TRANSCRIPCIÓN DEL VÍDEO DE DEFENSA:
 ${videoTranscript || "No proporcionada."}
-
+${buildParalinguisticBlock(videoMetadata)}
 INSTRUCCIONES DE EVALUACIÓN:
 Actúa con mentalidad de auditor externo. Principios:
 - Objetividad total: juicios rigurosos, sin suavizar conclusiones
@@ -185,27 +245,45 @@ export default async function handler(req, res) {
 
     let prompt;
     let loomTranscript = null;
-    // Paralinguistic metadata from AssemblyAI when the candidate provided
-    // an MP4 URL alongside their transcript. F2 will read this and weave it
-    // into the prompt; surfaced in the response so the recruiter UI can
-    // expose sentiment / highlights / confidence in the evaluation panel.
     let videoMetadata = null;
 
     if (type === "exercise") {
-      // Transcript priority (final order, F1 cleanup):
-      //   1. data.videoTranscript (candidate's own paste from Loom CC →
-      //      Copy transcript, OR recruiter's manual paste fallback). This
-      //      is the ground truth — Loom auto-scraping was retired in F1
-      //      because Loom auth-gates everything.
-      //   2. data.videoMp4Url + AssemblyAI when the candidate uploaded
-      //      their video to Drive / Dropbox. F2 wires this in fully;
-      //      for F1 the call site is a no-op.
-      if (data.videoTranscript && data.videoTranscript.trim()) {
+      // Transcript priority (final order):
+      //   1. data.videoMp4Url + AssemblyAI ⟶ rich transcript + sentiment +
+      //      auto_highlights + confidence. Best evaluation: includes
+      //      paralinguistic signals (how the candidate communicates).
+      //   2. data.videoTranscript pasted by the candidate (or by the
+      //      recruiter as fallback). Same content quality as #1 minus the
+      //      paralinguistic data.
+      //   3. No transcript ⟶ IA evaluates with the written answer only.
+      //
+      // If both #1 and #2 are present, #1 wins for the IA prompt (richer
+      // signal) but #2 is kept as a safety net if AssemblyAI fails midway.
+      if (data.videoMp4Url) {
+        const result = await transcribeWithAssemblyAI(data.videoMp4Url);
+        if (result?.text) {
+          loomTranscript = result.text;
+          videoMetadata = {
+            sentimentAnalysis: result.sentimentAnalysis,
+            autoHighlights: result.autoHighlights,
+            confidence: result.confidence,
+            audioDuration: result.audioDuration,
+            languageCode: result.languageCode,
+            source: "assemblyai_mp4",
+          };
+        }
+      }
+      // Fall back to the candidate-pasted transcript if AssemblyAI didn't
+      // give us anything (key missing, MP4 not accessible, polling timeout
+      // …). The prompt stays the same shape, just without the
+      // paralinguistic block.
+      if (!loomTranscript && data.videoTranscript && data.videoTranscript.trim()) {
         loomTranscript = data.videoTranscript.trim();
       }
       prompt = buildExercisePrompt({
         ...data,
         videoTranscript: loomTranscript || null,
+        videoMetadata,
       });
     } else if (type === "interview") {
       prompt = buildInterviewPrompt(data);

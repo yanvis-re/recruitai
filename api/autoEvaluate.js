@@ -51,7 +51,48 @@ function getPositionTitle(position) {
   return position.specialty ? `${base} — ${position.specialty}` : base;
 }
 
-function buildExercisePrompt({ exerciseTitle, exerciseDescription, writtenResponse, videoTranscript, position, brandManual, companyName, criteria }) {
+// Same shape as the helper in /api/evaluate.js. Kept inline (rather than
+// shared via _videoTranscription.js) because each endpoint has its own
+// trimmed prompt template — auto-eval's is a touch more concise than the
+// manual one.
+function buildParalinguisticBlock(videoMetadata) {
+  if (!videoMetadata) return "";
+  const { sentimentAnalysis, autoHighlights, confidence, audioDuration } = videoMetadata;
+  let sentimentLine = "";
+  if (Array.isArray(sentimentAnalysis) && sentimentAnalysis.length > 0) {
+    const counts = { POSITIVE: 0, NEUTRAL: 0, NEGATIVE: 0 };
+    for (const s of sentimentAnalysis) if (counts[s.sentiment] !== undefined) counts[s.sentiment]++;
+    const total = counts.POSITIVE + counts.NEUTRAL + counts.NEGATIVE;
+    if (total > 0) {
+      const pct = (n) => Math.round((n / total) * 100);
+      sentimentLine = `- Sentimiento: ${pct(counts.POSITIVE)}% positivo · ${pct(counts.NEUTRAL)}% neutro · ${pct(counts.NEGATIVE)}% negativo.`;
+    }
+  }
+  let highlightsLine = "";
+  if (Array.isArray(autoHighlights) && autoHighlights.length > 0) {
+    const top = autoHighlights.sort((a, b) => (b.rank || 0) - (a.rank || 0)).slice(0, 6).map(h => h.text).filter(Boolean);
+    if (top.length) highlightsLine = `- Temas detectados: ${top.join(", ")}.`;
+  }
+  let confidenceLine = "";
+  if (typeof confidence === "number") {
+    const pct = Math.round(confidence * 100);
+    const label = pct >= 90 ? "muy clara" : pct >= 75 ? "clara" : pct >= 60 ? "aceptable" : "baja";
+    confidenceLine = `- Claridad de dicción: ${pct}% (${label}).`;
+  }
+  let durationLine = "";
+  if (typeof audioDuration === "number" && audioDuration > 0) {
+    durationLine = `- Duración: ${Math.round(audioDuration)}s.`;
+  }
+  const lines = [sentimentLine, highlightsLine, confidenceLine, durationLine].filter(Boolean);
+  if (!lines.length) return "";
+  return `\nANÁLISIS PARALINGÜÍSTICO (audio analizado por AssemblyAI):
+${lines.join("\n")}
+
+Evalúa también CÓMO comunica (claridad, ritmo, energía, convicción), no solo qué dice.
+`;
+}
+
+function buildExercisePrompt({ exerciseTitle, exerciseDescription, writtenResponse, videoTranscript, position, brandManual, companyName, criteria, videoMetadata }) {
   const rubric = Array.isArray(criteria) && criteria.length > 0
     ? criteria.map((c, i) => `${i + 1}. **${c.area || `Criterio ${i + 1}`}** (máx. ${c.maxScore || 5} puntos) — ${c.indicators || "Sin indicadores definidos."}`).join("\n")
     : `1. **Claridad y estructura** (máx. 5) — La respuesta está bien organizada.
@@ -77,7 +118,7 @@ ${writtenResponse || "No proporcionada."}
 
 TRANSCRIPCIÓN DEL VÍDEO DE DEFENSA:
 ${videoTranscript || "No proporcionada."}
-
+${buildParalinguisticBlock(videoMetadata)}
 INSTRUCCIONES: Actúa con mentalidad de auditor externo. Objetividad total, feedback accionable, nada de adular. Ten en cuenta respuesta escrita y defensa oral.
 
 CRITERIOS DE EVALUACIÓN (definidos por el reclutador):
@@ -201,13 +242,30 @@ export default async function handler(req, res) {
       }
 
       const response = responses.find(r => r.exerciseId === exercise.id) || {};
-      // Transcript priority — same order as the manual /api/evaluate path:
-      //   1. response.videoTranscript pasted by the candidate (F3 will
-      //      ensure this is always present).
-      //   2. response.videoMp4Url + AssemblyAI (paralinguistic features
-      //      wired up in F2).
+      // Transcript priority — mirrors the manual /api/evaluate path:
+      //   1. response.videoMp4Url + AssemblyAI ⟶ rich transcript +
+      //      sentiment + auto_highlights + confidence.
+      //   2. response.videoTranscript pasted by the candidate.
       //   3. null — IA evaluates with the written answer only.
-      const videoTranscript = response.videoTranscript?.trim() || null;
+      let videoTranscript = null;
+      let videoMetadata = null;
+      if (response.videoMp4Url) {
+        const result = await transcribeWithAssemblyAI(response.videoMp4Url);
+        if (result?.text) {
+          videoTranscript = result.text;
+          videoMetadata = {
+            sentimentAnalysis: result.sentimentAnalysis,
+            autoHighlights: result.autoHighlights,
+            confidence: result.confidence,
+            audioDuration: result.audioDuration,
+            languageCode: result.languageCode,
+            source: "assemblyai_mp4",
+          };
+        }
+      }
+      if (!videoTranscript) {
+        videoTranscript = response.videoTranscript?.trim() || null;
+      }
 
       const evaluation = await evaluateOneExercise({
         exerciseTitle: exercise.title || "Ejercicio",
@@ -215,6 +273,7 @@ export default async function handler(req, res) {
         criteria: exercise.criteria || [],
         writtenResponse: response.response || "",
         videoTranscript,
+        videoMetadata,
         position,
         brandManual,
         companyName,
@@ -222,12 +281,11 @@ export default async function handler(req, res) {
       perExercise.push({
         exerciseId: exercise.id,
         exerciseTitle: exercise.title,
-        // Renamed from `loomTranscriptFetched` — it now means "we had any
-        // transcript at all to feed the IA", regardless of source. Kept the
-        // legacy field name temporarily so existing UI badges keep rendering
-        // until F4 introduces the source-aware indicator.
+        // Legacy field name kept for the recruiter UI's existing checks; F4
+        // will replace it with a source-aware indicator (assemblyai_mp4 vs
+        // manual_paste vs none).
         loomTranscriptFetched: !!videoTranscript,
-        videoMetadata: null, // F2 will populate from AssemblyAI when available
+        videoMetadata,
         ...evaluation,
       });
     }
