@@ -319,6 +319,118 @@ async function tryEmbedPage(videoId) {
   }
 }
 
+// Strategy 5: AssemblyAI fallback. Loom is now actively gating their
+// official transcript endpoints (the cdn.loom.com 403s in production
+// confirmed it). Once scraping fails we hand the underlying video file URL
+// to AssemblyAI, wait for its transcription, and return that. Costs
+// ~$0.0017/min, polled at 2s intervals capped at 45s total to stay under
+// Vercel Hobby's 60s function timeout.
+//
+// Requires ASSEMBLYAI_API_KEY in the environment. Skipped silently if
+// not configured (with a clear log so Yan knows what's missing).
+
+// Pull the actual MP4 URL out of /embed/{id}'s HTML so AssemblyAI has
+// something it can stream. Loom embeds need to play on third-party sites
+// (no auth cookies available), so the video src has to be public.
+async function extractVideoFileUrl(videoId) {
+  if (!videoId) return null;
+  try {
+    const res = await fetch(`https://www.loom.com/embed/${videoId}`, { headers: BROWSER_HEADERS });
+    if (!res.ok) {
+      console.warn(`[loom] embed fetch for video URL non-ok: ${res.status}`);
+      return null;
+    }
+    const html = await res.text();
+    // Loom uses several CDN patterns over time. The .mp4 source is
+    // historically at cdn.loom.com/sessions/{id}/transcoded-mp4 or under
+    // /transcoded_videos. A permissive regex catches both shapes plus
+    // any other cdn.loom.com mp4 that might appear.
+    const candidates = [
+      /https:\/\/cdn\.loom\.com\/sessions\/[^"'\s]+?\.mp4(?:\?[^"'\s]*)?/g,
+      /https:\/\/cdn\.loom\.com\/[^"'\s]+?\.m3u8(?:\?[^"'\s]*)?/g,
+      /https:\/\/[^"'\s]*loom\.com\/[^"'\s]*\.mp4(?:\?[^"'\s]*)?/g,
+    ];
+    for (const rx of candidates) {
+      const matches = html.match(rx);
+      if (matches && matches.length) {
+        // Prefer the longest URL (usually the highest-quality variant) but
+        // any match works for transcription.
+        const best = matches.sort((a, b) => b.length - a.length)[0];
+        console.warn(`[loom] extracted video URL: ${best.slice(0, 100)}…`);
+        return best;
+      }
+    }
+    console.warn(`[loom] no video URL found in embed html (length: ${html.length})`);
+    return null;
+  } catch (e) {
+    console.warn(`[loom] extractVideoFileUrl error: ${e.message}`);
+    return null;
+  }
+}
+
+async function tryAssemblyAI(videoId) {
+  const apiKey = process.env.ASSEMBLYAI_API_KEY;
+  if (!apiKey) {
+    console.warn(`[loom] ASSEMBLYAI_API_KEY not set — skipping AssemblyAI fallback. Add it in Vercel env vars to enable automatic transcription when scrape fails.`);
+    return null;
+  }
+  const audioUrl = await extractVideoFileUrl(videoId);
+  if (!audioUrl) return null;
+
+  try {
+    // Submit transcription request. language_code="es" because RecruitAI is
+    // a Spanish-first product; AssemblyAI auto-detects but biasing to ES
+    // gives better diarisation for the typical recruiting use case.
+    const submitRes = await fetch("https://api.assemblyai.com/v2/transcript", {
+      method: "POST",
+      headers: { "Authorization": apiKey, "Content-Type": "application/json" },
+      body: JSON.stringify({ audio_url: audioUrl, language_code: "es" }),
+    });
+    if (!submitRes.ok) {
+      const errText = await submitRes.text().catch(() => "");
+      console.warn(`[loom] assemblyai submit failed: ${submitRes.status} ${errText.slice(0, 200)}`);
+      return null;
+    }
+    const submitJson = await submitRes.json();
+    const transcriptId = submitJson.id;
+    if (!transcriptId) {
+      console.warn(`[loom] assemblyai submit returned no id`);
+      return null;
+    }
+    console.warn(`[loom] assemblyai submitted, id: ${transcriptId}`);
+
+    // Poll. Max 45s total — this leaves ~15s for the rest of the
+    // /api/evaluate request before Vercel Hobby's 60s ceiling. Very long
+    // videos will fall through to manual paste.
+    const start = Date.now();
+    const maxMs = 45_000;
+    while (Date.now() - start < maxMs) {
+      await new Promise(r => setTimeout(r, 2000));
+      const pollRes = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
+        headers: { "Authorization": apiKey },
+      });
+      if (!pollRes.ok) continue;
+      const pollJson = await pollRes.json();
+      if (pollJson.status === "completed") {
+        const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+        const text = (pollJson.text || "").trim();
+        console.warn(`[loom] assemblyai completed in ${elapsed}s, ${text.length} chars`);
+        return text || null;
+      }
+      if (pollJson.status === "error") {
+        console.warn(`[loom] assemblyai transcript error: ${pollJson.error || "(no detail)"}`);
+        return null;
+      }
+      // status is "queued" or "processing" — keep polling.
+    }
+    console.warn(`[loom] assemblyai polling timed out after ${maxMs}ms`);
+    return null;
+  } catch (e) {
+    console.warn(`[loom] assemblyai unexpected error: ${e.message}`);
+    return null;
+  }
+}
+
 export async function fetchLoomTranscript(loomUrl) {
   if (!loomUrl) return null;
   const videoId = extractVideoId(loomUrl);
@@ -343,6 +455,12 @@ export async function fetchLoomTranscript(loomUrl) {
   // the auth cookies the /share/ player relies on.
   const embed = await tryEmbedPage(videoId);
   if (embed) return embed;
+
+  // Strategy 5: AssemblyAI fallback. Pulls the public MP4 URL out of
+  // /embed/{id}, hands it to AssemblyAI, polls until done. Free unless
+  // ASSEMBLYAI_API_KEY is set; logs cleanly when skipped.
+  const assembly = await tryAssemblyAI(videoId);
+  if (assembly) return assembly;
 
   console.warn(`[loom] all strategies failed for ${canonical}`);
   return null;
