@@ -329,11 +329,63 @@ async function tryEmbedPage(videoId) {
 // Requires ASSEMBLYAI_API_KEY in the environment. Skipped silently if
 // not configured (with a clear log so Yan knows what's missing).
 
+// Reject thumbnail-style URLs. Loom serves a 1-2s animated MP4 preview
+// at /sessions/thumbnails/{id}-{hash}.mp4 — picking that as the audio
+// source for AssemblyAI gives us no transcript (no/little audio in the
+// preview clip). The real recording lives elsewhere.
+function isThumbnailUrl(u) {
+  return /\/sessions\/thumbnails\//i.test(u);
+}
+
+// Try a couple of dedicated "give me the video URL" endpoints on Loom.
+// These are speculative — Loom's player calls one of these internally
+// from JS at load time; if they're public we can replicate.
+async function tryFetchVideoUrlEndpoint(videoId) {
+  const endpoints = [
+    `https://www.loom.com/api/campaigns/sessions/${videoId}/transcoded-url`,
+    `https://www.loom.com/api/v1/campaigns/sessions/${videoId}/transcoded-url`,
+    `https://www.loom.com/api/sessions/${videoId}/transcoded-url`,
+    `https://www.loom.com/api/sessions/${videoId}/source-url`,
+    `https://www.loom.com/api/videos/${videoId}/transcoded-url`,
+  ];
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, {
+        headers: { ...BROWSER_HEADERS, Accept: "application/json", Referer: `https://www.loom.com/share/${videoId}` },
+      });
+      console.warn(`[loom] video-url endpoint ${res.status} ← ${url}`);
+      if (!res.ok) continue;
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("application/json")) {
+        const data = await res.json();
+        // Look for a top-level url-like field. Different Loom revisions
+        // have used different names.
+        for (const key of ["url", "video_url", "source_url", "transcodedUrl", "videoUrl"]) {
+          if (typeof data[key] === "string" && /\.mp4|\.m3u8/.test(data[key]) && !isThumbnailUrl(data[key])) {
+            console.warn(`[loom] video URL via api endpoint (${key}): ${data[key].slice(0, 100)}…`);
+            return data[key];
+          }
+        }
+      }
+    } catch (e) {
+      console.warn(`[loom] video-url endpoint error: ${e.message} ← ${url}`);
+    }
+  }
+  return null;
+}
+
 // Pull the actual MP4 URL out of /embed/{id}'s HTML so AssemblyAI has
 // something it can stream. Loom embeds need to play on third-party sites
 // (no auth cookies available), so the video src has to be public.
 async function extractVideoFileUrl(videoId) {
   if (!videoId) return null;
+
+  // Try dedicated Loom endpoints first — they return a JSON with the URL
+  // and are fast (one round-trip). If any works, we're done.
+  const fromApi = await tryFetchVideoUrlEndpoint(videoId);
+  if (fromApi) return fromApi;
+
+  // Fallback: scrape the embed page HTML for any non-thumbnail mp4/m3u8.
   try {
     const res = await fetch(`https://www.loom.com/embed/${videoId}`, { headers: BROWSER_HEADERS });
     if (!res.ok) {
@@ -341,26 +393,28 @@ async function extractVideoFileUrl(videoId) {
       return null;
     }
     const html = await res.text();
-    // Loom uses several CDN patterns over time. The .mp4 source is
-    // historically at cdn.loom.com/sessions/{id}/transcoded-mp4 or under
-    // /transcoded_videos. A permissive regex catches both shapes plus
-    // any other cdn.loom.com mp4 that might appear.
     const candidates = [
       /https:\/\/cdn\.loom\.com\/sessions\/[^"'\s]+?\.mp4(?:\?[^"'\s]*)?/g,
       /https:\/\/cdn\.loom\.com\/[^"'\s]+?\.m3u8(?:\?[^"'\s]*)?/g,
       /https:\/\/[^"'\s]*loom\.com\/[^"'\s]*\.mp4(?:\?[^"'\s]*)?/g,
     ];
     for (const rx of candidates) {
-      const matches = html.match(rx);
-      if (matches && matches.length) {
-        // Prefer the longest URL (usually the highest-quality variant) but
-        // any match works for transcription.
+      const matches = (html.match(rx) || []).filter(u => !isThumbnailUrl(u));
+      if (matches.length) {
+        // Prefer the longest URL (usually the highest-quality variant).
         const best = matches.sort((a, b) => b.length - a.length)[0];
-        console.warn(`[loom] extracted video URL: ${best.slice(0, 100)}…`);
+        console.warn(`[loom] extracted video URL (scrape): ${best.slice(0, 100)}…`);
         return best;
       }
     }
-    console.warn(`[loom] no video URL found in embed html (length: ${html.length})`);
+    // If we only got thumbnails, surface that explicitly so the next
+    // log lines explain why AssemblyAI is being skipped.
+    const allMp4 = html.match(/https:\/\/cdn\.loom\.com\/[^"'\s]+?\.mp4/g) || [];
+    if (allMp4.length) {
+      console.warn(`[loom] only thumbnail URLs found in embed html (${allMp4.length} matches, all under /thumbnails/)`);
+    } else {
+      console.warn(`[loom] no video URL of any kind in embed html (length: ${html.length})`);
+    }
     return null;
   } catch (e) {
     console.warn(`[loom] extractVideoFileUrl error: ${e.message}`);
@@ -381,10 +435,21 @@ async function tryAssemblyAI(videoId) {
     // Submit transcription request. language_code="es" because RecruitAI is
     // a Spanish-first product; AssemblyAI auto-detects but biasing to ES
     // gives better diarisation for the typical recruiting use case.
+    // AssemblyAI now requires speech_model in the body. Their error message
+    // says "non-empty list … one or more of universal-3-pro, universal-2"
+    // but the actual field is the singular speech_model with a single
+    // string value. universal-2 is the cheap default; universal-3-pro is
+    // higher accuracy at higher cost. Going with universal-2 — accuracy
+    // on Spanish recruiting clips is already very good and we're cost-
+    // sensitive in beta.
     const submitRes = await fetch("https://api.assemblyai.com/v2/transcript", {
       method: "POST",
       headers: { "Authorization": apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({ audio_url: audioUrl, language_code: "es" }),
+      body: JSON.stringify({
+        audio_url: audioUrl,
+        language_code: "es",
+        speech_model: "universal-2",
+      }),
     });
     if (!submitRes.ok) {
       const errText = await submitRes.text().catch(() => "");
